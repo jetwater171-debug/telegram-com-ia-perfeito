@@ -91,7 +91,7 @@ export const sendMessageToGemini = async (
     if (!genAI) throw new Error("API Key not configured");
 
     const model = genAI.getGenerativeModel({
-        model: "gemini-2.0-flash-exp", // Updated to latest experimental flash model
+        model: "gemini-2.5-flash", // Updated to gemini-2.5-flash as requested
         systemInstruction: getSystemInstruction(context.userCity, context.isHighTicket),
         generationConfig: {
             responseMimeType: "application/json",
