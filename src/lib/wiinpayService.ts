@@ -41,11 +41,11 @@ export const WiinPayService = {
     }
 
     const data = await response.json();
-    // Force lowercase key check just in case
-    const qrCode = data.qr_code || data.qrCode || data.pixCopiaCola;
+    // Force lowercase key check just in case, and check nested 'data' object
+    const qrCode = data.qr_code || data.qrCode || data.pixCopiaCola || data.data?.qr_code || data.data?.pixCopiaCola;
 
     return {
-      paymentId: data.paymentId,
+      paymentId: data.paymentId || data.data?.paymentId,
       qrCode: qrCode,
       pixCopiaCola: qrCode,
       status: data.status || 'pending',
