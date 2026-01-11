@@ -40,31 +40,22 @@ export default function AdminChatPage() {
     };
 
     const subscribe = (sessionId: string) => {
-        // Remove existing channel if any
-        supabase.removeAllChannels();
-
         const channel = supabase
-            .channel(`chat_monitor_${sessionId}`)
+            .channel(`chat_${sessionId}_${Date.now()}`)
             .on('postgres_changes', {
                 event: 'INSERT',
                 schema: 'public',
                 table: 'messages',
                 filter: `session_id=eq.${sessionId}`
             }, (payload) => {
-                console.log("Realtime received:", payload.new);
                 setMessages(prev => {
-                    // Prevent duplicates
-                    if (prev.find(m => m.id === payload.new.id)) return prev;
+                    const exists = prev.some(m => m.id === payload.new.id);
+                    if (exists) return prev;
                     return [...prev, payload.new as Message];
                 });
-                setTimeout(scrollToBottom, 100);
+                scrollToBottom();
             })
-            .subscribe((status) => {
-                console.log("Realtime status:", status);
-                if (status === 'SUBSCRIBED') {
-                    // connection established
-                }
-            });
+            .subscribe();
 
         return () => { supabase.removeChannel(channel); };
     };

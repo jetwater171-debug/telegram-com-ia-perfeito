@@ -98,36 +98,39 @@ export async function POST(req: NextRequest) {
             content: text
         }).select().single();
 
-        // --- DEBOUNCE V2: TOKEN BASED ---
-        // Generate a unique token for this execution
-        const processingToken = crypto.randomUUID();
-
-        // Update the session with this token. This signals "I am the latest active process"
-        await supabase.from('sessions').update({
-            processing_token: processingToken
-        }).eq('id', session.id);
-
-        // Wait 6 seconds
-        await new Promise(resolve => setTimeout(resolve, 6000));
-
-        // Re-fetch the session to check if the token changed
-        const { data: refreshedSession } = await supabase
-            .from('sessions')
-            .select('processing_token')
-            .eq('id', session.id)
-            .single();
-
-        // If the token in DB is different from my token, it means a newer message arrived 
-        // and overwrote the token. I should die.
-        if (refreshedSession?.processing_token !== processingToken) {
-            console.log(`[DEBOUNCE V2] process ${processingToken} superseded by ${refreshedSession?.processing_token}`);
+        if (!insertedMsg) {
             return NextResponse.json({ ok: true });
         }
 
-        // I AM THE SURVIVOR!
-        // Fetch all unreplied user messages
+        // --- DEBOUNCE STRATEGY V3: LAST MESSAGE STANDING ---
+        // We simply wait 6 seconds. 
+        // Then checking: "Am I still the most recent message from the user?"
 
-        // Find last bot message time
+        const WAIT_TIME_MS = 6000;
+        await new Promise(resolve => setTimeout(resolve, WAIT_TIME_MS));
+
+        // Check if a newer message exists
+        const { data: latestMsg } = await supabase
+            .from('messages')
+            .select('id, created_at')
+            .eq('session_id', session.id)
+            .eq('sender', 'user')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+        // If the latest message in DB is NOT the one I inserted, 
+        // it means user sent more stuff. I must retire.
+        if (latestMsg && latestMsg.id !== insertedMsg.id) {
+            console.log(`[DEBOUNCE V3] Aborting ${insertedMsg.id} because ${latestMsg.id} is newer.`);
+            return NextResponse.json({ ok: true });
+        }
+
+        // I AM THE LAST ONE.
+        // It's been 6 seconds and no one else came.
+        // Time to process the whole batch.
+
+        // Get cutoff time = Last BOT message time
         const { data: lastBotMsg } = await supabase
             .from('messages')
             .select('created_at')
@@ -137,22 +140,25 @@ export async function POST(req: NextRequest) {
             .limit(1)
             .single();
 
-        const cutoffTime = lastBotMsg ? lastBotMsg.created_at : new Date(0).toISOString();
+        let cutoffTime = lastBotMsg ? lastBotMsg.created_at : new Date(0).toISOString();
 
-        // Fetch all user messages since last bot reply
+        // Also ensure we don't accidentally fetch messages older than the current session start if re-activated?
+        // No, session logic handles that.
+
+        // Fetch ALL user messages sent AFTER the last bot reply
         const { data: groupMessages } = await supabase
             .from('messages')
-            .select('content')
+            .select('content, created_at')
             .eq('session_id', session.id)
             .eq('sender', 'user')
             .gt('created_at', cutoffTime)
-            .order('created_at', { ascending: true });
+            .order('created_at', { ascending: true }); // Oldest to newest
 
-        // Combine them
+        // Combine texts
         const combinedText = groupMessages?.map(m => m.content).join("\n") || text;
-        console.log(`[GROUPING V2] Sending to Gemini: ${combinedText}`);
+        console.log(`[GROUPING V3] Processing batch: "${combinedText}"`);
 
-        // --- DEBOUNCE END ---
+        // --- END DEBOUNCE ---
 
         // 4. Check if paused
         if (session.status === 'paused') {
