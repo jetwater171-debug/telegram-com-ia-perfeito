@@ -37,10 +37,15 @@ export async function POST(req: NextRequest) {
         .limit(1)
         .single();
 
-    if (latestMsg && triggerMessageId && latestMsg.id !== triggerMessageId) {
-        console.log(`[PROCESSOR] Aborting. Triggered by ${triggerMessageId} but latest is ${latestMsg.id}`);
-        // This means a newer message arrived and spawned its own worker. We die.
-        return NextResponse.json({ status: 'superseded' });
+    if (latestMsg && triggerMessageId) {
+        const latestIdStr = String(latestMsg.id);
+        const triggerIdStr = String(triggerMessageId);
+
+        if (latestIdStr !== triggerIdStr) {
+            console.log(`[PROCESSOR] Aborting. Triggered by ${triggerIdStr} but latest is ${latestIdStr}`);
+            // This means a newer message arrived and spawned its own worker. We die.
+            return NextResponse.json({ status: 'superseded' });
+        }
     }
 
     // 3. I am the Latest/Master. Process Everything.

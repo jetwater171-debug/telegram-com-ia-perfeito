@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { supabase } from '@/lib/supabaseClient';
 import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo } from '@/lib/telegram';
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
         const botToken = tokenData?.value;
         if (!botToken) {
             console.error("Bot Token not configured in DB");
-            return NextResponse.json({ ok: true }); // Silent fail to avoid retries spam
+            return NextResponse.json({ ok: true });
         }
 
         // 2. Get or Create Session
@@ -100,29 +100,29 @@ export async function POST(req: NextRequest) {
 
         if (!insertedMsg) return NextResponse.json({ ok: true });
 
-        // 4. Trigger Background Processing (Fire and Forget)
-        // We do NOT await this request fully, or we await the handshake but not the response?
-        // In Vercel, to be safe, we must return 200 OK to Telegram immediately.
-        // We will try to rely on the fact that Vercel might keep the outgoing request alive 
-        // if we initiate it. 
-
-        // Get the absolute URL for the worker
+        // 4. Trigger Background Processing (Reliable with `after`)
         const protocol = req.headers.get('x-forwarded-proto') || 'http';
         const host = req.headers.get('host');
         const workerUrl = `${protocol}://${host}/api/process-message`;
 
-        console.log(`[WEBHOOK] Triggering worker at ${workerUrl}`);
+        console.log(`[WEBHOOK] Scheduling worker at ${workerUrl}`);
 
-        fetch(workerUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                sessionId: session.id,
-                triggerMessageId: insertedMsg.id
-            })
-        }).catch(err => console.error("Worker trigger failed (expected if non-awaited):", err));
+        after(async () => {
+            console.log(`[WEBHOOK] Executing background worker trigger...`);
+            try {
+                await fetch(workerUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sessionId: session.id,
+                        triggerMessageId: insertedMsg.id
+                    })
+                });
+            } catch (err) {
+                console.error("Worker trigger failed:", err);
+            }
+        });
 
-        // Return immediately so Telegram sends next updates if any
         return NextResponse.json({ ok: true });
 
     } catch (error) {
