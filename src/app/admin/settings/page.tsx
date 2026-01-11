@@ -34,6 +34,27 @@ export default function AdminSettingsPage() {
         setLoading(false);
     };
 
+    const connectWebhook = async () => {
+        setLoading(true);
+        setMsg("Conectando webhook...");
+        try {
+            const res = await fetch('/api/admin/set-webhook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ appUrl: window.location.origin })
+            });
+            const data = await res.json();
+            if (data.ok) {
+                setMsg("Webhook conectado com sucesso! O bot deve responder agora.");
+            } else {
+                setMsg("Erro no Telegram: " + (data.description || JSON.stringify(data)));
+            }
+        } catch (e: any) {
+            setMsg("Falha na requisição: " + e.message);
+        }
+        setLoading(false);
+    };
+
     return (
         <div className="p-8 bg-gray-900 min-h-screen text-white flex flex-col items-center">
             <div className="w-full max-w-md bg-gray-800 p-6 rounded-lg border border-gray-700">
@@ -53,13 +74,23 @@ export default function AdminSettingsPage() {
                     />
                 </div>
 
-                <button
-                    onClick={saveToken}
-                    disabled={loading}
-                    className={`w-full py-2 rounded font-bold ${loading ? 'bg-gray-600' : 'bg-green-600 hover:bg-green-700'}`}
-                >
-                    {loading ? 'Salvando...' : 'Salvar Token'}
-                </button>
+                <div className="flex gap-2 flex-col">
+                    <button
+                        onClick={saveToken}
+                        disabled={loading}
+                        className={`w-full py-2 rounded font-bold ${loading ? 'bg-gray-600' : 'bg-green-600 hover:bg-green-700'}`}
+                    >
+                        {loading ? 'Processando...' : 'Salvar Token'}
+                    </button>
+
+                    <button
+                        onClick={connectWebhook}
+                        disabled={loading}
+                        className="w-full py-2 rounded font-bold bg-blue-600 hover:bg-blue-700"
+                    >
+                        🔗 Conectar Webhook (Reparar Bot)
+                    </button>
+                </div>
 
                 {msg && (
                     <div className={`mt-4 p-2 rounded text-center ${msg.includes('Erro') ? 'bg-red-900/50 text-red-200' : 'bg-green-900/50 text-green-200'}`}>
