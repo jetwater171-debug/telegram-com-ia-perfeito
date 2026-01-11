@@ -35,9 +35,9 @@ export const WiinPayService = {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      console.log("WiinPay Error Body:", JSON.stringify(errorData, null, 2));
-      throw new Error(errorData.message || 'Failed to create payment');
+      const errorText = await response.text();
+      console.error(`WiinPay Error (${response.status}):`, errorText);
+      throw new Error(`WiinPay Failed (${response.status}): ${errorText}`);
     }
 
     const data = await response.json();
