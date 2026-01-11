@@ -25,20 +25,29 @@ export const WiinPayService = {
     const response = await fetch(`${BASE_URL}/payment/create`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${API_KEY}`,
         'Accept': 'application/json',
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(params)
+      body: JSON.stringify({
+        api_key: API_KEY,
+        ...params
+      })
     });
 
     if (!response.ok) {
       const errorData = await response.json();
+      console.log("WiinPay Error Body:", JSON.stringify(errorData, null, 2));
       throw new Error(errorData.message || 'Failed to create payment');
     }
 
     const data = await response.json();
-    return data.data || data;
+    return {
+      paymentId: data.paymentId,
+      qrCode: data.qr_code, // The base64 image or url might be missing, but 'qr_code' seems to be the EMV payload
+      pixCopiaCola: data.qr_code, // In WiinPay V2, 'qr_code' field CONTAINS the copy-paste string
+      status: 'pending', // Default status
+      ...data
+    };
   },
 
   async getPaymentStatus(paymentId: string): Promise<any> {
