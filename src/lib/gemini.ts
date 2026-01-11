@@ -91,11 +91,11 @@ export const sendMessageToGemini = async (
     if (!genAI) throw new Error("API Key not configured");
 
     const model = genAI.getGenerativeModel({
-        model: "gemini-1.5-flash", // Using stable model
+        model: "gemini-2.0-flash-exp", // Updated to latest experimental flash model
         systemInstruction: getSystemInstruction(context.userCity, context.isHighTicket),
         generationConfig: {
             responseMimeType: "application/json",
-            responseSchema: responseSchema as any // Casting to avoid complex typing issues
+            responseSchema: responseSchema as any
         }
     });
 
@@ -129,7 +129,7 @@ export const sendMessageToGemini = async (
             lead_classification: "desconhecido",
             lead_stats: { tarado: 0, carente: 0, sentimental: 0, financeiro: 0 },
             current_state: "WELCOME",
-            messages: [`Amor, minha internet tá ruim... (Erro Técnico: ${error.message})`],
+            messages: ["Amor, minha internet tá ruim... já te respondo tá?"],
             action: "none",
             extracted_user_name: null
         };
