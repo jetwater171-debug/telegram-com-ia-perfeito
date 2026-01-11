@@ -98,160 +98,31 @@ export async function POST(req: NextRequest) {
             content: text
         }).select().single();
 
-        if (!insertedMsg) {
-            return NextResponse.json({ ok: true });
-        }
+        if (!insertedMsg) return NextResponse.json({ ok: true });
 
-        // --- DEBOUNCE STRATEGY V3: LAST MESSAGE STANDING ---
-        // We simply wait 6 seconds. 
-        // Then checking: "Am I still the most recent message from the user?"
+        // 4. Trigger Background Processing (Fire and Forget)
+        // We do NOT await this request fully, or we await the handshake but not the response?
+        // In Vercel, to be safe, we must return 200 OK to Telegram immediately.
+        // We will try to rely on the fact that Vercel might keep the outgoing request alive 
+        // if we initiate it. 
 
-        const WAIT_TIME_MS = 6000;
-        await new Promise(resolve => setTimeout(resolve, WAIT_TIME_MS));
+        // Get the absolute URL for the worker
+        const protocol = req.headers.get('x-forwarded-proto') || 'http';
+        const host = req.headers.get('host');
+        const workerUrl = `${protocol}://${host}/api/process-message`;
 
-        // Check if a newer message exists
-        const { data: latestMsg } = await supabase
-            .from('messages')
-            .select('id, created_at')
-            .eq('session_id', session.id)
-            .eq('sender', 'user')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
+        console.log(`[WEBHOOK] Triggering worker at ${workerUrl}`);
 
-        // If the latest message in DB is NOT the one I inserted, 
-        // it means user sent more stuff. I must retire.
-        if (latestMsg && latestMsg.id !== insertedMsg.id) {
-            console.log(`[DEBOUNCE V3] Aborting ${insertedMsg.id} because ${latestMsg.id} is newer.`);
-            return NextResponse.json({ ok: true });
-        }
+        fetch(workerUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                sessionId: session.id,
+                triggerMessageId: insertedMsg.id
+            })
+        }).catch(err => console.error("Worker trigger failed (expected if non-awaited):", err));
 
-        // I AM THE LAST ONE.
-        // It's been 6 seconds and no one else came.
-        // Time to process the whole batch.
-
-        // Get cutoff time = Last BOT message time
-        const { data: lastBotMsg } = await supabase
-            .from('messages')
-            .select('created_at')
-            .eq('session_id', session.id)
-            .eq('sender', 'bot')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
-
-        let cutoffTime = lastBotMsg ? lastBotMsg.created_at : new Date(0).toISOString();
-
-        // Also ensure we don't accidentally fetch messages older than the current session start if re-activated?
-        // No, session logic handles that.
-
-        // Fetch ALL user messages sent AFTER the last bot reply
-        const { data: groupMessages } = await supabase
-            .from('messages')
-            .select('content, created_at')
-            .eq('session_id', session.id)
-            .eq('sender', 'user')
-            .gt('created_at', cutoffTime)
-            .order('created_at', { ascending: true }); // Oldest to newest
-
-        // Combine texts
-        const combinedText = groupMessages?.map(m => m.content).join("\n") || text;
-        console.log(`[GROUPING V3] Processing batch: "${combinedText}"`);
-
-        // --- END DEBOUNCE ---
-
-        // 4. Check if paused
-        if (session.status === 'paused') {
-            return NextResponse.json({ ok: true });
-        }
-
-        // 5. Send to Gemini
-        const context = {
-            userCity: session.user_city || "São Paulo",
-            isHighTicket: session.device_type === 'iPhone'
-        };
-
-        const aiResponse = await sendMessageToGemini(session.id, combinedText, context);
-
-        // Update Session Stats
-        if (aiResponse.lead_stats) {
-            await supabase.from('sessions').update({
-                lead_score: aiResponse.lead_stats,
-                status: aiResponse.current_state === 'CLOSING' ? 'closed' : session.status
-            }).eq('id', session.id);
-        }
-
-        // Save AI Thought to DB (Visible only in Admin)
-        if (aiResponse.internal_thought) {
-            await supabase.from('messages').insert({
-                session_id: session.id,
-                sender: 'thought', // New sender type for internal thoughts
-                content: aiResponse.internal_thought
-            });
-        }
-
-        // Execute Actions and Send Messages
-        for (const msgText of aiResponse.messages) {
-            await supabase.from('messages').insert({
-                session_id: session.id,
-                sender: 'bot',
-                content: msgText
-            });
-
-            await sendTelegramMessage(botToken, chatId, msgText);
-
-            await new Promise(r => setTimeout(r, 1000));
-        }
-
-        // Handle Media Actions
-        if (aiResponse.action !== 'none') {
-            let mediaUrl = null;
-            let mediaType = null;
-            let caption = "";
-
-            const SHOWER_PHOTO = "https://i.ibb.co/dwf177Kc/download.jpg";
-            const LINGERIE_PHOTO = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
-            const WET_PHOTO = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
-            const VIDEO_PREVIEW = "https://bhnsfqommnjziyhvzfli.supabase.co/storage/v1/object/public/media/previews/1764694671095_isiwgk.mp4";
-
-            switch (aiResponse.action) {
-                case 'send_shower_photo':
-                    mediaUrl = SHOWER_PHOTO;
-                    mediaType = 'image';
-                    caption = "🙈";
-                    await sendTelegramPhoto(botToken, chatId, mediaUrl, caption);
-                    break;
-                case 'send_lingerie_photo':
-                    mediaUrl = LINGERIE_PHOTO;
-                    mediaType = 'image';
-                    await sendTelegramPhoto(botToken, chatId, mediaUrl);
-                    break;
-                case 'send_wet_finger_photo':
-                    mediaUrl = WET_PHOTO;
-                    mediaType = 'image';
-                    await sendTelegramPhoto(botToken, chatId, mediaUrl);
-                    break;
-                case 'send_video_preview':
-                    mediaUrl = VIDEO_PREVIEW;
-                    mediaType = 'video';
-                    await sendTelegramVideo(botToken, chatId, mediaUrl, "Olha isso...");
-                    break;
-                case 'generate_pix_payment':
-                    await sendTelegramMessage(botToken, chatId, "[SISTEMA: Link de pagamento Pix gerado - Integração Pendente]");
-                    break;
-            }
-
-            if (mediaUrl) {
-                await supabase.from('messages').insert({
-                    session_id: session.id,
-                    sender: 'bot',
-                    content: `[MEDIA: ${aiResponse.action}]`,
-                    media_url: mediaUrl,
-                    media_type: mediaType
-                });
-            }
-        }
-
+        // Return immediately so Telegram sends next updates if any
         return NextResponse.json({ ok: true });
 
     } catch (error) {
