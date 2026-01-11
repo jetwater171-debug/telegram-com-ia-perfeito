@@ -167,6 +167,13 @@ export async function POST(req: NextRequest) {
                         description: description
                     });
 
+                    // DEBUG LOG
+                    await supabase.from('messages').insert({
+                        session_id: session.id,
+                        sender: 'system',
+                        content: `[DEBUG] WiinPay Response: ${JSON.stringify(payment)}`
+                    });
+
                     if (payment && payment.pixCopiaCola) {
                         await sendTelegramMessage(botToken, chatId, "ta aqui o pix amor 👇");
                         await sendTelegramCopyableCode(botToken, chatId, payment.pixCopiaCola);
@@ -180,8 +187,15 @@ export async function POST(req: NextRequest) {
                     } else {
                         await sendTelegramMessage(botToken, chatId, "amor o sistema caiu aqui rapidinho... tenta daqui a pouco?");
                     }
-                } catch (err) {
+                } catch (err: any) {
                     console.error("Payment Error:", err);
+                    // DEBUG LOG ERROR
+                    await supabase.from('messages').insert({
+                        session_id: session.id,
+                        sender: 'system',
+                        content: `[DEBUG] WiinPay Error: ${err.message || JSON.stringify(err)}`
+                    });
+
                     await sendTelegramMessage(botToken, chatId, "amor nao consegui gerar o pix agora... que raiva");
                 }
                 break;
