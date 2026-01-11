@@ -3,6 +3,29 @@ import { supabase } from '@/lib/supabaseClient';
 import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo } from '@/lib/telegram';
 
+export async function GET(req: NextRequest) {
+    // DIAGNOSTIC ROUTE
+    const checks = {
+        supabaseConfig: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+        geminiConfig: !!process.env.GEMINI_API_KEY,
+        dbConnection: false,
+        tokenFound: false,
+        webhookUrl: req.nextUrl.toString().replace('GET', 'POST') // Approximate
+    };
+
+    try {
+        const { data, error } = await supabase.from('bot_settings').select('*').limit(1);
+        if (!error) checks.dbConnection = true;
+
+        const { data: token } = await supabase.from('bot_settings').select('value').eq('key', 'telegram_bot_token').single();
+        if (token && token.value) checks.tokenFound = true;
+
+        return NextResponse.json({ status: 'Online', checks }, { status: 200 });
+    } catch (e: any) {
+        return NextResponse.json({ status: 'Error', error: e.message, checks }, { status: 500 });
+    }
+}
+
 export async function POST(req: NextRequest) {
     const body = await req.json();
     const message = body.message || body.edited_message;
