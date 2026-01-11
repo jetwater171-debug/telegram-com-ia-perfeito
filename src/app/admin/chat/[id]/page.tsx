@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 
 interface Message {
     id: string;
-    sender: 'user' | 'bot' | 'system';
+    sender: 'user' | 'bot' | 'system' | 'admin';
     content: string;
     created_at: string;
 }
