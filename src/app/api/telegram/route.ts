@@ -18,9 +18,20 @@ export async function GET(req: NextRequest) {
         if (!error) checks.dbConnection = true;
 
         const { data: token } = await supabase.from('bot_settings').select('value').eq('key', 'telegram_bot_token').single();
-        if (token && token.value) checks.tokenFound = true;
+        let webhookInfo = null;
 
-        return NextResponse.json({ status: 'Online', checks }, { status: 200 });
+        if (token && token.value) {
+            checks.tokenFound = true;
+            // CHECK TELEGRAM API STATUS
+            try {
+                const tgRes = await fetch(`https://api.telegram.org/bot${token.value}/getWebhookInfo`);
+                webhookInfo = await tgRes.json();
+            } catch (err: any) {
+                webhookInfo = { error: err.message };
+            }
+        }
+
+        return NextResponse.json({ status: 'Online', checks, webhookInfo }, { status: 200 });
     } catch (e: any) {
         return NextResponse.json({ status: 'Error', error: e.message, checks }, { status: 500 });
     }
