@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
         let caption = "";
 
         switch (aiResponse.action) {
-            case 'send_shower_photo': mediaUrl = SHOWER_PHOTO; mediaType = 'image'; caption = "🙈"; break;
+            case 'send_shower_photo': mediaUrl = SHOWER_PHOTO; mediaType = 'image'; caption = ""; break;
             case 'send_lingerie_photo': mediaUrl = LINGERIE_PHOTO; mediaType = 'image'; break;
             case 'send_wet_finger_photo': mediaUrl = WET_PHOTO; mediaType = 'image'; break;
             case 'send_video_preview': mediaUrl = VIDEO_PREVIEW; mediaType = 'video'; break;
@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
 
         if (mediaUrl) {
             if (mediaType === 'image') await sendTelegramPhoto(botToken, chatId, mediaUrl, caption);
-            if (mediaType === 'video') await sendTelegramVideo(botToken, chatId, mediaUrl, "Olha isso...");
+            if (mediaType === 'video') await sendTelegramVideo(botToken, chatId, mediaUrl, "olha isso");
 
             await supabase.from('messages').insert({
                 session_id: session.id,
