@@ -98,29 +98,34 @@ export async function POST(req: NextRequest) {
             content: text
         }).select().single();
 
-        // --- DEBOUNCE LOGIC START ---
-        // Wait 6 seconds to gather other potential messages
+        // --- DEBOUNCE V2: TOKEN BASED ---
+        // Generate a unique token for this execution
+        const processingToken = crypto.randomUUID();
+
+        // Update the session with this token. This signals "I am the latest active process"
+        await supabase.from('sessions').update({
+            processing_token: processingToken
+        }).eq('id', session.id);
+
+        // Wait 6 seconds
         await new Promise(resolve => setTimeout(resolve, 6000));
 
-        // Check if there is any user message NEWER than this one
-        const { data: latestMsg } = await supabase
-            .from('messages')
-            .select('id')
-            .eq('session_id', session.id)
-            .eq('sender', 'user')
-            .order('created_at', { ascending: false })
-            .limit(1)
+        // Re-fetch the session to check if the token changed
+        const { data: refreshedSession } = await supabase
+            .from('sessions')
+            .select('processing_token')
+            .eq('id', session.id)
             .single();
 
-        // If I am NOT the latest message, it means someone else came after me.
-        // I should retire and let the latest one handle the group.
-        if (latestMsg && insertedMsg && latestMsg.id !== insertedMsg.id) {
-            console.log(`[DEBOUNCE] Skipped message ${insertedMsg.id} in favor of ${latestMsg.id}`);
+        // If the token in DB is different from my token, it means a newer message arrived 
+        // and overwrote the token. I should die.
+        if (refreshedSession?.processing_token !== processingToken) {
+            console.log(`[DEBOUNCE V2] process ${processingToken} superseded by ${refreshedSession?.processing_token}`);
             return NextResponse.json({ ok: true });
         }
 
-        // I AM THE MASTER! (Latest message)
-        // Now fetch ALL user messages that are "Unreplied" (basically everything after the last bot message)
+        // I AM THE SURVIVOR!
+        // Fetch all unreplied user messages
 
         // Find last bot message time
         const { data: lastBotMsg } = await supabase
@@ -145,9 +150,9 @@ export async function POST(req: NextRequest) {
 
         // Combine them
         const combinedText = groupMessages?.map(m => m.content).join("\n") || text;
-        console.log(`[GROUPING] Sending to Gemini: ${combinedText}`);
+        console.log(`[GROUPING V2] Sending to Gemini: ${combinedText}`);
 
-        // --- DEBOUNCE LOGIC END ---
+        // --- DEBOUNCE END ---
 
         // 4. Check if paused
         if (session.status === 'paused') {
