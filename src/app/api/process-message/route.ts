@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabaseClient';
 import { sendMessageToGemini } from '@/lib/gemini';
-import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction } from '@/lib/telegram';
+import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode } from '@/lib/telegram';
+import { WiinPayService } from '@/lib/wiinpayService';
 
 // This route acts as a background worker.
 // It waits, checks for newer messages (debounce), and then processes the response.
@@ -154,7 +155,36 @@ export async function POST(req: NextRequest) {
             case 'send_lingerie_photo': mediaUrl = LINGERIE_PHOTO; mediaType = 'image'; break;
             case 'send_wet_finger_photo': mediaUrl = WET_PHOTO; mediaType = 'image'; break;
             case 'send_video_preview': mediaUrl = VIDEO_PREVIEW; mediaType = 'video'; break;
-            case 'generate_pix_payment': await sendTelegramMessage(botToken, chatId, "[PIX]"); break;
+            case 'generate_pix_payment':
+                try {
+                    const value = aiResponse.payment_details?.value || 31.00;
+                    const description = aiResponse.payment_details?.description || "Pack Exclusivo";
+                    // Generate Payment
+                    const payment = await WiinPayService.createPayment({
+                        value: value,
+                        name: session.user_name || "Anônimo",
+                        email: `user_${chatId}@telegram.com`,
+                        description: description
+                    });
+
+                    if (payment && payment.pixCopiaCola) {
+                        await sendTelegramMessage(botToken, chatId, "ta aqui o pix amor 👇");
+                        await sendTelegramCopyableCode(botToken, chatId, payment.pixCopiaCola);
+
+                        // Save System Message
+                        await supabase.from('messages').insert({
+                            session_id: session.id,
+                            sender: 'bot',
+                            content: "[SYSTEM: PIX GENERATED - " + value + "]"
+                        });
+                    } else {
+                        await sendTelegramMessage(botToken, chatId, "amor o sistema caiu aqui rapidinho... tenta daqui a pouco?");
+                    }
+                } catch (err) {
+                    console.error("Payment Error:", err);
+                    await sendTelegramMessage(botToken, chatId, "amor nao consegui gerar o pix agora... que raiva");
+                }
+                break;
         }
 
         if (mediaUrl) {
