@@ -97,7 +97,7 @@ export default function AdminChatPage() {
 
     return (
         <div className="flex h-screen bg-[#0e1621] text-white font-sans overflow-hidden">
-            <div className="flex-1 flex flex-col max-w-4xl mx-auto w-full h-full relative shadow-2xl">
+            <div className="flex-1 flex flex-col w-full h-full relative shadow-none">
 
                 {/* 1. TOP HEADER (Telegram Style) */}
                 <header className="bg-[#17212b] px-4 py-2 flex items-center justify-between shadow-md z-10 shrink-0 cursor-pointer" onClick={() => setShowMenu(!showMenu)}>
