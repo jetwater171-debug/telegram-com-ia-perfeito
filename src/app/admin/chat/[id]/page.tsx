@@ -18,6 +18,7 @@ export default function AdminChatPage() {
     const [input, setInput] = useState("");
     const [session, setSession] = useState<any>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const [showMenu, setShowMenu] = useState(false);
 
     useEffect(() => {
         if (telegramChatId) loadSession();
@@ -54,13 +55,12 @@ export default function AdminChatPage() {
     const sendManualMessage = async () => {
         if (!input.trim() || !session) return;
 
-        // 1. Pause Bot automatically if admin speaks
+        // Auto-pause functionality
         if (session.status !== 'paused') {
             await supabase.from('sessions').update({ status: 'paused' }).eq('id', session.id);
             setSession({ ...session, status: 'paused' });
         }
 
-        // 2. Send via API
         try {
             await fetch('/api/admin/send', {
                 method: 'POST',
@@ -78,112 +78,154 @@ export default function AdminChatPage() {
         const newStatus = session.status === 'paused' ? 'active' : 'paused';
         await supabase.from('sessions').update({ status: newStatus }).eq('id', session.id);
         setSession({ ...session, status: newStatus });
+        setShowMenu(false);
     };
 
     const deleteChat = async () => {
-        if (!confirm("⚠️ TEM CERTEZA?\n\nIsso vai apagar todo o histórico de mensagens e a sessão deste usuário do banco de dados.\n\nEssa ação não pode ser desfeita.")) return;
-
+        if (!confirm("⚠️ TEM CERTEZA? Deletar todo o histórico?")) return;
         if (session) {
-            // Delete messages first (if no cascade)
             await supabase.from('messages').delete().eq('session_id', session.id);
-            // Delete session
             await supabase.from('sessions').delete().eq('id', session.id);
-
-            alert("Chat excluído com sucesso.");
             router.push('/admin');
         }
     };
 
-    return (
-        <div className="flex h-screen bg-gray-900 text-white font-sans">
-            <div className="flex-1 flex flex-col max-w-5xl mx-auto w-full shadow-2xl border-x border-gray-800">
+    // Helper to format time like Telegram (23:45)
+    const formatTime = (isoString: string) => {
+        return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
 
-                {/* HEADER REFORMULADO */}
-                <header className="bg-gray-800 p-4 border-b border-gray-700 flex justify-between items-center shadow-md z-10">
+    return (
+        <div className="flex h-screen bg-[#0e1621] text-white font-sans overflow-hidden">
+            <div className="flex-1 flex flex-col max-w-4xl mx-auto w-full h-full relative shadow-2xl">
+
+                {/* 1. TOP HEADER (Telegram Style) */}
+                <header className="bg-[#17212b] px-4 py-2 flex items-center justify-between shadow-md z-10 shrink-0 cursor-pointer" onClick={() => setShowMenu(!showMenu)}>
                     <div className="flex items-center gap-4">
-                        <button
-                            onClick={() => router.push('/admin')}
-                            className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded transition flex items-center gap-2"
-                        >
-                            ⬅ Voltar
+                        <button onClick={(e) => { e.stopPropagation(); router.push('/admin'); }} className="text-gray-400 hover:text-white transition">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>
                         </button>
 
-                        <div>
-                            <h1 className="text-lg font-bold flex items-center gap-2">
-                                {session?.user_name || "Carregando..."}
-                                <span className="text-xs font-normal text-gray-500">ID: {telegramChatId}</span>
-                            </h1>
-                            <div className="flex items-center gap-2 text-sm">
-                                <span className={`w-2 h-2 rounded-full ${session?.status === 'active' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
-                                <span className="text-gray-300 capitalize">{session?.status === 'active' ? 'IA Ativa (Respondendo)' : 'IA Pausada (Manual)'}</span>
+                        <div className="flex items-center gap-3">
+                            {/* Avatar Placeholder */}
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white
+                                ${session?.lead_score?.tarado > 70 ? 'bg-gradient-to-br from-pink-500 to-purple-500' : 'bg-gradient-to-br from-blue-400 to-blue-600'}
+                            `}>
+                                {session?.user_name?.substring(0, 2).toUpperCase() || "??"}
+                            </div>
+
+                            <div className="flex flex-col">
+                                <h1 className="text-md font-bold text-white leading-tight">
+                                    {session?.user_name || "Carregando..."}
+                                </h1>
+                                <p className="text-xs text-blue-400">
+                                    {session?.status === 'active' ? 'online (IA Ativa)' : 'offline (Pausado)'}
+                                </p>
                             </div>
                         </div>
                     </div>
 
-                    <div className="flex gap-3">
-                        <button
-                            onClick={toggleBot}
-                            className={`px-4 py-2 rounded font-semibold text-sm transition shadow-sm ${session?.status === 'paused'
-                                    ? 'bg-green-600 hover:bg-green-500 text-white ring-2 ring-green-600 ring-offset-2 ring-offset-gray-800'
-                                    : 'bg-yellow-600 hover:bg-yellow-500 text-white'
-                                }`}
-                        >
-                            {session?.status === 'paused' ? '▶ ATIVAR IA' : '⏸ PAUSAR IA'}
+                    <div className="relative">
+                        <button className="text-gray-400 hover:text-white p-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" /></svg>
                         </button>
 
-                        <button
-                            onClick={deleteChat}
-                            className="px-4 py-2 rounded font-semibold text-sm bg-red-900/50 text-red-400 hover:bg-red-600 hover:text-white transition border border-red-900"
-                            title="Excluir este chat"
-                        >
-                            🗑
-                        </button>
+                        {/* Dropdown Menu */}
+                        {showMenu && (
+                            <div className="absolute right-0 top-10 bg-[#17212b] border border-[#0e1621] rounded-lg shadow-xl w-48 py-2 z-50">
+                                <button onClick={toggleBot} className="w-full text-left px-4 py-2 hover:bg-[#202b36] text-sm flex items-center gap-2">
+                                    {session?.status === 'paused' ? '▶ Ativar IA' : '⏸ Pausar IA'}
+                                </button>
+                                <button onClick={deleteChat} className="w-full text-left px-4 py-2 hover:bg-[#202b36] text-red-400 text-sm flex items-center gap-2">
+                                    🗑 Apagar Conversa
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </header>
 
-                {/* MESSAGES AREA */}
-                <main className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-900 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
-                    {messages.length === 0 && (
-                        <div className="flex h-full items-center justify-center text-gray-600 italic">
-                            Nenhuma mensagem neste chat ainda.
-                        </div>
-                    )}
+                {/* 2. MESSAGES AREA (Telegram Pattern Background) */}
+                <main
+                    className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 bg-[#0e1621] relative"
+                    style={{
+                        backgroundImage: `url("https://web.telegram.org/img/bg_0.png")`, // Telegram default dark pattern
+                        backgroundBlendMode: 'soft-light',
+                        backgroundSize: 'cover'
+                    }}
+                >
+                    {/* Overlay to darken the background image matching theme */}
+                    <div className="absolute inset-0 bg-[#0e1621]/80 pointer-events-none fixed" />
 
-                    {messages.map((msg) => (
-                        <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-start' : 'justify-end'}`}>
-                            <div
-                                className={`max-w-[80%] p-4 rounded-xl shadow-md ${msg.sender === 'user'
-                                        ? 'bg-gray-800 text-gray-100 rounded-tl-none border border-gray-700'
-                                        : (msg.sender === 'admin'
-                                            ? 'bg-blue-600 text-white rounded-tr-none'
-                                            : 'bg-pink-600 text-white rounded-tr-none')
-                                    }`}
-                            >
-                                <div className="flex justify-between items-center mb-1 opacity-70 text-[10px] uppercase font-bold tracking-wider">
-                                    <span>{msg.sender}</span>
-                                    <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    <div className="relative z-0 flex flex-col gap-1 pb-4">
+                        {messages.map((msg) => {
+                            const isMe = msg.sender === 'bot' || msg.sender === 'admin';
+                            const isSystem = msg.sender === 'system';
+
+                            if (isSystem) {
+                                return (
+                                    <div key={msg.id} className="flex justify-center my-2">
+                                        <span className="bg-[#17212b]/80 text-gray-400 text-xs px-3 py-1 rounded-full">{msg.content}</span>
+                                    </div>
+                                );
+                            }
+
+                            return (
+                                <div key={msg.id} className={`flex w-full ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                    <div
+                                        className={`relative max-w-[85%] sm:max-w-[70%] px-3 py-2 rounded-lg text-[15px] shadow-sm leading-snug break-words
+                                            ${isMe
+                                                ? 'bg-[#2b5278] text-white rounded-tr-none'
+                                                : 'bg-[#182533] text-white rounded-tl-none'}
+                                        `}
+                                    >
+                                        {/* Sender Name (Only for Admin to distinguish) */}
+                                        {isMe && msg.sender === 'admin' && (
+                                            <p className="text-[10px] text-pink-400 font-bold mb-0.5">Você (Manual)</p>
+                                        )}
+
+                                        <p className="whitespace-pre-wrap">{msg.content}</p>
+
+                                        <div className={`text-[11px] mt-1 flex justify-end gap-1 ${isMe ? 'text-[#7c9cb6]' : 'text-[#6c7883]'}`}>
+                                            {formatTime(msg.created_at)}
+                                            {isMe && <span>✓✓</span>}
+                                        </div>
+                                    </div>
                                 </div>
-                                <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                            </div>
-                        </div>
-                    ))}
-                    <div ref={messagesEndRef} />
+                            );
+                        })}
+                        <div ref={messagesEndRef} />
+                    </div>
                 </main>
 
-                {/* INPUT AREA */}
-                <footer className="p-4 bg-gray-800 border-t border-gray-700 flex gap-3">
-                    <input
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && sendManualMessage()}
-                        className="flex-1 bg-gray-900 text-white rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-gray-700 placeholder-gray-500"
-                        placeholder="Escreva uma resposta manual (Isso vai pausar a IA automaticamente)..."
-                    />
+                {/* 3. INPUT AREA (Telegram Style) */}
+                <footer className="bg-[#17212b] p-2 sm:p-3 flex items-end gap-2 shrink-0">
+                    <button className="p-3 text-gray-500 hover:text-gray-300 transition shrink-0 rounded-full hover:bg-[#2b2d31]/20">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+                    </button>
+
+                    <div className="flex-1 bg-[#0e1621] rounded-2xl flex items-center min-h-[45px] max-h-[120px] shadow-inner">
+                        <textarea
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    sendManualMessage();
+                                }
+                            }}
+                            className="w-full bg-transparent text-white px-4 py-3 focus:outline-none resize-none overflow-hidden h-[46px]"
+                            placeholder="Mensagem..."
+                            rows={1}
+                        />
+                    </div>
+
                     <button
                         onClick={sendManualMessage}
-                        className="bg-blue-600 px-6 py-2 rounded-lg font-bold hover:bg-blue-500 transition shadow-lg"
+                        className={`p-3 rounded-full shrink-0 transition-all duration-200 transform hover:scale-105 active:scale-95
+                            ${input.trim() ? 'bg-[#5288c1] text-white shadow-lg' : 'bg-transparent text-gray-500'}
+                        `}
                     >
-                        Enviar
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill={input.trim() ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
                     </button>
                 </footer>
             </div>
