@@ -29,3 +29,13 @@ export const sendTelegramVideo = async (token: string, chatId: string, videoUrl:
         console.error("Failed to send video to Telegram:", e);
     }
 };
+
+export const sendTelegramAction = async (token: string, chatId: string, action: 'typing' | 'upload_photo' | 'upload_video' | 'find_location' | 'record_video' | 'record_voice' | 'upload_document' | 'choose_sticker' | 'upload_voice') => {
+    if (!token) return;
+    try {
+        const bot = new Telegraf(token);
+        await bot.telegram.sendChatAction(chatId, action);
+    } catch (e) {
+        console.error("Failed to send action to Telegram:", e);
+    }
+}
