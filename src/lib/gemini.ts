@@ -14,7 +14,7 @@ const WET_FINGER_PHOTO_URL = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas
 const responseSchema = {
     type: "OBJECT", // Use string literal for simplicity with new SDK
     properties: {
-        internal_thought: { type: "STRING" },
+        internal_thought: { type: "STRING", description: "O pensamento interno da IA sobre o lead e o proximo passo. Pense SEMPRE EM PORTUGUÊS." },
         lead_classification: { type: "STRING", enum: ["carente", "tarado", "curioso", "frio", "desconhecido"] },
         lead_stats: {
             type: "OBJECT",
