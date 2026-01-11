@@ -25,13 +25,11 @@ export const WiinPayService = {
     const response = await fetch(`${BASE_URL}/payment/create`, {
       method: 'POST',
       headers: {
+        'Authorization': `Bearer ${API_KEY}`,
         'Accept': 'application/json',
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        api_key: API_KEY,
-        ...params
-      })
+      body: JSON.stringify(params)
     });
 
     if (!response.ok) {
