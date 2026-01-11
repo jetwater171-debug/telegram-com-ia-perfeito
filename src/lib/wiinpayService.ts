@@ -41,11 +41,14 @@ export const WiinPayService = {
     }
 
     const data = await response.json();
+    // Force lowercase key check just in case
+    const qrCode = data.qr_code || data.qrCode || data.pixCopiaCola;
+
     return {
       paymentId: data.paymentId,
-      qrCode: data.qr_code, // The base64 image or url might be missing, but 'qr_code' seems to be the EMV payload
-      pixCopiaCola: data.qr_code, // In WiinPay V2, 'qr_code' field CONTAINS the copy-paste string
-      status: 'pending', // Default status
+      qrCode: qrCode,
+      pixCopiaCola: qrCode,
+      status: data.status || 'pending',
       ...data
     };
   },

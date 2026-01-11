@@ -238,62 +238,62 @@ export const sendMessageToGemini = async (
         }
     });
 
-    // 1. Load History from Supabase
-    // We only need the last X messages for context.
-    // Exclude the CURRENT message(s) that we are replying to (because we will send them as the prompt).
-    // Actually, `message` argument handles the new input.
-    // We need "Previous" history.
+    // 1. Carregar Histórico do Supabase
+    // Precisamos apenas das últimas X mensagens para contexto.
+    // Excluímos as mensagens ATUAIS que estamos respondendo (pois as enviaremos como o prompt).
+    // Na verdade, o argumento `message` lida com a nova entrada.
+    // Precisamos do histórico "Anterior".
     const { data: dbMessages } = await supabase
         .from('messages')
         .select('*')
         .eq('session_id', sessionId)
-        .order('created_at', { ascending: true }); // Oldest first
+        .order('created_at', { ascending: true }); // Mais antigas primeiro
 
-    // Convert DB messages to Gemini Content
+    // Converter mensagens do DB para Conteúdo Gemini
     const history = (dbMessages || [])
-        // Filter out 'system', 'thought', 'admin' if you want AI to ignore them, or keep 'user'/'bot' only
+        // Filtrar 'system', 'thought', 'admin' se quiser que a IA ignore, ou manter apenas 'user'/'bot'
         .filter(m => m.sender === 'user' || m.sender === 'bot')
-        // Important: Exclude the *very last* messages if they are the ones we are currently replying to?
-        // IF the DB has [User: Amor], [User: Nome], and we are running this function...
-        // The `message` arg will likely be "Amor\nNome".
-        // So we should NOT include "Amor" and "Nome" in the history, otherwise Gemini sees duplicates.
-        // Simple heuristic: Exclude messages created in the last 5 seconds? Or just Trust the caller?
-        // Caller (route.ts) is constructing `message`. Check if `dbMessages` contains it.
-        // Actually, safer: route.ts sends us the PROMPT. We load history BEFORE the prompt messages.
-        // But tracking which DB rows correspond to the "Prompt" is hard without IDs.
-        // Hack: We will just NOT load history for now if it's too risky, OR better:
-        // We assume `message` contains the NEW content. We load all DB history that is older than "Active Processing".
-        // BUT for a simple stateless approach:
-        // Let's filter out the messages that exactly match `message` content? No, user might repeat "Oi".
-        // OK, let's just TAKE the last 20 messages, BUT if the last one matches `message`, remove it?
-        // No, `route.ts` will combine multiple messages `m1 + m2`.
-        // So history should exclude `m1` and `m2`.
-        // Let's rely on time?
-        // OR: Since we are debouncing, we know we are reprocessing.
-        // Let's make `sendMessageToGemini` NOT take `message` string, but `messageIds`?
-        // Too complex refactor.
+        // Importante: Excluir as *últimas* mensagens se forem as que estamos respondendo atualmente?
+        // SE o DB tem [User: Amor], [User: Nome], e estamos rodando essa função...
+        // O argumento `message` provavelmente será "Amor\nNome".
+        // Então NÃO devemos incluir "Amor" e "Nome" no histórico, senão o Gemini vê duplicado.
+        // Heurística simples: Excluir mensagens criadas nos últimos 5 segundos? Ou confiar no chamador?
+        // O chamador (route.ts) está construindo `message`. Verifique se `dbMessages` contém ela.
+        // Na verdade, mais seguro: route.ts nos envia o PROMPT. Carregamos o histórico ANTES das mensagens do prompt.
+        // Mas rastrear quais linhas do DB correspondem ao "Prompt" é difícil sem IDs.
+        // Hack: Vamos apenas NÃO carregar o histórico por enquanto se for muito arriscado, OU melhor:
+        // Assumimos que `message` contém o NOVO conteúdo. Carregamos todo o histórico do DB que é mais antigo que o "Processamento Ativo".
+        // MAS para uma abordagem simples sem estado:
+        // Vamos filtrar as mensagens que correspondem exatamente ao conteúdo de `message`? Não, o usuário pode repetir "Oi".
+        // OK, vamos apenas PEGAR as últimas 20 mensagens, MAS se a última corresponder a `message`, remova-a?
+        // Não, `route.ts` vai combinar várias mensagens `m1 + m2`.
+        // Então o histórico deve excluir `m1` e `m2`.
+        // Vamos confiar no tempo?
+        // OU: Como estamos fazendo debounce, sabemos que estamos reprocessando.
+        // Vamos fazer `sendMessageToGemini` NÃO receber string `message`, mas `messageIds`?
+        // Refatoração muito complexa.
 
-        // Let's just load history excluding the last few user messages?
-        // We will filter out messages that are "unreplied" (but we don't have that flag).
-        // Let's Try: Load ALL history.
-        // If we duplicate the last turn, Gemini 2.0 is smart enough to see "User: Oi. User: Oi." and reply once usually.
-        // But let's try to be clean.
-        // We will just use memory-less approach if we can't reliably dedup? No, context is needed.
-        // Let's map.
+        // Vamos apenas carregar o histórico excluindo as últimas mensagens do usuário?
+        // Filtraremos mensagens que são "não respondidas" (mas não temos essa flag).
+        // Vamos Tentar: Carregar TODO o histórico.
+        // Se duplicarmos o último turno, o Gemini 2.0 é inteligente o suficiente para ver "User: Oi. User: Oi." e responder uma vez geralmente.
+        // Mas vamos tentar ser limpos.
+        // Usaremos a abordagem sem memória se não conseguirmos deduplicar de forma confiável? Não, precisamos de contexto.
+        // Vamos mapear.
         .map(m => ({
             role: m.sender === 'bot' ? 'model' : 'user',
             parts: [{ text: m.content }]
         }));
 
-    // Remove the very last user messages from history if they match the input?
-    // We'll leave it to chance for now, or assume the "Prompt" is separate.
-    // Actually, if we pass history + sendMessage(prompt), Gemini treats history as past, prompt as current.
-    // If prompt is "A\nB", and History has "A", "B"... 
-    // It looks like: User: A, User: B, User: A\nB.
-    // AI might get confused.
+    // Remover as últimas mensagens do usuário do histórico se coincidirem com a entrada?
+    // Vamos deixar ao acaso por enquanto, ou assumir que o "Prompt" é separado.
+    // Na verdade, se passarmos histórico + sendMessage(prompt), o Gemini trata o histórico como passado, e prompt como atual.
+    // Se o prompt for "A\nB", e o Histórico tiver "A", "B"... 
+    // Fica parecendo: User: A, User: B, User: A\nB.
+    // A IA pode ficar confusa.
 
-    // Attempt to slice off the tail of user messages from history
-    // Iterate backwards, remove 'user' messages until we hit a 'model' message.
+    // Tentar cortar a cauda de mensagens do usuário do histórico
+    // Iterar para trás, remover mensagens de 'user' até encontrarmos uma mensagem de 'model'.
     let cleanHistory = [...history];
     while (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === 'user') {
         cleanHistory.pop();
