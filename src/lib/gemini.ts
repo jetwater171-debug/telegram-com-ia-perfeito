@@ -122,14 +122,14 @@ export const sendMessageToGemini = async (
         const result = await chat.sendMessage(message);
         const responseText = result.response.text();
         return JSON.parse(responseText) as AIResponse;
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error asking Gemini:", error);
         return {
-            internal_thought: "Error occurred",
+            internal_thought: "Error occurred: " + error.message,
             lead_classification: "desconhecido",
             lead_stats: { tarado: 0, carente: 0, sentimental: 0, financeiro: 0 },
             current_state: "WELCOME",
-            messages: ["Amor, minha internet tá ruim... já te respondo tá?"],
+            messages: [`Amor, minha internet tá ruim... (Erro Técnico: ${error.message})`],
             action: "none",
             extracted_user_name: null
         };
