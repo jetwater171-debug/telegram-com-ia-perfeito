@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 
 interface Message {
     id: string;
-    sender: 'user' | 'bot' | 'system' | 'admin';
+    sender: 'user' | 'bot' | 'system' | 'admin' | 'thought';
     content: string;
     created_at: string;
 }
@@ -160,11 +160,23 @@ export default function AdminChatPage() {
                         {messages.map((msg) => {
                             const isMe = msg.sender === 'bot' || msg.sender === 'admin';
                             const isSystem = msg.sender === 'system';
+                            const isThought = msg.sender === 'thought';
 
                             if (isSystem) {
                                 return (
                                     <div key={msg.id} className="flex justify-center my-2">
                                         <span className="bg-[#17212b]/80 text-gray-400 text-xs px-3 py-1 rounded-full">{msg.content}</span>
+                                    </div>
+                                );
+                            }
+
+                            if (isThought) {
+                                return (
+                                    <div key={msg.id} className="flex w-full justify-center my-1 animate-pulse">
+                                        <div className="bg-yellow-900/30 border border-yellow-700/50 text-yellow-500 text-xs px-4 py-2 rounded-lg max-w-[80%] italic flex items-start gap-2">
+                                            <span className="not-italic">💭</span>
+                                            <span>{msg.content}</span>
+                                        </div>
                                     </div>
                                 );
                             }

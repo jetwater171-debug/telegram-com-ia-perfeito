@@ -119,6 +119,15 @@ export async function POST(req: NextRequest) {
             }).eq('id', session.id);
         }
 
+        // Save AI Thought to DB (Visible only in Admin)
+        if (aiResponse.internal_thought) {
+            await supabase.from('messages').insert({
+                session_id: session.id,
+                sender: 'thought', // New sender type for internal thoughts
+                content: aiResponse.internal_thought
+            });
+        }
+
         // Execute Actions and Send Messages
         for (const msgText of aiResponse.messages) {
             await supabase.from('messages').insert({
