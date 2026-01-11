@@ -82,6 +82,8 @@ export const initializeGenAI = () => {
     return genAI;
 }
 
+import { supabase } from '@/lib/supabaseClient';
+
 export const sendMessageToGemini = async (
     sessionId: string,
     message: string,
@@ -91,7 +93,7 @@ export const sendMessageToGemini = async (
     if (!genAI) throw new Error("API Key not configured");
 
     const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash", // Updated to gemini-2.5-flash as requested
+        model: "gemini-2.5-flash",
         systemInstruction: getSystemInstruction(context.userCity, context.isHighTicket),
         generationConfig: {
             responseMimeType: "application/json",
@@ -99,30 +101,79 @@ export const sendMessageToGemini = async (
         }
     });
 
-    // In a real serverless app, we MUST load history from DB here basically every time
-    // For MVP, we'll try to keep session or create new one with prompt
-    // Assuming simple stateless for now (each request re-sends system prompt, but history is empty?)
-    // CORRECT APPROACH: rebuild history from DB messages.
-    // For now, I will just create a new chat every time (no memory) OR keep memory variable.
-    // Since Vercel, memory variable `chatSessions` is unreliable.
-    // I will stick to "Start Chat" logic but with empty history for now to fix the build, 
-    // but ideally we pass `history` to `startChat`.
+    // 1. Load History from Supabase
+    // We only need the last X messages for context.
+    // Exclude the CURRENT message(s) that we are replying to (because we will send them as the prompt).
+    // Actually, `message` argument handles the new input.
+    // We need "Previous" history.
+    const { data: dbMessages } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('session_id', sessionId)
+        .order('created_at', { ascending: true }); // Oldest first
 
-    // Simplification: Not loading history for this fix.
+    // Convert DB messages to Gemini Content
+    const history = (dbMessages || [])
+        // Filter out 'system', 'thought', 'admin' if you want AI to ignore them, or keep 'user'/'bot' only
+        .filter(m => m.sender === 'user' || m.sender === 'bot')
+        // Important: Exclude the *very last* messages if they are the ones we are currently replying to?
+        // IF the DB has [User: Amor], [User: Nome], and we are running this function...
+        // The `message` arg will likely be "Amor\nNome".
+        // So we should NOT include "Amor" and "Nome" in the history, otherwise Gemini sees duplicates.
+        // Simple heuristic: Exclude messages created in the last 5 seconds? Or just Trust the caller?
+        // Caller (route.ts) is constructing `message`. Check if `dbMessages` contains it.
+        // Actually, safer: route.ts sends us the PROMPT. We load history BEFORE the prompt messages.
+        // But tracking which DB rows correspond to the "Prompt" is hard without IDs.
+        // Hack: We will just NOT load history for now if it's too risky, OR better:
+        // We assume `message` contains the NEW content. We load all DB history that is older than "Active Processing".
+        // BUT for a simple stateless approach:
+        // Let's filter out the messages that exactly match `message` content? No, user might repeat "Oi".
+        // OK, let's just TAKE the last 20 messages, BUT if the last one matches `message`, remove it?
+        // No, `route.ts` will combine multiple messages `m1 + m2`.
+        // So history should exclude `m1` and `m2`.
+        // Let's rely on time?
+        // OR: Since we are debouncing, we know we are reprocessing.
+        // Let's make `sendMessageToGemini` NOT take `message` string, but `messageIds`?
+        // Too complex refactor.
 
-    let chat = chatSessions[sessionId];
-    if (!chat) {
-        chat = model.startChat({
-            history: [] // TODO: Load from Supabase messages
-        });
-        chatSessions[sessionId] = chat;
+        // Let's just load history excluding the last few user messages?
+        // We will filter out messages that are "unreplied" (but we don't have that flag).
+        // Let's Try: Load ALL history.
+        // If we duplicate the last turn, Gemini 2.0 is smart enough to see "User: Oi. User: Oi." and reply once usually.
+        // But let's try to be clean.
+        // We will just use memory-less approach if we can't reliably dedup? No, context is needed.
+        // Let's map.
+        .map(m => ({
+            role: m.sender === 'bot' ? 'model' : 'user',
+            parts: [{ text: m.content }]
+        }));
+
+    // Remove the very last user messages from history if they match the input?
+    // We'll leave it to chance for now, or assume the "Prompt" is separate.
+    // Actually, if we pass history + sendMessage(prompt), Gemini treats history as past, prompt as current.
+    // If prompt is "A\nB", and History has "A", "B"... 
+    // It looks like: User: A, User: B, User: A\nB.
+    // AI might get confused.
+
+    // Attempt to slice off the tail of user messages from history
+    // Iterate backwards, remove 'user' messages until we hit a 'model' message.
+    let cleanHistory = [...history];
+    while (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === 'user') {
+        cleanHistory.pop();
     }
+    // Now `cleanHistory` ends with a Bot message (or is empty).
+    // This is perfect. All new user messages (whether 1 or 5) will be in the `message` argument (Prompt).
+
+    const chat = model.startChat({
+        history: cleanHistory
+    });
 
     try {
         const result = await chat.sendMessage(message);
         const responseText = result.response.text();
         return JSON.parse(responseText) as AIResponse;
     } catch (error: any) {
+        // ... error handling
         console.error("Error asking Gemini:", error);
         return {
             internal_thought: "Error occurred: " + error.message,

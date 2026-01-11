@@ -92,11 +92,62 @@ export async function POST(req: NextRequest) {
         }
 
         // 3. Save User Message
-        await supabase.from('messages').insert({
+        const { data: insertedMsg } = await supabase.from('messages').insert({
             session_id: session.id,
             sender: 'user',
             content: text
-        });
+        }).select().single();
+
+        // --- DEBOUNCE LOGIC START ---
+        // Wait 6 seconds to gather other potential messages
+        await new Promise(resolve => setTimeout(resolve, 6000));
+
+        // Check if there is any user message NEWER than this one
+        const { data: latestMsg } = await supabase
+            .from('messages')
+            .select('id')
+            .eq('session_id', session.id)
+            .eq('sender', 'user')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+        // If I am NOT the latest message, it means someone else came after me.
+        // I should retire and let the latest one handle the group.
+        if (latestMsg && insertedMsg && latestMsg.id !== insertedMsg.id) {
+            console.log(`[DEBOUNCE] Skipped message ${insertedMsg.id} in favor of ${latestMsg.id}`);
+            return NextResponse.json({ ok: true });
+        }
+
+        // I AM THE MASTER! (Latest message)
+        // Now fetch ALL user messages that are "Unreplied" (basically everything after the last bot message)
+
+        // Find last bot message time
+        const { data: lastBotMsg } = await supabase
+            .from('messages')
+            .select('created_at')
+            .eq('session_id', session.id)
+            .eq('sender', 'bot')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+        const cutoffTime = lastBotMsg ? lastBotMsg.created_at : new Date(0).toISOString();
+
+        // Fetch all user messages since last bot reply
+        const { data: groupMessages } = await supabase
+            .from('messages')
+            .select('content')
+            .eq('session_id', session.id)
+            .eq('sender', 'user')
+            .gt('created_at', cutoffTime)
+            .order('created_at', { ascending: true });
+
+        // Combine them
+        const combinedText = groupMessages?.map(m => m.content).join("\n") || text;
+        console.log(`[GROUPING] Sending to Gemini: ${combinedText}`);
+
+        // --- DEBOUNCE LOGIC END ---
 
         // 4. Check if paused
         if (session.status === 'paused') {
@@ -109,7 +160,7 @@ export async function POST(req: NextRequest) {
             isHighTicket: session.device_type === 'iPhone'
         };
 
-        const aiResponse = await sendMessageToGemini(session.id, text, context);
+        const aiResponse = await sendMessageToGemini(session.id, combinedText, context);
 
         // Update Session Stats
         if (aiResponse.lead_stats) {
