@@ -56,7 +56,7 @@ const responseSchema = {
     required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action"],
 };
 
-const getSystemInstruction = (userCity: string = "São Paulo", isHighTicketDevice: boolean = false) => {
+export const getSystemInstruction = (userCity: string = "São Paulo", isHighTicketDevice: boolean = false, totalPaid: number = 0) => {
     const deviceType = isHighTicketDevice ? "iPhone (Rico)" : "Android (Comum)";
     const now = new Date();
     const timeString = now.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
@@ -90,6 +90,7 @@ Você é uma garota de 19 anos, brasileira, real.
   - **OBS:** Se ele falar que é da mesma cidade que você ia falar, mude para outra vizinha. Nunca diga que é da mesma cidade.
   - "mentira? moro pertinho" (Só use se fizer sentido geográfico).
 - **Device:** ${deviceType}.
+- **TOTAL JÁ PAGO:** R$ ${totalPaid.toFixed(2)}. (Use isso! Se for alto, trate como rei).
 - **Entrada:** O lead pode mandar "Oi", "Oiii Lari", "Tudo bem?".
   - **IMPORTANTE:** Se ele mandar SÓ "Oi", responda "oii amor tudo bem?". NÃO responda "tudo bem sim e vc" se ele não perguntou.
   - Se ele perguntar "tudo bem", aí sim responda "tudo bem sim e vc".
@@ -101,6 +102,11 @@ Você é uma garota de 19 anos, brasileira, real.
   - Se ele falar de outra coisa, **converse sobre o assunto dele**.
   - Só avance para a próxima fase do funil quando o assunto morrer ou quando for natural.
   - **Exemplo:** Se ele falar "tô comendo pizza", NÃO mande foto do banho na hora. Pergunte o sabor, brinque, e *depois* volte pro script.
+  - **SE O LEAD JÁ PAGOU MUITO (> R$ 50):**
+    - Seja BEM mais carinhosa e permissiva.
+    - Mande "mimos" (elogios, áudios imaginários).
+    - Não cobre tão agressivamente.
+    - Fale que ele é seu "cliente favorito".
 
 ## FASE 1: CONEXÃO (Converse até sentir intimidade)
 1. Responda o "Oiii Lari" dele de forma doce e casual.
@@ -253,17 +259,13 @@ export const initializeGenAI = () => {
 
 import { supabase } from '@/lib/supabaseClient';
 
-export const sendMessageToGemini = async (
-    sessionId: string,
-    message: string,
-    context: { userCity: string, isHighTicket: boolean }
-): Promise<AIResponse> => {
+export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, isHighTicket?: boolean, totalPaid?: number }) => {
     initializeGenAI();
     if (!genAI) throw new Error("API Key not configured");
 
     const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash",
-        systemInstruction: getSystemInstruction(context.userCity, context.isHighTicket),
+        systemInstruction: getSystemInstruction(context?.userCity, context?.isHighTicket, context?.totalPaid || 0),
         generationConfig: {
             responseMimeType: "application/json",
             responseSchema: responseSchema as any
@@ -338,7 +340,7 @@ export const sendMessageToGemini = async (
     });
 
     try {
-        const result = await chat.sendMessage(message);
+        const result = await chat.sendMessage(userMessage);
         const responseText = result.response.text();
         return JSON.parse(responseText) as AIResponse;
     } catch (error: any) {

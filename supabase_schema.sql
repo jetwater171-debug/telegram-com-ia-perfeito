@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     status TEXT DEFAULT 'active', -- active, paused (admin taking over), closed
     lead_score JSONB,
     user_name TEXT,
+    total_paid NUMERIC DEFAULT 0,
     last_message_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 

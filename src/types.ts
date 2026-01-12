@@ -21,6 +21,7 @@ export interface LeadStats {
     carente: number;
     sentimental: number;
     financeiro: number;
+    total_paid?: number;
 }
 
 export interface PaymentDetails {

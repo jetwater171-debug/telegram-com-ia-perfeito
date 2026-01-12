@@ -18,7 +18,9 @@ interface Session {
     last_message_at: string;
     lead_score: LeadStats;
     user_city: string;
+
     device_type: string;
+    total_paid: number;
 }
 
 export default function AdminDashboard() {
@@ -212,6 +214,16 @@ export default function AdminDashboard() {
                                             {translateStatus(session.status)}
                                         </span>
                                     </div>
+
+                                    {/* Total Paid Badge if > 0 */}
+                                    {(session.total_paid > 0) && (
+                                        <div className="mb-4 bg-green-900/20 border border-green-900/30 rounded-lg p-2 flex items-center justify-between">
+                                            <span className="text-xs text-green-400 font-bold uppercase tracking-wider">Total Pago (LTV)</span>
+                                            <span className="text-sm font-bold text-white">
+                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(session.total_paid)}
+                                            </span>
+                                        </div>
+                                    )}
 
                                     {/* Stats Grid */}
                                     <div className="grid grid-cols-2 gap-3 mb-4">

@@ -266,6 +266,15 @@ export default function AdminChatPage() {
                 </div>
 
                 <div className="p-6 space-y-6">
+                    {/* TOTAL PAID HIGHLIGHT */}
+                    <div className="bg-[#0e1621] p-4 rounded-xl border border-gray-800 text-center relative overflow-hidden group">
+                        <div className="absolute inset-0 bg-green-500/5 group-hover:bg-green-500/10 transition"></div>
+                        <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Total Gasto (LTV)</p>
+                        <p className="text-2xl font-bold text-white">
+                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(session?.total_paid || 0)}
+                        </p>
+                    </div>
+
                     <h3 className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-4">Análise da IA</h3>
 
                     {/* TARADO */}
