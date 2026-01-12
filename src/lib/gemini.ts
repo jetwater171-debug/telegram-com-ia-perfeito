@@ -353,7 +353,8 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             current_state: "WELCOME",
             messages: ["Amor, minha internet tá ruim... já te respondo tá?"],
             action: "none",
-            extracted_user_name: null
+            extracted_user_name: null,
+            payment_details: null
         };
     }
 };

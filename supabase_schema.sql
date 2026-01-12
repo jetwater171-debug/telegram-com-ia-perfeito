@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     lead_score JSONB,
     user_name TEXT,
     total_paid NUMERIC DEFAULT 0,
+    funnel_step TEXT,
     last_message_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 

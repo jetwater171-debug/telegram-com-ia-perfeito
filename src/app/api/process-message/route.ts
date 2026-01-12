@@ -115,6 +115,7 @@ export async function POST(req: NextRequest) {
     if (aiResponse.lead_stats) {
         await supabase.from('sessions').update({
             lead_score: aiResponse.lead_stats,
+            funnel_step: aiResponse.current_state,
             // FIX: Do NOT close the session just because we are in "CLOSING" (Sales Closing) phase.
             // valid statuses: active, paused, closed (manual only now)
             // status: aiResponse.current_state === 'CLOSING' ? 'closed' : session.status 

@@ -266,6 +266,38 @@ export default function AdminChatPage() {
                 </div>
 
                 <div className="p-6 space-y-6">
+                    {/* INFO GRID - NEW */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-[#0e1621] p-3 rounded-lg border border-gray-800">
+                            <p className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Status</p>
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded
+                             ${session?.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                {session?.status === 'active' ? 'ONLINE' : 'OFFLINE'}
+                            </span>
+                        </div>
+                        <div className="bg-[#0e1621] p-3 rounded-lg border border-gray-800">
+                            <p className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Fase Funil</p>
+                            <span className="text-xs font-bold text-white block truncate" title={session?.funnel_step || 'INÍCIO'}>
+                                {session?.funnel_step?.replace(/_/g, ' ') || 'INÍCIO'}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="bg-[#0e1621] p-4 rounded-xl border border-gray-800 space-y-3">
+                        <div className="flex justify-between items-center text-xs">
+                            <span className="text-gray-500 font-medium">Cadastrado</span>
+                            <span className="text-gray-300">{new Date(session?.created_at).toLocaleDateString()}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs">
+                            <span className="text-gray-500 font-medium">ID</span>
+                            <span className="text-gray-300 font-mono select-all cursor-pointer hover:text-white" title="Copiar">{session?.telegram_chat_id}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs">
+                            <span className="text-gray-500 font-medium">Device</span>
+                            <span className="text-gray-300">{session?.device_type || 'N/A'}</span>
+                        </div>
+                    </div>
+
                     {/* TOTAL PAID HIGHLIGHT */}
                     <div className="bg-[#0e1621] p-4 rounded-xl border border-gray-800 text-center relative overflow-hidden group">
                         <div className="absolute inset-0 bg-green-500/5 group-hover:bg-green-500/10 transition"></div>
