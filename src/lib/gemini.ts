@@ -316,7 +316,10 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 
             console.log(`🤖 Gemini Response (Attempt ${attempt + 1}):`, responseText);
 
-            const cleanText = responseText.replace(/```json\n?|```/g, "").trim();
+            // Tentar extrair apenas o JSON da resposta (ignorar textos antes/depois)
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            const cleanText = jsonMatch ? jsonMatch[0] : responseText.replace(/```json\n?|```/g, "").trim();
+
             let jsonResponse: AIResponse;
 
             try {
