@@ -64,7 +64,7 @@ export default function AdminSettingsPage() {
                 </div>
 
                 <div className="mb-4">
-                    <label className="block text-gray-400 mb-2">Telegram Bot Token</label>
+                    <label className="block text-gray-400 mb-2">Token do Bot Telegram</label>
                     <input
                         value={token}
                         onChange={(e) => setToken(e.target.value)}

@@ -251,6 +251,69 @@ export default function AdminChatPage() {
                     </button>
                 </footer>
             </div>
+
+            {/* 4. RIGHT SIDEBAR (Lead Stats) */}
+            <div className="w-80 bg-[#17212b] border-l border-black/10 hidden lg:flex flex-col shrink-0 overflow-y-auto">
+                <div className="p-6 flex flex-col items-center border-b border-black/10">
+                    <div className={`w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold text-white mb-4 shadow-lg
+                        ${session?.lead_score?.tarado > 70 ? 'bg-gradient-to-br from-pink-500 to-purple-600' : 'bg-gradient-to-br from-blue-400 to-blue-600'}
+                    `}>
+                        {session?.user_name?.substring(0, 2).toUpperCase() || "??"}
+                    </div>
+                    <h2 className="text-xl font-bold text-white">{session?.user_name || "Desconhecido"}</h2>
+                    <p className="text-sm text-gray-500">{session?.user_city || "Localização desconhecida"}</p>
+                    <p className="text-xs text-gray-600 mt-1">{session?.device_type || "Device não detectado"}</p>
+                </div>
+
+                <div className="p-6 space-y-6">
+                    <h3 className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-4">Análise da IA</h3>
+
+                    {/* TARADO */}
+                    <div>
+                        <div className="flex justify-between text-sm mb-1">
+                            <span className="text-pink-400 font-medium">🔥 Tarado / Safadeza</span>
+                            <span className="font-bold">{session?.lead_score?.tarado || 0}%</span>
+                        </div>
+                        <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-gradient-to-r from-pink-500 to-purple-500 transition-all duration-500"
+                                style={{ width: `${session?.lead_score?.tarado || 0}%` }}
+                            />
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-1">Nível de excitação e abertura para conteúdo adulto.</p>
+                    </div>
+
+                    {/* FINANCEIRO */}
+                    <div>
+                        <div className="flex justify-between text-sm mb-1">
+                            <span className="text-green-400 font-medium">💰 Financeiro / Poder</span>
+                            <span className="font-bold">{session?.lead_score?.financeiro || 0}%</span>
+                        </div>
+                        <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-gradient-to-r from-green-500 to-emerald-400 transition-all duration-500"
+                                style={{ width: `${session?.lead_score?.financeiro || 0}%` }}
+                            />
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-1">Capacidade de pagamento estimada.</p>
+                    </div>
+
+                    {/* CARENTE/SENTIMENTAL */}
+                    <div>
+                        <div className="flex justify-between text-sm mb-1">
+                            <span className="text-blue-400 font-medium">❤️ Sentimental / Carente</span>
+                            <span className="font-bold">{session?.lead_score?.carente || 0}%</span>
+                        </div>
+                        <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 transition-all duration-500"
+                                style={{ width: `${session?.lead_score?.carente || 0}%` }} // Mapeando 'carente' aqui
+                            />
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-1">Nível de conexão emocional e carência.</p>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }

@@ -101,6 +101,15 @@ export default function AdminDashboard() {
         return 'bg-pink-500'; // Hot
     };
 
+    const translateStatus = (status: string) => {
+        switch (status?.toLowerCase()) {
+            case 'active': return 'ATIVO';
+            case 'closed': return 'FECHADO'; // Ou ENCERRADO
+            case 'paused': return 'PAUSADO';
+            default: return status?.toUpperCase() || 'N/A';
+        }
+    };
+
     return (
         <div className="min-h-screen bg-[#0f111a] text-gray-100 font-sans selection:bg-pink-500 selection:text-white">
 
@@ -109,7 +118,7 @@ export default function AdminDashboard() {
                 <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
                     <div>
                         <h1 className="text-2xl font-bold bg-gradient-to-r from-pink-500 to-purple-500 bg-clip-text text-transparent">
-                            Lari Morais <span className="text-gray-500 font-normal text-sm ml-2">Admin Dashboard</span>
+                            Lari Morais <span className="text-gray-500 font-normal text-sm ml-2">Painel Administrativo</span>
                         </h1>
                     </div>
 
@@ -127,7 +136,7 @@ export default function AdminDashboard() {
                             <div className="w-px bg-gray-700 h-8"></div>
                             <div className="flex flex-col items-center text-pink-400">
                                 <span className="text-2xl font-bold">{stats.hot}</span>
-                                <span className="text-xs uppercase tracking-wider">Hot 🔥</span>
+                                <span className="text-xs uppercase tracking-wider">Quentes 🔥</span>
                             </div>
                         </div>
 
@@ -150,11 +159,11 @@ export default function AdminDashboard() {
                                 key={f}
                                 onClick={() => setFilter(f as any)}
                                 className={`px-6 py-2 rounded-md text-sm font-medium transition-all ${filter === f
-                                        ? 'bg-gray-700 text-white shadow-md'
-                                        : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                                    ? 'bg-gray-700 text-white shadow-md'
+                                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
                                     } first-letter:uppercase`}
                             >
-                                {f === 'hot' ? 'Hot Leads 🔥' : (f === 'paused' ? 'Pausados (Manual)' : (f === 'active' ? 'Ativos' : 'Todos'))}
+                                {f === 'hot' ? 'Quentes 🔥' : (f === 'paused' ? 'Pausados' : (f === 'active' ? 'Ativos' : 'Todos'))}
                             </button>
                         ))}
                     </div>
@@ -200,7 +209,7 @@ export default function AdminDashboard() {
                                                 ? 'bg-green-900/20 text-green-400 border-green-900/50'
                                                 : 'bg-red-900/20 text-red-400 border-red-900/50'}
                                         `}>
-                                            {session.status}
+                                            {translateStatus(session.status)}
                                         </span>
                                     </div>
 
