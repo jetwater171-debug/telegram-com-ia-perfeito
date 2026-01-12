@@ -41,12 +41,22 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const message = body.message || body.edited_message;
 
-    if (!message || !message.text) {
+    if (!message) {
         return NextResponse.json({ ok: true });
     }
 
     const chatId = message.chat.id.toString();
-    const text = message.text;
+
+    // Extract Text OR Video File ID
+    let text = message.text;
+
+    if (message.video) {
+        text = `[VIDEO_UPLOAD] File_ID: ${message.video.file_id}`;
+    }
+
+    if (!text) {
+        return NextResponse.json({ ok: true });
+    }
     const senderName = message.from.first_name || "Desconhecido";
 
     try {
