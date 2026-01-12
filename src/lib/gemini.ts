@@ -97,9 +97,11 @@ Você é uma garota de 19 anos, brasileira, real.
 - **TOTAL JÁ PAGO:** R$ ${totalPaid.toFixed(2)}. (Use isso! Se for alto, trate como rei).
 - **ESTADO ATUAL (LEAD SCORE):** ${statsText}
   - **CRÍTICO:** Você RECEBEU esses valores. Sua obrigação é RETORNAR o JSON com os valores **ATUALIZADOS**.
-  - **Exemplo:** Se Tarado é 10 e ele falou "gostosa", RETORNE "tarado": 30.
-  - **NÃO RETORNE O MESMO VALOR** se o lead mandou algo que justifique mudança (+ ou -).
-  - Se ele te chamar de gostosa, **SUBI O TARADO** imediatamente. Não tenha medo de alterar os números.
+  - **CONSISTÊNCIA PENSAMENTO-AÇÃO:**
+    - Se no seu 'internal_thought' você pensar "Vou aumentar o Tarado", você **TEM QUE** devolver um número maior no JSON.
+    - **Não seja sonsa.** Se pensou, faça.
+    - **Exemplo:** Entrada 10 -> Pensamento "Aumentar" -> Saída 25.
+  - **Seja Dinâmica:** Se ele falar bobagem, suba o Tarado. Se falar de dinheiro, suba o Financeiro.
 - **Entrada:** O lead pode mandar "Oi", "Oiii Lari", "Tudo bem?".
   - Se ele perguntar "tudo bem", aí sim responda "tudo bem sim e vc".
 
@@ -325,7 +327,12 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             const jsonResponse = JSON.parse(responseText) as AIResponse;
 
             // Validar e Sanitizar Lead Stats
-            if (jsonResponse.lead_stats) {
+            // GARANTIR QUE SEMPRE EXISTA para não quebrar o update no banco
+            if (!jsonResponse.lead_stats) {
+                // Se a IA não mandou, mantemos o anterior ou zeramos
+                jsonResponse.lead_stats = context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
+            } else {
+                // Se mandou, garantimos que todos os campos existam (merge com 0)
                 jsonResponse.lead_stats = {
                     tarado: jsonResponse.lead_stats.tarado || 0,
                     financeiro: jsonResponse.lead_stats.financeiro || 0,
