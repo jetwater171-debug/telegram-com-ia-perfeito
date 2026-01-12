@@ -55,6 +55,16 @@ export default function AdminChatPage() {
                 });
                 scrollToBottom();
             })
+            // Listen for SESSION UPDATES (Realtime Stats/Funnel)
+            .on('postgres_changes', {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'sessions',
+                filter: `id=eq.${sessionId}`
+            }, (payload) => {
+                console.log("Session update received:", payload.new);
+                setSession(payload.new);
+            })
             .subscribe();
 
         return () => { supabase.removeChannel(channel); };
@@ -254,104 +264,104 @@ export default function AdminChatPage() {
 
             {/* 4. RIGHT SIDEBAR (Lead Stats) */}
             <div className="w-80 bg-[#17212b] border-l border-black/10 hidden lg:flex flex-col shrink-0 overflow-y-auto">
-                <div className="p-6 flex flex-col items-center border-b border-black/10">
-                    <div className={`w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold text-white mb-4 shadow-lg
+                <div className="p-6 flex flex-col items-center border-b border-white/5 bg-[#17212b]">
+                    <div className={`w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold text-white mb-4 shadow-lg ring-4 ring-white/5
                         ${session?.lead_score?.tarado > 70 ? 'bg-gradient-to-br from-pink-500 to-purple-600' : 'bg-gradient-to-br from-blue-400 to-blue-600'}
                     `}>
                         {session?.user_name?.substring(0, 2).toUpperCase() || "??"}
                     </div>
                     <h2 className="text-xl font-bold text-white">{session?.user_name || "Desconhecido"}</h2>
-                    <p className="text-sm text-gray-500">{session?.user_city || "Localização desconhecida"}</p>
-                    <p className="text-xs text-gray-600 mt-1">{session?.device_type || "Device não detectado"}</p>
+                    <p className="text-sm text-gray-400">{session?.user_city || "Localização desconhecida"}</p>
+                    <p className="text-xs text-gray-500 mt-1">{session?.device_type || "Device não detectado"}</p>
                 </div>
 
                 <div className="p-6 space-y-6">
                     {/* INFO GRID - NEW */}
                     <div className="grid grid-cols-2 gap-3">
-                        <div className="bg-[#0e1621] p-3 rounded-lg border border-gray-800">
-                            <p className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Status</p>
+                        <div className="bg-black/20 p-3 rounded-lg border border-white/10">
+                            <p className="text-gray-400 text-[10px] uppercase font-bold tracking-wider mb-1">Status</p>
                             <span className={`text-xs font-bold px-2 py-0.5 rounded
                              ${session?.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
                                 {session?.status === 'active' ? 'ONLINE' : 'OFFLINE'}
                             </span>
                         </div>
-                        <div className="bg-[#0e1621] p-3 rounded-lg border border-gray-800">
-                            <p className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Fase Funil</p>
+                        <div className="bg-black/20 p-3 rounded-lg border border-white/10">
+                            <p className="text-gray-400 text-[10px] uppercase font-bold tracking-wider mb-1">Fase Funil</p>
                             <span className="text-xs font-bold text-white block truncate" title={session?.funnel_step || 'INÍCIO'}>
                                 {session?.funnel_step?.replace(/_/g, ' ') || 'INÍCIO'}
                             </span>
                         </div>
                     </div>
 
-                    <div className="bg-[#0e1621] p-4 rounded-xl border border-gray-800 space-y-3">
+                    <div className="bg-black/20 p-4 rounded-xl border border-white/10 space-y-3">
                         <div className="flex justify-between items-center text-xs">
-                            <span className="text-gray-500 font-medium">Cadastrado</span>
-                            <span className="text-gray-300">{new Date(session?.created_at).toLocaleDateString()}</span>
+                            <span className="text-gray-400 font-medium">Cadastrado</span>
+                            <span className="text-gray-200 font-mono bg-black/30 px-2 py-1 rounded">{new Date(session?.created_at).toLocaleDateString()}</span>
                         </div>
                         <div className="flex justify-between items-center text-xs">
-                            <span className="text-gray-500 font-medium">ID</span>
-                            <span className="text-gray-300 font-mono select-all cursor-pointer hover:text-white" title="Copiar">{session?.telegram_chat_id}</span>
+                            <span className="text-gray-400 font-medium">ID</span>
+                            <span className="text-gray-200 font-mono select-all cursor-pointer hover:text-white bg-black/30 px-2 py-1 rounded w-32 truncate text-right" title="Copiar">{session?.telegram_chat_id}</span>
                         </div>
                         <div className="flex justify-between items-center text-xs">
-                            <span className="text-gray-500 font-medium">Device</span>
-                            <span className="text-gray-300">{session?.device_type || 'N/A'}</span>
+                            <span className="text-gray-400 font-medium">Device</span>
+                            <span className="text-gray-200">{session?.device_type || 'N/A'}</span>
                         </div>
                     </div>
 
                     {/* TOTAL PAID HIGHLIGHT */}
-                    <div className="bg-[#0e1621] p-4 rounded-xl border border-gray-800 text-center relative overflow-hidden group">
+                    <div className="bg-gradient-to-br from-green-900/30 to-emerald-900/10 p-4 rounded-xl border border-green-500/30 text-center relative overflow-hidden group hover:border-green-500/50 transition-all">
                         <div className="absolute inset-0 bg-green-500/5 group-hover:bg-green-500/10 transition"></div>
-                        <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Total Gasto (LTV)</p>
-                        <p className="text-2xl font-bold text-white">
+                        <p className="text-green-400 text-xs font-bold uppercase tracking-wider mb-1">Total Gasto (LTV)</p>
+                        <p className="text-3xl font-bold text-white tracking-tight drop-shadow-sm">
                             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(session?.total_paid || 0)}
                         </p>
                     </div>
 
-                    <h3 className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-4">Análise da IA</h3>
+                    <h3 className="text-white text-xs font-bold uppercase tracking-wider mb-4 border-b border-white/10 pb-2">Análise da IA</h3>
 
                     {/* TARADO */}
-                    <div>
-                        <div className="flex justify-between text-sm mb-1">
-                            <span className="text-pink-400 font-medium">🔥 Tarado / Safadeza</span>
-                            <span className="font-bold">{session?.lead_score?.tarado || 0}%</span>
+                    <div className="bg-black/20 p-3 rounded-lg border border-white/5">
+                        <div className="flex justify-between text-sm mb-2">
+                            <span className="text-pink-400 font-bold flex items-center gap-2">🔥 Tarado</span>
+                            <span className="font-bold text-white">{session?.lead_score?.tarado || 0}%</span>
                         </div>
-                        <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden">
+                        <div className="w-full bg-gray-700/50 h-2.5 rounded-full overflow-hidden">
                             <div
-                                className="h-full bg-gradient-to-r from-pink-500 to-purple-500 transition-all duration-500"
+                                className="h-full bg-gradient-to-r from-pink-500 to-purple-500 transition-all duration-700 ease-out shadow-[0_0_10px_rgba(236,72,153,0.5)]"
                                 style={{ width: `${session?.lead_score?.tarado || 0}%` }}
                             />
                         </div>
-                        <p className="text-[10px] text-gray-500 mt-1">Nível de excitação e abertura para conteúdo adulto.</p>
+                        <p className="text-[10px] text-gray-400 mt-2 leading-tight">Nível de excitação e abertura para conteúdo adulto.</p>
                     </div>
 
                     {/* FINANCEIRO */}
-                    <div>
-                        <div className="flex justify-between text-sm mb-1">
-                            <span className="text-green-400 font-medium">💰 Financeiro / Poder</span>
-                            <span className="font-bold">{session?.lead_score?.financeiro || 0}%</span>
+                    <div className="bg-black/20 p-3 rounded-lg border border-white/5">
+                        <div className="flex justify-between text-sm mb-2">
+                            <span className="text-green-400 font-bold flex items-center gap-2">💰 Financeiro</span>
+                            <span className="font-bold text-white">{session?.lead_score?.financeiro || 0}%</span>
                         </div>
-                        <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden">
+                        <div className="w-full bg-gray-700/50 h-2.5 rounded-full overflow-hidden">
                             <div
-                                className="h-full bg-gradient-to-r from-green-500 to-emerald-400 transition-all duration-500"
+                                className="h-full bg-gradient-to-r from-green-500 to-emerald-400 transition-all duration-700 ease-out shadow-[0_0_10px_rgba(34,197,94,0.5)]"
                                 style={{ width: `${session?.lead_score?.financeiro || 0}%` }}
                             />
                         </div>
-                        <p className="text-[10px] text-gray-500 mt-1">Capacidade de pagamento estimada.</p>
+                        <p className="text-[10px] text-gray-400 mt-2 leading-tight">Capacidade de pagamento estimada.</p>
                     </div>
 
                     {/* CARENTE/SENTIMENTAL */}
-                    <div>
-                        <div className="flex justify-between text-sm mb-1">
-                            <span className="text-blue-400 font-medium">❤️ Sentimental / Carente</span>
-                            <span className="font-bold">{session?.lead_score?.carente || 0}%</span>
+                    <div className="bg-black/20 p-3 rounded-lg border border-white/5">
+                        <div className="flex justify-between text-sm mb-2">
+                            <span className="text-blue-400 font-bold flex items-center gap-2">❤️ Carente</span>
+                            <span className="font-bold text-white">{session?.lead_score?.carente || 0}%</span>
                         </div>
-                        <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden">
+                        <div className="w-full bg-gray-700/50 h-2.5 rounded-full overflow-hidden">
                             <div
-                                className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 transition-all duration-500"
-                                style={{ width: `${session?.lead_score?.carente || 0}%` }} // Mapeando 'carente' aqui
+                                className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 transition-all duration-700 ease-out shadow-[0_0_10px_rgba(59,130,246,0.5)]"
+                                style={{ width: `${session?.lead_score?.carente || 0}%` }}
                             />
                         </div>
-                        <p className="text-[10px] text-gray-500 mt-1">Nível de conexão emocional e carência.</p>
+                        <p className="text-[10px] text-gray-400 mt-2 leading-tight">Nível de conexão emocional e carência.</p>
                     </div>
                 </div>
             </div>
