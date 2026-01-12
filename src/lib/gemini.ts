@@ -237,7 +237,7 @@ Você é um ANALISTA SILENCIOSO. A cada mensagem, julgue o lead e ATUALIZE os va
   - Diz que você é "diferente das outras".
 - **DIMINUIR:**
   - Seco, direto ao ponto (só quer o nude e tchau).
-  - Trata você como robô ou atendente.
+  - Trata você como nada ou uma puta.
 
 # EXEMPLOS DE FORMATAÇÃO
 - Lead: "Quanto é?"
@@ -339,22 +339,49 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         history: cleanHistory
     });
 
-    try {
-        const result = await chat.sendMessage(userMessage);
-        const responseText = result.response.text();
-        return JSON.parse(responseText) as AIResponse;
-    } catch (error: any) {
-        // ... error handling
-        console.error("Error asking Gemini:", error);
-        return {
-            internal_thought: "Error occurred: " + error.message,
-            lead_classification: "desconhecido",
-            lead_stats: { tarado: 0, carente: 0, sentimental: 0, financeiro: 0 },
-            current_state: "WELCOME",
-            messages: ["Amor, minha internet tá ruim... já te respondo tá?"],
-            action: "none",
-            extracted_user_name: null,
-            payment_details: null
-        };
+    let attempt = 0;
+    const maxRetries = 3;
+
+    while (attempt < maxRetries) {
+        try {
+            const result = await chat.sendMessage(userMessage);
+            const responseText = result.response.text();
+            return JSON.parse(responseText) as AIResponse;
+        } catch (error: any) {
+            console.error(`Attempt ${attempt + 1} failed:`, error.message);
+
+            // Retry if 503 or Overloaded
+            if (error.message.includes('503') || error.message.includes('Overloaded')) {
+                attempt++;
+                if (attempt < maxRetries) {
+                    await new Promise(r => setTimeout(r, 2000 * attempt));
+                    continue;
+                }
+            }
+
+            // Final Error Fallback
+            return {
+                internal_thought: "Error occurred: " + error.message,
+                lead_classification: "desconhecido",
+                lead_stats: { tarado: 0, carente: 0, sentimental: 0, financeiro: 0 },
+                current_state: "HOT_TALK",
+                messages: ["Amor, o Telegram tá meio ruim aqui... manda de novo?"],
+                action: "none",
+                extracted_user_name: null,
+                payment_details: null
+            };
+        }
     }
+
+    // Should be unreachable
+    return {
+        internal_thought: "System Error",
+        lead_classification: "desconhecido",
+        lead_stats: { tarado: 0, carente: 0, sentimental: 0, financeiro: 0 },
+        current_state: "WELCOME",
+        messages: ["..."],
+        action: "none",
+        extracted_user_name: null,
+        payment_details: null
+    };
 };
