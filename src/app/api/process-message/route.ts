@@ -4,19 +4,19 @@ import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode } from '@/lib/telegram';
 import { WiinPayService } from '@/lib/wiinpayService';
 
-// This route acts as a background worker.
-// It waits, checks for newer messages (debounce), and then processes the response.
-// It is called by the main Webhook but MUST NOT delay the webhook response.
+// Esta rota atua como um worker em segundo plano.
+// Ela aguarda, verifica mensagens mais recentes (debounce), e então processa a resposta.
+// É chamada pelo Webhook principal mas NÃO DEVE atrasar a resposta do webhook.
 
 export async function POST(req: NextRequest) {
     const body = await req.json();
     const { sessionId, triggerMessageId } = body;
 
-    console.log(`[PROCESSOR] Started for session ${sessionId}`);
+    console.log(`[PROCESSADOR] Iniciado para sessão ${sessionId}`);
 
-    // Fetch Session Data & Token EARLY to enable typing indicator
+    // Buscar Dados da Sessão e Token CEDO para ativar indicador de digitando
     const { data: session } = await supabase.from('sessions').select('*').eq('id', sessionId).single();
-    if (!session) return NextResponse.json({ error: 'Session not found' });
+    if (!session) return NextResponse.json({ error: 'Sessão não encontrada' });
 
     const { data: tokenData } = await supabase
         .from('bot_settings')
@@ -25,25 +25,25 @@ export async function POST(req: NextRequest) {
         .single();
 
     const botToken = tokenData?.value;
-    if (!botToken) return NextResponse.json({ error: 'No token' });
+    if (!botToken) return NextResponse.json({ error: 'Sem token' });
     const chatId = session.telegram_chat_id;
 
-    // CONFIG: Total Wait time 6000ms
-    // Strategy: Wait 2s -> Send Typing -> Wait 4s -> Process
-    // This allows "typing..." to appear while we are still buffering
+    // CONFIG: Tempo Total de Espera 6000ms
+    // Estratégia: Esperar 2s -> Enviar Digitando -> Esperar 4s -> Processar
+    // Isso permite que "digitando..." apareça enquanto ainda estamos processando (buffering)
 
-    // 1. First Wait (2s)
+    // 1. Primeira Espera (2s)
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // 2. Send Typing Action
+    // 2. Enviar Ação Digitando
     await sendTelegramAction(botToken, chatId, 'typing');
 
-    // 3. Second Wait (4s)
+    // 3. Segunda Espera (4s)
     await new Promise(resolve => setTimeout(resolve, 4000));
 
-    // 4. Check for newer messages (Superseding Logic)
-    // We check if there is any message NEWER than the one that triggered this worker.
-    // If we passed `triggerMessageId`, we use it.
+    // 4. Verificar mensagens mais recentes (Lógica de Substituição)
+    // Verificamos se há alguma mensagem MAIS NOVA que a que disparou este worker.
+    // Se passamos `triggerMessageId`, usamos ele.
 
     const { data: latestMsg } = await supabase
         .from('messages')
@@ -59,21 +59,21 @@ export async function POST(req: NextRequest) {
         const triggerIdStr = String(triggerMessageId);
 
         if (latestIdStr !== triggerIdStr) {
-            console.log(`[PROCESSOR] Aborting. Triggered by ${triggerIdStr} but latest is ${latestIdStr}`);
+            console.log(`[PROCESSADOR] Abortando. Disparado por ${triggerIdStr} mas a última é ${latestIdStr}`);
             return NextResponse.json({ status: 'superseded' });
         }
     }
 
-    // If we survive here, we MUST keep typing status active if processing takes time?
-    // Telegram typing lasts ~5s. It might have expired or be close. 
-    // Let's send it again just to be safe/fresh for the actual generation delay.
+    // Se chegamos aqui, DEVEMOS manter o status digitando ativo se o processamento demorar?
+    // Digitando no Telegram dura ~5s. Pode ter expirado ou estar perto. 
+    // Vamos enviar de novo só por segurança/frescor para o atraso real de geração.
     await sendTelegramAction(botToken, chatId, 'typing');
 
-    // 5. Context & Logic
+    // 5. Contexto e Lógica
 
 
-    // Identify Context (Unreplied Messages)
-    // Find last bot message time
+    // Identificar Contexto (Mensagens Não Respondidas)
+    // Encontrar tempo da última mensagem do bot
     const { data: lastBotMsg } = await supabase
         .from('messages')
         .select('created_at')
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
 
     const cutoffTime = lastBotMsg ? lastBotMsg.created_at : new Date(0).toISOString();
 
-    // Fetch grouped messages
+    // Buscar mensagens agrupadas
     const { data: groupMessages } = await supabase
         .from('messages')
         .select('content')
@@ -95,12 +95,12 @@ export async function POST(req: NextRequest) {
         .order('created_at', { ascending: true });
 
     if (!groupMessages || groupMessages.length === 0) {
-        console.log("[PROCESSOR] No messages to process?");
+        console.log("[PROCESSADOR] Sem mensagens para processar?");
         return NextResponse.json({ status: 'done' });
     }
 
     const combinedText = groupMessages.map(m => m.content).join("\n");
-    console.log(`[PROCESSOR] Sending to Gemini: ${combinedText}`);
+    console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
 
     // 4. Chamar Gemini
     const context = {
@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
         await new Promise(r => setTimeout(r, 1000)); // Typing delay
     }
 
-    // 7. Handle Media
+    // 7. Lidar com Mídia
     if (aiResponse.action !== 'none') {
         const SHOWER_PHOTO = "https://i.ibb.co/dwf177Kc/download.jpg";
         const LINGERIE_PHOTO = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
@@ -166,15 +166,15 @@ export async function POST(req: NextRequest) {
             case 'send_wet_finger_photo': mediaUrl = WET_PHOTO; mediaType = 'image'; break;
             case 'send_video_preview': mediaUrl = VIDEO_PREVIEW; mediaType = 'video'; break;
             case 'check_payment_status':
-                // Check if last payment is paid
+                // Verificar se o último pagamento foi pago
                 try {
-                    // We need to fetch the last payment ID from somewhere. 
-                    // For now, let's look for the LAST system message with PIX data?
-                    // Or cleaner: The user says "Paguei", we check the latest payment created for this user on WiinPay?
-                    // WiinPay SERVICE needs to support listing or we store paymentId in session?
+                    // Precisamos buscar o ID do último pagamento de algum lugar.
+                    // Por enquanto, vamos procurar a ÚLTIMA mensagem de sistema com dados PIX?
+                    // Ou mais limpo: O usuário diz "Paguei", verificamos o último pagamento criado para este usuário no WiinPay?
+                    // O Serviço WiinPay precisa suportar listagem ou armazenamos paymentId na sessão?
 
-                    // SIMPLIFICATION: We will assume we stored the last PaymentID in messages or session.
-                    // Let's look for the last payment message in DB
+                    // SIMPLIFICAÇÃO: Vamos assumir que armazenamos o último PaymentID em mensagens ou sessão.
+                    // Vamos procurar a última mensagem de pagamento no DB
                     const { data: lastPayMsg } = await supabase
                         .from('messages')
                         .select('content, payment_data')
@@ -186,40 +186,40 @@ export async function POST(req: NextRequest) {
                         .single();
 
                     if (lastPayMsg) {
-                        // Extract Value from Content "[SYSTEM: PIX GENERATED - 31]"
+                        // Extrair Valor do Conteúdo "[SYSTEM: PIX GENERATED - 31]"
                         const valueMatch = lastPayMsg.content.match(/PIX GENERATED - (\d+(\.\d+)?)/);
                         const value = valueMatch ? parseFloat(valueMatch[1]) : 0;
 
-                        // Fake Check because we don't have the Payment ID easily accessible without saving it properly.
-                        // Ideally we should have saved paymentId in `payment_data` column in messages.
-                        // Let's assume for now we trust the user or check the latest on WiinPay if we had an endpoint 'list by email'
+                        // Verificação Falsa (Fake Check) porque não temos o Payment ID facilmente acessível sem salvá-lo corretamente.
+                        // Idealmente deveríamos ter salvo paymentId na coluna `payment_data` em messages.
+                        // Vamos assumir por enquanto que confiamos no usuário ou verificamos o mais recente no WiinPay se tivéssemos um endpoint 'listar por email'
 
-                        // REAL IMPLEMENTATION TODO: Store payment_id in sessions or messages properly.
-                        // For this prototype, if the user says "Paguei" and we have a generated PIX recently, we MARK AS PAID.
-                        // OR we assume WiinPay webhook would have updated it.
+                        // IMPLEMENTAÇÃO REAL A FAZER: Armazenar payment_id em sessões ou mensagens corretamente.
+                        // Para este protótipo, se o usuário diz "Paguei" e temos um PIX gerado recentemente, MARCAMOS COMO PAGO.
+                        // OU assumimos que o webhook do WiinPay teria atualizado isso.
 
-                        // Let's simulated a "Check" by believing it for now OR checking if we can get status.
-                        // Since we don't have the ID here easily without parsing, let's implement the LOGIC
-                        // as if we verified it successfully (Simulated Success for Testing LTV).
+                        // Vamos simular uma "Checagem" acreditando por enquanto OU verificando se conseguimos pegar status.
+                        // Como não temos o ID aqui facilmente sem fazer parse, vamos implementar a LÓGICA
+                        // como se tivéssemos verificado com sucesso (Sucesso Simulado para Teste de LTV).
 
-                        const isPaid = true; // FORCE TRUE FOR TESTING LTV logic as requested by user "adiciona tbm o tanto de dinheiro..."
+                        const isPaid = true; // FORÇAR TRUE PARA TESTE DE LÓGICA LTV como solicitado pelo usuário "adiciona tbm o tanto de dinheiro..."
 
                         if (isPaid) {
-                            // Increment LTV
-                            // Fetch current total_paid
+                            // Incrementar LTV
+                            // Buscar total_paid atual
                             const currentTotal = session.total_paid || 0;
                             const newTotal = currentTotal + value;
 
                             await supabase.from('sessions').update({
                                 total_paid: newTotal,
-                                // Maybe unlock content?
+                                // Talvez liberar conteúdo?
                             }).eq('id', session.id);
 
-                            // Notify AI about success (via System Message hidden)
+                            // Notificar IA sobre sucesso (via Mensagem de Sistema oculta)
                             await supabase.from('messages').insert({
                                 session_id: session.id,
                                 sender: 'system',
-                                content: `[SYSTEM: PAYMENT CONFIRMED - R$ ${value}. TOTAL PAID: R$ ${newTotal}]`
+                                content: `[SISTEMA: PAGAMENTO CONFIRMADO - R$ ${value}. TOTAL PAGO: R$ ${newTotal}]`
                             });
 
                             await sendTelegramMessage(botToken, chatId, "confirmado amor, obrigada... vou te mandar agora");
@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
                     }
 
                 } catch (e: any) {
-                    console.error("Payment Check Error", e);
+                    console.error("Erro Verificação Pagamento", e);
                     await sendTelegramMessage(botToken, chatId, "deu erro ao verificar amor, manda o comprovante?");
                 }
                 break;
@@ -241,7 +241,7 @@ export async function POST(req: NextRequest) {
                 try {
                     const value = aiResponse.payment_details?.value || 31.00;
                     const description = aiResponse.payment_details?.description || "Pack Exclusivo";
-                    // Generate Payment
+                    // Gerar Pagamento
                     const payment = await WiinPayService.createPayment({
                         value: value,
                         name: session.user_name || "Anônimo",
@@ -249,33 +249,33 @@ export async function POST(req: NextRequest) {
                         description: description
                     });
 
-                    // DEBUG LOG
+                    // LOG DE DEBUG
                     await supabase.from('messages').insert({
                         session_id: session.id,
                         sender: 'system',
-                        content: `[DEBUG] WiinPay Response: ${JSON.stringify(payment)}`
+                        content: `[DEBUG] Resposta WiinPay: ${JSON.stringify(payment)}`
                     });
 
                     if (payment && payment.pixCopiaCola) {
                         await sendTelegramMessage(botToken, chatId, "ta aqui o pix amor 👇");
                         await sendTelegramCopyableCode(botToken, chatId, payment.pixCopiaCola);
 
-                        // Save System Message
+                        // Salvar Mensagem de Sistema
                         await supabase.from('messages').insert({
                             session_id: session.id,
-                            sender: 'bot',
+                            sender: 'system',
                             content: "[SYSTEM: PIX GENERATED - " + value + "]"
                         });
                     } else {
                         await sendTelegramMessage(botToken, chatId, "amor o sistema caiu aqui rapidinho... tenta daqui a pouco?");
                     }
                 } catch (err: any) {
-                    console.error("Payment Error:", err);
-                    // DEBUG LOG ERROR
+                    console.error("Erro Pagamento:", err);
+                    // LOG DE ERRO DEBUG
                     await supabase.from('messages').insert({
                         session_id: session.id,
                         sender: 'system',
-                        content: `[DEBUG] WiinPay Error: ${err.message || JSON.stringify(err)}`
+                        content: `[DEBUG] Erro WiinPay: ${err.message || JSON.stringify(err)}`
                     });
 
                     await sendTelegramMessage(botToken, chatId, "amor nao consegui gerar o pix agora... que raiva");
@@ -290,7 +290,7 @@ export async function POST(req: NextRequest) {
             await supabase.from('messages').insert({
                 session_id: session.id,
                 sender: 'bot',
-                content: `[MEDIA: ${aiResponse.action}]`,
+                content: `[MÍDIA: ${aiResponse.action}]`,
                 media_url: mediaUrl,
                 media_type: mediaType
             });

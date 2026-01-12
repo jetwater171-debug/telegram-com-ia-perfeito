@@ -170,7 +170,24 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             console.log(`🤖 Gemini Response (Attempt ${attempt + 1}):`, responseText);
 
             const cleanText = responseText.replace(/```json\n?|```/g, "").trim();
-            const jsonResponse = JSON.parse(cleanText) as AIResponse;
+            let jsonResponse: AIResponse;
+
+            try {
+                jsonResponse = JSON.parse(cleanText) as AIResponse;
+            } catch (parseError) {
+                console.warn("⚠️ Gemini retornou texto puro, usando fallback manual.");
+                // Se falhar o parse, assumimos que o texto É a resposta da Lari.
+                jsonResponse = {
+                    internal_thought: "Falha no JSON, recuperando texto puro.",
+                    lead_classification: "desconhecido",
+                    lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
+                    current_state: "HOT_TALK",
+                    messages: [cleanText], // Usamos o texto cru como mensagem
+                    action: "none",
+                    payment_details: null,
+                    extracted_user_name: null
+                };
+            }
 
             // Validar e Sanitizar Lead Stats
             if (jsonResponse.lead_stats) {
@@ -197,7 +214,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             }
 
             // Fallback se esgotar as tentativas
-            if (attempt >= maxRetries - 1) { // Check if it's the last attempt
+            if (attempt >= maxRetries - 1) { // Verifica se é a última tentativa
                 return {
                     internal_thought: "Erro na IA, respondendo fallback: " + error.message,
                     lead_classification: "desconhecido",
@@ -209,11 +226,11 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
                     extracted_user_name: null
                 };
             }
-            attempt++; // Ensure increment if not 503 error but still failed
+            attempt++; // Garante incremento se não for erro 503 mas ainda falhar
         }
     }
 
-    // Fallback final de segurança (unreachable usually)
+    // Fallback final de segurança (geralmente inalcançável)
     return {
         internal_thought: "System Error Fallback",
         lead_classification: "desconhecido",
