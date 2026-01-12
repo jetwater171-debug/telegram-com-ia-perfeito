@@ -30,8 +30,9 @@ export const sendTelegramVideo = async (token: string, chatId: string, videoUrl:
         // Como estamos usando File IDs agora, a verificação de arquivo local foi removida para simplificar.
 
         await bot.telegram.sendVideo(chatId, videoUrl, { caption });
-    } catch (e) {
+    } catch (e: any) {
         console.error("Failed to send video to Telegram:", e);
+        throw new Error(`Telegram Video Error: ${e.message || JSON.stringify(e)}`);
     }
 };
 

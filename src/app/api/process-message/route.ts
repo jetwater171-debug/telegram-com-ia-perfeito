@@ -291,16 +291,27 @@ export async function POST(req: NextRequest) {
         }
 
         if (mediaUrl) {
-            if (mediaType === 'image') await sendTelegramPhoto(botToken, chatId, mediaUrl, caption);
-            if (mediaType === 'video') await sendTelegramVideo(botToken, chatId, mediaUrl, "olha isso");
+            try {
+                if (mediaType === 'image') await sendTelegramPhoto(botToken, chatId, mediaUrl, caption);
+                if (mediaType === 'video') await sendTelegramVideo(botToken, chatId, mediaUrl, "olha isso");
 
-            await supabase.from('messages').insert({
-                session_id: session.id,
-                sender: 'bot',
-                content: `[MÍDIA: ${aiResponse.action}]`,
-                media_url: mediaUrl,
-                media_type: mediaType
-            });
+                await supabase.from('messages').insert({
+                    session_id: session.id,
+                    sender: 'bot',
+                    content: `[MÍDIA: ${aiResponse.action}]`,
+                    media_url: mediaUrl,
+                    media_type: mediaType
+                });
+            } catch (err: any) {
+                console.error("Erro ao enviar mídia:", err);
+                await supabase.from('messages').insert({
+                    session_id: session.id,
+                    sender: 'system',
+                    content: `[DEBUG: ERRO MÍDIA] ${err.message}`
+                });
+                // Fallback: Avisar usuário se falhar vídeo
+                await sendTelegramMessage(botToken, chatId, "(amor tive um erro pra enviar o video... tenta de novo?)");
+            }
         }
     }
 
