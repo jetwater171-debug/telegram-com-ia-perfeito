@@ -116,6 +116,9 @@ export async function POST(req: NextRequest) {
 
     // 5. Atualizar Stats & Salvar Pensamentos
     if (aiResponse.lead_stats) {
+        console.log("📊 [STATS UPDATE] ANTES:", JSON.stringify(session.lead_score));
+        console.log("📊 [STATS UPDATE] DEPOIS (IA):", JSON.stringify(aiResponse.lead_stats));
+
         // LÓGICA DE CONFIANÇA NA IA: A IA recebe os stats atuais no contexto.
         // Confiamos na saída dela para aumentar OU diminuir os valores.
 
@@ -124,7 +127,11 @@ export async function POST(req: NextRequest) {
             funnel_step: aiResponse.current_state,
         }).eq('id', session.id).select();
 
-        if (updateResult.error) console.error("Erro ao Atualizar Stats:", updateResult.error);
+        if (updateResult.error) {
+            console.error("❌ ERRO ao Atualizar Stats:", updateResult.error);
+        } else {
+            console.log("✅ Stats Atualizados no DB com Sucesso:", updateResult.data);
+        }
     }
 
 
@@ -297,5 +304,9 @@ export async function POST(req: NextRequest) {
         }
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+        success: true,
+        debug_stats: aiResponse.lead_stats,
+        debug_funnel: aiResponse.current_state
+    });
 }
