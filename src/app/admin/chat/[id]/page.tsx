@@ -197,7 +197,7 @@ export default function AdminChatPage() {
                                         className={`relative max-w-[85%] sm:max-w-[70%] px-3 py-2 rounded-lg text-[15px] shadow-sm leading-snug break-words
                                             ${isMe
                                                 ? 'bg-[#2b5278] text-white rounded-tr-none'
-                                                : 'bg-[#182533] text-white rounded-tl-none'}
+                                                : 'bg-[#2b2d31] text-white rounded-tl-none'}
                                         `}
                                     >
                                         {/* Sender Name (Only for Admin to distinguish) */}
@@ -207,7 +207,7 @@ export default function AdminChatPage() {
 
                                         <p className="whitespace-pre-wrap">{msg.content}</p>
 
-                                        <div className={`text-[11px] mt-1 flex justify-end gap-1 ${isMe ? 'text-[#7c9cb6]' : 'text-[#6c7883]'}`}>
+                                        <div className={`text-[11px] mt-1 flex justify-end gap-1 ${isMe ? 'text-[#7c9cb6]' : 'text-[#a0aeb9]'}`}>
                                             {formatTime(msg.created_at)}
                                             {isMe && <span>✓✓</span>}
                                         </div>

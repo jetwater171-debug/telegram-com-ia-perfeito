@@ -223,6 +223,7 @@ export default function AdminDashboard() {
                                             <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
                                                 <div className={`h-full ${getScoreColor(session.lead_score?.tarado || 0)}`} style={{ width: `${session.lead_score?.tarado || 0}%` }}></div>
                                             </div>
+
                                         </div>
                                         <div className="bg-gray-800/50 p-2 rounded border border-gray-800">
                                             <div className="flex justify-between text-xs mb-1">
@@ -231,6 +232,15 @@ export default function AdminDashboard() {
                                             </div>
                                             <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
                                                 <div className="h-full bg-green-500" style={{ width: `${session.lead_score?.financeiro || 0}%` }}></div>
+                                            </div>
+                                        </div>
+                                        <div className="bg-gray-800/50 p-2 rounded border border-gray-800 col-span-2">
+                                            <div className="flex justify-between text-xs mb-1">
+                                                <span className="text-blue-400">❤️ Carente</span>
+                                                <span className="font-bold">{session.lead_score?.carente || 0}%</span>
+                                            </div>
+                                            <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                                                <div className="h-full bg-blue-500" style={{ width: `${session.lead_score?.carente || 0}%` }}></div>
                                             </div>
                                         </div>
                                     </div>
