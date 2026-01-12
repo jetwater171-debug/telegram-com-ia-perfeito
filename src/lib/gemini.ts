@@ -96,7 +96,10 @@ Você é uma garota de 19 anos, brasileira, real.
 - **Device:** ${deviceType}.
 - **TOTAL JÁ PAGO:** R$ ${totalPaid.toFixed(2)}. (Use isso! Se for alto, trate como rei).
 - **ESTADO ATUAL (LEAD SCORE):** ${statsText}
-  - **Instrução de Update:** Use esses valores como BASE. Se o lead mandar algo relevante, AUMENTE ou DIMINUA esses números. NÃO comece do zero.
+  - **CRÍTICO:** Você RECEBEU esses valores. Sua obrigação é RETORNAR o JSON com os valores **ATUALIZADOS**.
+  - **Exemplo:** Se Tarado é 10 e ele falou "gostosa", RETORNE "tarado": 30.
+  - **NÃO RETORNE O MESMO VALOR** se o lead mandou algo que justifique mudança (+ ou -).
+  - Se ele te chamar de gostosa, **SUBI O TARADO** imediatamente. Não tenha medo de alterar os números.
 - **Entrada:** O lead pode mandar "Oi", "Oiii Lari", "Tudo bem?".
   - **IMPORTANTE:** Se ele mandar SÓ "Oi", responda "oii amor tudo bem?". NÃO responda "tudo bem sim e vc" se ele não perguntou.
   - Se ele perguntar "tudo bem", aí sim responda "tudo bem sim e vc".
@@ -302,40 +305,65 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         history: cleanHistory
     });
 
-    try {
-        const result = await chat.sendMessage(userMessage);
-        const responseText = result.response.text();
+    let attempt = 0;
+    const maxRetries = 3;
 
-        console.log(`🤖 Gemini Clean Response:`, responseText);
+    while (attempt < maxRetries) {
+        try {
+            const result = await chat.sendMessage(userMessage);
+            const responseText = result.response.text();
 
-        // Simpler parsing - Trust the AI + Schema
-        const jsonResponse = JSON.parse(responseText) as AIResponse;
+            console.log(`🤖 Gemini Clean Response (Attempt ${attempt + 1}):`, responseText);
 
-        // Validar e Sanitizar Lead Stats
-        if (jsonResponse.lead_stats) {
-            jsonResponse.lead_stats = {
-                tarado: jsonResponse.lead_stats.tarado || 0,
-                financeiro: jsonResponse.lead_stats.financeiro || 0,
-                carente: jsonResponse.lead_stats.carente || 0,
-                sentimental: jsonResponse.lead_stats.sentimental || 0
-            };
+            // Simpler parsing - Trust the AI + Schema
+            const jsonResponse = JSON.parse(responseText) as AIResponse;
+
+            // Validar e Sanitizar Lead Stats
+            if (jsonResponse.lead_stats) {
+                jsonResponse.lead_stats = {
+                    tarado: jsonResponse.lead_stats.tarado || 0,
+                    financeiro: jsonResponse.lead_stats.financeiro || 0,
+                    carente: jsonResponse.lead_stats.carente || 0,
+                    sentimental: jsonResponse.lead_stats.sentimental || 0
+                };
+            }
+
+            return jsonResponse;
+
+        } catch (error: any) {
+            console.error(`Attempt ${attempt + 1} failed:`, error.message);
+
+            const isJsonError = error instanceof SyntaxError || error.message.includes('JSON');
+            const isNetworkError = error.message.includes('503') || error.message.includes('Overloaded') || error.message.includes('fetch');
+
+            if (isJsonError || isNetworkError) {
+                console.warn(`⚠️ Retrying due to error: ${error.message}`);
+                attempt++;
+                if (attempt < maxRetries) {
+                    await new Promise(r => setTimeout(r, 2000 * attempt)); // Exponential backoff
+                    continue;
+                }
+            } else {
+                // If it's a critical API error (validation etc), break immediately
+                attempt = maxRetries;
+            }
+
+            // Simpler Fallback if retries exhausted
+            if (attempt >= maxRetries) {
+                return {
+                    internal_thought: "Erro na IA (Esgotou tentativas), respondendo fallback: " + error.message,
+                    lead_classification: "desconhecido",
+                    lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
+                    current_state: "HOT_TALK",
+                    messages: ["amor a net ta ruim manda de novo?"], // Fallback message
+                    action: "none",
+                    extracted_user_name: null,
+                    payment_details: null
+                };
+            }
         }
-
-        return jsonResponse;
-
-    } catch (error: any) {
-        console.error("Error asking Gemini:", error);
-
-        // Simpler Fallback
-        return {
-            internal_thought: "Erro na IA, respondendo fallback: " + error.message,
-            lead_classification: "desconhecido",
-            lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
-            current_state: "HOT_TALK",
-            messages: ["amor a net ta ruim manda de novo?"], // Fallback message
-            action: "none",
-            extracted_user_name: null,
-            payment_details: null
-        };
     }
+
+    // Fallback unreachable
+    throw new Error("Unreachable");
 };
