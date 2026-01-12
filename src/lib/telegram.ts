@@ -24,6 +24,27 @@ export const sendTelegramVideo = async (token: string, chatId: string, videoUrl:
     if (!token) return;
     try {
         const bot = new Telegraf(token);
+
+        // Verificação inteligente para desenvolvimento local
+        // Se a URL for do nosso site mas estivermos rodando localmente, tenta pegar o arquivo direto do disco
+        if (process.env.NODE_ENV !== 'production' && videoUrl.includes('telegram-com-ia-perfeito.vercel.app')) {
+            const fs = await import('fs');
+            const path = await import('path');
+
+            // Extrai o caminho relativo da URL (ex: /videos/lari.mp4)
+            const urlPath = new URL(videoUrl).pathname;
+            // Caminho absoluto no disco (assumindo que roda na raiz do projeto)
+            const localPath = path.join(process.cwd(), 'public', urlPath);
+
+            if (fs.existsSync(localPath)) {
+                console.log(`[DEV] Enviando arquivo local ao invés de URL remota: ${localPath}`);
+                await bot.telegram.sendVideo(chatId, { source: localPath }, { caption });
+                return;
+            } else {
+                console.warn(`[DEV] Arquivo local não encontrado para fallback: ${localPath}`);
+            }
+        }
+
         await bot.telegram.sendVideo(chatId, videoUrl, { caption });
     } catch (e) {
         console.error("Failed to send video to Telegram:", e);
