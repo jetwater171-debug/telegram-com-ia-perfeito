@@ -320,48 +320,48 @@ export default function AdminChatPage() {
                     <h3 className="text-white text-xs font-bold uppercase tracking-wider mb-4 border-b border-white/20 pb-2">Análise da IA</h3>
 
                     {/* TARADO */}
-                    <div className="bg-[#242f3d] p-3 rounded-lg border border-white/10 hover:border-white/30 transition">
+                    <div className="bg-[#1e2c3a] p-3 rounded-lg border border-pink-500/30 hover:border-pink-500/60 transition shadow-sm">
                         <div className="flex justify-between text-sm mb-2">
-                            <span className="text-pink-300 font-bold flex items-center gap-2">🔥 Tarado</span>
-                            <span className="font-bold text-white">{session?.lead_score?.tarado || 0}%</span>
+                            <span className="text-pink-400 font-bold flex items-center gap-2 drop-shadow-sm">🔥 Tarado</span>
+                            <span className="font-bold text-white text-lg">{session?.lead_score?.tarado || 0}%</span>
                         </div>
-                        <div className="w-full bg-gray-700/50 h-2.5 rounded-full overflow-hidden">
+                        <div className="w-full bg-gray-800 h-3 rounded-full overflow-hidden border border-white/5">
                             <div
-                                className="h-full bg-gradient-to-r from-pink-500 to-purple-500 transition-all duration-700 ease-out shadow-[0_0_10px_rgba(236,72,153,0.6)]"
+                                className="h-full bg-gradient-to-r from-pink-500 via-fuchsia-500 to-purple-500 transition-all duration-700 ease-out shadow-[0_0_15px_rgba(236,72,153,0.8)]"
                                 style={{ width: `${session?.lead_score?.tarado || 0}%` }}
                             />
                         </div>
-                        <p className="text-[10px] text-gray-400 mt-2 leading-tight">Nível de excitação e abertura para conteúdo adulto.</p>
+                        <p className="text-[11px] text-gray-300 mt-2 leading-tight">Nível de excitação e abertura para conteúdo adulto.</p>
                     </div>
 
                     {/* FINANCEIRO */}
-                    <div className="bg-[#242f3d] p-3 rounded-lg border border-white/10 hover:border-white/30 transition">
+                    <div className="bg-[#1e2c3a] p-3 rounded-lg border border-lime-500/30 hover:border-lime-500/60 transition shadow-sm">
                         <div className="flex justify-between text-sm mb-2">
-                            <span className="text-green-300 font-bold flex items-center gap-2">💰 Financeiro</span>
-                            <span className="font-bold text-white">{session?.lead_score?.financeiro || 0}%</span>
+                            <span className="text-lime-400 font-bold flex items-center gap-2 drop-shadow-sm">💰 Financeiro</span>
+                            <span className="font-bold text-white text-lg">{session?.lead_score?.financeiro || 0}%</span>
                         </div>
-                        <div className="w-full bg-gray-700/50 h-2.5 rounded-full overflow-hidden">
+                        <div className="w-full bg-gray-800 h-3 rounded-full overflow-hidden border border-white/5">
                             <div
-                                className="h-full bg-gradient-to-r from-green-500 to-emerald-400 transition-all duration-700 ease-out shadow-[0_0_10px_rgba(34,197,94,0.6)]"
+                                className="h-full bg-gradient-to-r from-green-500 via-lime-500 to-emerald-400 transition-all duration-700 ease-out shadow-[0_0_15px_rgba(132,204,22,0.8)]"
                                 style={{ width: `${session?.lead_score?.financeiro || 0}%` }}
                             />
                         </div>
-                        <p className="text-[10px] text-gray-400 mt-2 leading-tight">Capacidade de pagamento estimada.</p>
+                        <p className="text-[11px] text-gray-300 mt-2 leading-tight">Capacidade de pagamento estimada.</p>
                     </div>
 
                     {/* CARENTE/SENTIMENTAL */}
-                    <div className="bg-[#242f3d] p-3 rounded-lg border border-white/10 hover:border-white/30 transition">
+                    <div className="bg-[#1e2c3a] p-3 rounded-lg border border-cyan-500/30 hover:border-cyan-500/60 transition shadow-sm">
                         <div className="flex justify-between text-sm mb-2">
-                            <span className="text-blue-300 font-bold flex items-center gap-2">❤️ Carente</span>
-                            <span className="font-bold text-white">{session?.lead_score?.carente || 0}%</span>
+                            <span className="text-cyan-400 font-bold flex items-center gap-2 drop-shadow-sm">❤️ Carente</span>
+                            <span className="font-bold text-white text-lg">{session?.lead_score?.carente || 0}%</span>
                         </div>
-                        <div className="w-full bg-gray-700/50 h-2.5 rounded-full overflow-hidden">
+                        <div className="w-full bg-gray-800 h-3 rounded-full overflow-hidden border border-white/5">
                             <div
-                                className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 transition-all duration-700 ease-out shadow-[0_0_10px_rgba(59,130,246,0.6)]"
+                                className="h-full bg-gradient-to-r from-blue-500 via-cyan-500 to-indigo-400 transition-all duration-700 ease-out shadow-[0_0_15px_rgba(6,182,212,0.8)]"
                                 style={{ width: `${session?.lead_score?.carente || 0}%` }}
                             />
                         </div>
-                        <p className="text-[10px] text-gray-400 mt-2 leading-tight">Nível de conexão emocional e carência.</p>
+                        <p className="text-[11px] text-gray-300 mt-2 leading-tight">Nível de conexão emocional e carência.</p>
                     </div>
                 </div>
             </div>
