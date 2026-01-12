@@ -270,7 +270,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     if (!genAI) throw new Error("API Key not configured");
 
     const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash", // !!! IMPORTANTE: NUNCA TROCAR ESSA VERSÃO (2.5 FLASH) !!!
+        model: "gemini-2.5-flash",
         systemInstruction: getSystemInstruction(context?.userCity, context?.isHighTicket, context?.totalPaid || 0, context?.currentStats) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
         generationConfig: {
             responseMimeType: "application/json",
@@ -278,14 +278,13 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         }
     });
 
-    // 1. Carregar Histórico do Supabase
+    // 1. Carregar Histórico
     const { data: dbMessages } = await supabase
         .from('messages')
         .select('*')
         .eq('session_id', sessionId)
         .order('created_at', { ascending: true });
 
-    // Converter mensagens do DB para Conteúdo Gemini
     const history = (dbMessages || [])
         .filter(m => m.sender === 'user' || m.sender === 'bot')
         .map(m => ({
@@ -293,122 +292,50 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             parts: [{ text: m.content }]
         }));
 
-    // 2. Limpar Histórico: Remover últimas mensagens do usuário para evitar duplicação com o prompt atual
+    // 2. Limpar Histórico (Deduplicação Básica)
     let cleanHistory = [...history];
     while (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === 'user') {
         cleanHistory.pop();
     }
 
     const chat = model.startChat({
-        history: cleanHistory,
-        generationConfig: {
-            maxOutputTokens: 2000,
-        },
+        history: cleanHistory
     });
 
-    let attempt = 0;
-    const maxRetries = 3;
+    try {
+        const result = await chat.sendMessage(userMessage);
+        const responseText = result.response.text();
 
-    while (attempt < maxRetries) {
-        try {
-            const result = await chat.sendMessage(userMessage);
-            const responseText = result.response.text();
+        console.log(`🤖 Gemini Clean Response:`, responseText);
 
-            console.log(`🤖 Gemini Response (Attempt ${attempt + 1}):`, responseText);
+        // Simpler parsing - Trust the AI + Schema
+        const jsonResponse = JSON.parse(responseText) as AIResponse;
 
-            // Tentar extrair apenas o JSON da resposta (ignorar textos antes/depois)
-            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-            const cleanText = jsonMatch ? jsonMatch[0] : responseText.replace(/```json\n?|```/g, "").trim();
-
-            let jsonResponse: AIResponse;
-
-            try {
-                // Parse JSON
-                jsonResponse = JSON.parse(cleanText) as AIResponse;
-
-                // FORCE LOGGING OF THOUGHT
-                console.log("💭 AI Thought Extracted:", jsonResponse.internal_thought);
-
-                // Garante que internal_thought tenha valor
-                if (!jsonResponse.internal_thought || jsonResponse.internal_thought.trim() === "") {
-                    jsonResponse.internal_thought = "Analisando comportamento do lead para decidir o próximo passo...";
-                }
-
-                // Garantir que messages seja sempre array
-                if (typeof jsonResponse.messages === 'string') {
-                    jsonResponse.messages = [jsonResponse.messages];
-                }
-            } catch (parseError) {
-                console.warn("⚠️ Gemini retornou texto puro, usando fallback manual.");
-
-                // Tenta picotar a mensagem em bolhas menores (regra de 3 pontos ou quebras)
-                const sentences = cleanText
-                    .split(/(?<=[.!?])\s+|\n+/) // Quebra por pontuação ou nova linha
-                    .map(s => s.trim())
-                    .filter(s => s.length > 0);
-
-                jsonResponse = {
-                    internal_thought: "Achei interessante o que ele disse, vou responder direto...",
-                    lead_classification: "desconhecido",
-                    lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
-                    current_state: "HOT_TALK",
-                    messages: sentences.length > 0 ? sentences : [cleanText],
-                    action: "none",
-                    payment_details: null,
-                    extracted_user_name: null
-                };
-            }
-
-            // Validar e Sanitizar Lead Stats
-            if (jsonResponse.lead_stats) {
-                jsonResponse.lead_stats = {
-                    tarado: jsonResponse.lead_stats.tarado || 0,
-                    financeiro: jsonResponse.lead_stats.financeiro || 0,
-                    carente: jsonResponse.lead_stats.carente || 0,
-                    sentimental: jsonResponse.lead_stats.sentimental || 0
-                };
-            }
-
-            return jsonResponse;
-
-        } catch (error: any) {
-            console.error(`Attempt ${attempt + 1} failed:`, error.message);
-
-            // Retry logic for 503 or overload
-            if (error.message.includes('503') || error.message.includes('Overloaded')) {
-                attempt++;
-                if (attempt < maxRetries) {
-                    await new Promise(r => setTimeout(r, 2000 * attempt));
-                    continue;
-                }
-            }
-
-            // Fallback se esgotar as tentativas
-            if (attempt >= maxRetries - 1) { // Verifica se é a última tentativa
-                return {
-                    internal_thought: "Erro na IA, respondendo fallback: " + error.message,
-                    lead_classification: "desconhecido",
-                    lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
-                    current_state: "CONNECTION",
-                    messages: ["oii amor minha net ta ruim pera ai"],
-                    action: "none",
-                    payment_details: null,
-                    extracted_user_name: null
-                };
-            }
-            attempt++; // Garante incremento se não for erro 503 mas ainda falhar
+        // Validar e Sanitizar Lead Stats
+        if (jsonResponse.lead_stats) {
+            jsonResponse.lead_stats = {
+                tarado: jsonResponse.lead_stats.tarado || 0,
+                financeiro: jsonResponse.lead_stats.financeiro || 0,
+                carente: jsonResponse.lead_stats.carente || 0,
+                sentimental: jsonResponse.lead_stats.sentimental || 0
+            };
         }
-    }
 
-    // Fallback final de segurança (geralmente inalcançável)
-    return {
-        internal_thought: "System Error Fallback",
-        lead_classification: "desconhecido",
-        lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
-        current_state: "CONNECTION",
-        messages: ["..."],
-        action: "none",
-        payment_details: null,
-        extracted_user_name: null
-    };
+        return jsonResponse;
+
+    } catch (error: any) {
+        console.error("Error asking Gemini:", error);
+
+        // Simpler Fallback
+        return {
+            internal_thought: "Erro na IA, respondendo fallback: " + error.message,
+            lead_classification: "desconhecido",
+            lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
+            current_state: "HOT_TALK",
+            messages: ["amor a net ta ruim manda de novo?"], // Fallback message
+            action: "none",
+            extracted_user_name: null,
+            payment_details: null
+        };
+    }
 };
