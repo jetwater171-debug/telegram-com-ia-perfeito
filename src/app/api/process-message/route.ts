@@ -102,25 +102,29 @@ export async function POST(req: NextRequest) {
     const combinedText = groupMessages.map(m => m.content).join("\n");
     console.log(`[PROCESSOR] Sending to Gemini: ${combinedText}`);
 
-    // 4. Call Gemini
+    // 4. Chamar Gemini
     const context = {
         userCity: session.user_city || "São Paulo",
         isHighTicket: session.device_type === 'iPhone',
-        totalPaid: session.total_paid || 0
+        totalPaid: session.total_paid || 0,
+        currentStats: session.lead_score
     };
 
     const aiResponse = await sendMessageToGemini(session.id, combinedText, context);
 
-    console.log("🤖 Gemini Response Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
+    console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
 
-    // 5. Update Stats & Save Thoughts
+    // 5. Atualizar Stats & Salvar Pensamentos
     if (aiResponse.lead_stats) {
+        // LÓGICA DE CONFIANÇA NA IA: A IA recebe os stats atuais no contexto.
+        // Confiamos na saída dela para aumentar OU diminuir os valores.
+
         const updateResult = await supabase.from('sessions').update({
             lead_score: aiResponse.lead_stats,
             funnel_step: aiResponse.current_state,
         }).eq('id', session.id).select();
 
-        console.log("💾 Supabase Update Result:", updateResult.error ? updateResult.error : "Success");
+        if (updateResult.error) console.error("Erro ao Atualizar Stats:", updateResult.error);
     }
 
 
@@ -132,7 +136,7 @@ export async function POST(req: NextRequest) {
         });
     }
 
-    // 6. Send Responses
+    // 6. Enviar Respostas
 
     for (const msgText of aiResponse.messages) {
         await supabase.from('messages').insert({
