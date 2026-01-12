@@ -323,7 +323,16 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             let jsonResponse: AIResponse;
 
             try {
+                // Parse JSON
                 jsonResponse = JSON.parse(cleanText) as AIResponse;
+
+                // FORCE LOGGING OF THOUGHT
+                console.log("💭 AI Thought Extracted:", jsonResponse.internal_thought);
+
+                // Garante que internal_thought tenha valor
+                if (!jsonResponse.internal_thought || jsonResponse.internal_thought.trim() === "") {
+                    jsonResponse.internal_thought = "Analisando comportamento do lead para decidir o próximo passo...";
+                }
 
                 // Garantir que messages seja sempre array
                 if (typeof jsonResponse.messages === 'string') {
