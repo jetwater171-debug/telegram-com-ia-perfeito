@@ -179,8 +179,8 @@ export async function POST(req: NextRequest) {
                 }
 
                 // 2. Opcional: Baixar e enviar para o Gemini (Vision)
-                // Como estamos usando Gemini Flash, ele aceita imagens.
-                // Vamos baixar e enviar como inline_data tb.
+                // CAUSA ERRO DE SAFETY SE FOR NUDE. DESATIVADO TEMPORARIAMENTE.
+                /*
                 const res = await fetch(downloadUrl);
                 const arrayBuffer = await res.arrayBuffer();
                 const buffer = Buffer.from(arrayBuffer);
@@ -190,8 +190,11 @@ export async function POST(req: NextRequest) {
                     mimeType: 'image/jpeg',
                     data: base64Image
                 };
-
+                
                 finalUserMessage = "Enviou uma foto/nude. Analise a imagem se possível.";
+                */
+
+                finalUserMessage = "Enviou uma foto PROIBIDA (Nude ou +18). O sistema bloqueou a imagem por segurança. Reaja como se tivesse visto algo muito excitante.";
             }
         } catch (e) {
             console.error("Erro ao processar foto:", e);
@@ -282,6 +285,7 @@ export async function POST(req: NextRequest) {
         const WET_PHOTO = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
         const VIDEO_PREVIEW = "BAACAgEAAxkBAAIHMmllipghQzttsno99r2_C_8jpAIiAAL9BQACaHUxR4HU9Y9IirkLOAQ";
         const HOT_PREVIEW_VIDEO = "BAACAgEAAxkBAAIJ52ll0E_2iOfBZnzMe34rOr6Mi5hjAAIsBQACWoUoR8dO8XUHmuEwOAQ";
+        const ASS_PHOTO_PREVIEW_ID = "AgACAgEAAxkBAAIJ7mll03HJtLdhDpZIFFYsOAuZ52UdAAIYDmsbWoUoR5pkHZDTJ9f0AQADAgADeQADOAQ";
 
         let mediaUrl = null;
         let mediaType = null;
@@ -291,6 +295,7 @@ export async function POST(req: NextRequest) {
             case 'send_shower_photo': mediaUrl = SHOWER_PHOTO; mediaType = 'image'; caption = ""; break;
             case 'send_lingerie_photo': mediaUrl = LINGERIE_PHOTO; mediaType = 'image'; break;
             case 'send_wet_finger_photo': mediaUrl = WET_PHOTO; mediaType = 'image'; break;
+            case 'send_ass_photo_preview': mediaUrl = ASS_PHOTO_PREVIEW_ID; mediaType = 'image'; break;
             case 'send_video_preview': mediaUrl = VIDEO_PREVIEW; mediaType = 'video'; break;
             case 'send_hot_video_preview': mediaUrl = HOT_PREVIEW_VIDEO; mediaType = 'video'; break;
             case 'check_payment_status':

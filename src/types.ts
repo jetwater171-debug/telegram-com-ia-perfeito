@@ -50,6 +50,7 @@ export interface AIResponse {
     | "none"
     | "send_video_preview"
     | "send_hot_video_preview"
+    | "send_ass_photo_preview"
     | "generate_pix_payment"
     | "check_payment_status"
     | "send_shower_photo"

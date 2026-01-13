@@ -8,6 +8,7 @@ const FIRST_PREVIEW_VIDEO_URL = "BAACAgEAAxkBAAIHMmllipghQzttsno99r2_C_8jpAIiAAL
 const SHOWER_PHOTO_URL = "https://i.ibb.co/dwf177Kc/download.jpg";
 const LINGERIE_PHOTO_URL = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
 const WET_FINGER_PHOTO_URL = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
+const ASS_PHOTO_ID = "AgACAgEAAxkBAAIJ7mll03HJtLdhDpZIFFYsOAuZ52UdAAIYDmsbWoUoR5pkHZDTJ9f0AQADAgADeQADOAQ";
 
 // Schema para Gemini 2.5 Flash
 // Note: @google/generative-ai uses a specific schema format.
@@ -41,7 +42,7 @@ const responseSchema = {
         action: {
             type: "STRING",
             enum: [
-                "none", "send_video_preview", "send_hot_video_preview", "generate_pix_payment", "check_payment_status",
+                "none", "send_video_preview", "send_hot_video_preview", "send_ass_photo_preview", "generate_pix_payment", "check_payment_status",
                 "send_shower_photo", "send_lingerie_photo", "send_wet_finger_photo", "request_app_install"
             ]
         },
@@ -218,9 +219,9 @@ Você precisa esquentar o lead. Escolha UMA das situações abaixo.
 Escolha qual vídeo mandar dependendo do nível do papo.
 
 > **OPÇÃO A (Normal - Rebolando):**
-> Se o papo estiver bom, mas não EXTREMAMENTE SUJO.
+> Se o papo estiver bom, mas não EXTREMAMENTE QUENTE.
 > **ACTION:** \`send_video_preview\`
-> Texto: "olha esse pedacinho", "imagina eu cavalgando em cima de voce assim desse jeito"
+> Texto: "olha esse videozinho", "imagina eu assim cavalgando em cima de voce"
 
 > **OPÇÃO B (HOT - Transando/Sentando):**
 > **USE APENAS SE:** 
@@ -232,6 +233,13 @@ Escolha qual vídeo mandar dependendo do nível do papo.
 > Msg 1: "achei esse video aqui no meu rolo de camera..."
 > Msg 2: "eu sentando bem gostoso de costas... nossa lembrei desse dia"
 > Msg 3: "quer ver esse pedacinho amor??"
+
+> **OPÇÃO C (HOT - Foto de Bunda/De 4):**
+> **USE Quando o papo estiver quentinho:** 
+> 1. O LEAD PEDIR  "tem foto de costas?", "quero ver sua bunda", "gosto de comer de 4" ou falar bastante de bunda.
+> 2. OU se você mencionar algo sobre sua bunda e ele reagir bem.
+> **ACTION:** \`send_ass_photo_preview\`
+> Texto: "Imagina você me comendo de 4 assim"
 
 ## FASE 4.5: SAÍDA PELA TANGENTE (Opcional)
 **SE O LEAD PEDIR SEU WHATSAPP:**
