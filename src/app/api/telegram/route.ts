@@ -112,6 +112,13 @@ export async function POST(req: NextRequest) {
             session = newSession;
         }
 
+        // 3.5. Reset Reengagement Flag & Update Timestamp
+        // Quando o usuário fala, o bot não precisa mais cobrar.
+        await supabase.from('sessions').update({
+            reengagement_sent: false,
+            // Opcional: last_user_activity aqui se quiséssemos trackear
+        }).eq('id', session.id);
+
         // 3. Save User Message
         const { data: insertedMsg } = await supabase.from('messages').insert({
             session_id: session.id,

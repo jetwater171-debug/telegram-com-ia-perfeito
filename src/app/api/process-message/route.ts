@@ -192,6 +192,12 @@ export async function POST(req: NextRequest) {
         await new Promise(r => setTimeout(r, 1000)); // Typing delay
     }
 
+    // 6.5 Atualizar Last Bot Activity
+    // Importante para o Cron de Reengajamento saber quando foi a última msg
+    await supabase.from('sessions').update({
+        last_bot_activity_at: new Date().toISOString()
+    }).eq('id', session.id);
+
     // 7. Lidar com Mídia
     if (aiResponse.action !== 'none') {
         const SHOWER_PHOTO = "https://i.ibb.co/dwf177Kc/download.jpg";

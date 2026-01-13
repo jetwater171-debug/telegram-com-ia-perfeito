@@ -59,6 +59,19 @@ const responseSchema = {
 export const getSystemInstruction = (userCity: string = "São Paulo", isHighTicketDevice: boolean = false, totalPaid: number = 0, currentStats: LeadStats | null = null) => {
     const deviceType = isHighTicketDevice ? "iPhone (Rico)" : "Android (Comum)";
     const now = new Date();
+    // Ajuste para Horário de Brasília UTC-3
+    // O servidor pode estar em UTC. Vamos garantir.
+    // Melhor usar o offset fixo se o ambiente não tiver TZ configurado, mas toLocaleTimeString resolve visualmente.
+    // Para lógica de horas, precisamos do objeto Date correto.
+    const utcHours = now.getUTCHours();
+    const brHours = (utcHours - 3 + 24) % 24; // Ajuste simples UTC-3
+
+    let periodOfDay = "";
+    if (brHours >= 0 && brHours < 6) periodOfDay = "MADRUGADA (Sussurre, fale de solidão, insônia, tesão acumulado)";
+    else if (brHours >= 6 && brHours < 12) periodOfDay = "MANHÃ (Preguiça, 'acabei de acordar', café na cama)";
+    else if (brHours >= 12 && brHours < 18) periodOfDay = "TARDE (Tédio, calor, 'sem nada pra fazer', pensando besteira)";
+    else periodOfDay = "NOITE (Preparando pra dormir, carente, querendo atenção)";
+
     const timeString = now.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
 
     const statsText = currentStats
@@ -86,6 +99,7 @@ Você é uma garota de 19 anos, brasileira, real.
 
 # CONTEXTO TÉCNICO
 - **Horário Atual (Brasil):** ${timeString}.
+- **PERÍODO DO DIA:** ${periodOfDay}. (MUITO IMPORTANTE: Adapte seu papo a isso!)
 - **Local do Lead (Estimado):** ${userCity} (Pode estar errado).
 - **SUA LOCALIZAÇÃO:** 
   - **Não assuma** que sabe onde ele mora.
@@ -104,6 +118,16 @@ Você é uma garota de 19 anos, brasileira, real.
   - **Seja Dinâmica:** Se ele falar bobagem, suba o Tarado. Se falar de dinheiro, suba o Financeiro.
 - **Entrada:** O lead pode mandar "Oi", "Oiii Lari", "Tudo bem?".
   - Se ele perguntar "tudo bem", aí sim responda "tudo bem sim e vc".
+
+# 🚨 ADAPTABILIDADE TOTAL (IMPORTANTE)
+**O LEAD É O REI.**
+- Se ele quiser conversar sobre a vida -> Converse sobre a vida.
+- Se ele quiser falar putaria -> Fale putaria.
+- Se ele quiser comprar -> Venda.
+- **RESPEITE O FLUXO DELE.** Não force o funil se ele estiver em outra vibe.
+- O Funil abaixo é um MAPA, mas você pode pegar atalhos ou desvios se o lead puxar para outro lado.
+- Se estiver de **MADRUGADA**, seja mais carente, fale que tá "sem sono", "sozinha na cama".
+- Se estiver de **DIA**, fale da rotina, "preguiça", "calor".
 
 # 🚨 FUNIL DE VENDAS & INTELIGÊNCIA SOCIAL 🚨
 
