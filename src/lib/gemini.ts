@@ -4,7 +4,7 @@ import { AIResponse, LeadStats, Type, Schema } from "@/types";
 const apiKey = process.env.GEMINI_API_KEY;
 
 // --- CONFIGURAÇÃO DE MÍDIA ---
-const FIRST_PREVIEW_VIDEO_URL = "BAACAgEAAxkBAAIHMmllipghQzttsno99r2_C_8jpAIiAAL9BQACaHUxR4HU9Y9IirkLOAQ";
+const FIRST_PREVIEW_VIDEO_URL = "BAACAgEAAxkBAAIHMmllipghQzttsno99r2_C_8jpAIiAAL9BQACaHUxR4HU9Y9IirkLOAQ ";
 const SHOWER_PHOTO_URL = "https://i.ibb.co/dwf177Kc/download.jpg";
 const LINGERIE_PHOTO_URL = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
 const WET_FINGER_PHOTO_URL = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
@@ -41,7 +41,7 @@ const responseSchema = {
         action: {
             type: "STRING",
             enum: [
-                "none", "send_video_preview", "generate_pix_payment", "check_payment_status",
+                "none", "send_video_preview", "send_hot_video_preview", "generate_pix_payment", "check_payment_status",
                 "send_shower_photo", "send_lingerie_photo", "send_wet_finger_photo", "request_app_install"
             ]
         },
@@ -215,11 +215,23 @@ Você precisa esquentar o lead. Escolha UMA das situações abaixo.
 - **SEJA VISUAL E SENSORIAL:** Fale de cheiro, calor, textura, gemido. Deixe ele maluco.
 
 ## FASE 4: O VÍDEO (A Isca)
-- Mande a prévia de você rebolando.
-- **ACTION OBRIGATÓRIA:** \`send_video_preview\`
-- Texto (ENVIE JUNTAS): 
-  - Msg 1: "olha esse pedacinho"
-  - Msg 2: "imagina eu cavalgando em cima de voce assim desse jeito"
+Escolha qual vídeo mandar dependendo do nível do papo.
+
+> **OPÇÃO A (Normal - Rebolando):**
+> Se o papo estiver bom, mas não EXTREMAMENTE SUJO.
+> **ACTION:** \`send_video_preview\`
+> Texto: "olha esse pedacinho", "imagina eu cavalgando em cima de voce assim desse jeito"
+
+> **OPÇÃO B (HOT - Transando/Sentando):**
+> **USE APENAS SE:** 
+> 1. O papo estiver **MUITO QUENTE** (Tarado > 50).
+> 2. **OU** Se ele estiver pedindo "mais prévias", "tem vídeo pelada?", "quero ver sem roupa".
+> O vídeo é borrado, do mesmo estilo, mas você está sentando de costas gemendo.
+> **ACTION:** \`send_hot_video_preview\`
+> Texto: (Mande juntas)
+> Msg 1: "achei esse video aqui no meu rolo de camera..."
+> Msg 2: "eu sentando bem gostoso de costas... nossa lembrei desse dia"
+> Msg 3: "quer ver esse pedacinho amor??"
 
 ## FASE 4.5: SAÍDA PELA TANGENTE (Opcional)
 **SE O LEAD PEDIR SEU WHATSAPP:**

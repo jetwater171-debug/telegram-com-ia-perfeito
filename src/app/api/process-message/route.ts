@@ -146,6 +146,58 @@ export async function POST(req: NextRequest) {
         }
     }
 
+    // Detectar Foto (Novo)
+    const photoMatch = combinedText.match(/\[PHOTO_UPLOAD\] File_ID: (.+)/);
+    if (photoMatch && botToken) {
+        const fileId = photoMatch[1].trim();
+        console.log(`[PROCESSADOR] Detectada FOTO ID: ${fileId}`);
+
+        try {
+            const { getTelegramFilePath, getTelegramFileDownloadUrl } = await import('@/lib/telegram');
+            const filePath = await getTelegramFilePath(botToken, fileId);
+            if (filePath) {
+                const downloadUrl = getTelegramFileDownloadUrl(botToken, filePath);
+                console.log(`[PROCESSADOR] URL da Foto: ${downloadUrl}`);
+
+                // 1. Atualizar a mensagem original com o media_url para o Chat Monitor ver
+                // Precisamos achar a mensagem do usuário com esse FileID
+                const { data: photoMsg } = await supabase
+                    .from('messages')
+                    .select('id')
+                    .eq('session_id', session.id)
+                    .eq('sender', 'user')
+                    .ilike('content', `%${fileId}%`)
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .single();
+
+                if (photoMsg) {
+                    await supabase.from('messages').update({
+                        media_url: downloadUrl, // Url temporária do Telegram (1h)
+                        media_type: 'image'
+                    }).eq('id', photoMsg.id);
+                }
+
+                // 2. Opcional: Baixar e enviar para o Gemini (Vision)
+                // Como estamos usando Gemini Flash, ele aceita imagens.
+                // Vamos baixar e enviar como inline_data tb.
+                const res = await fetch(downloadUrl);
+                const arrayBuffer = await res.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
+                const base64Image = buffer.toString('base64');
+
+                mediaData = {
+                    mimeType: 'image/jpeg',
+                    data: base64Image
+                };
+
+                finalUserMessage = "Enviou uma foto/nude. Analise a imagem se possível.";
+            }
+        } catch (e) {
+            console.error("Erro ao processar foto:", e);
+        }
+    }
+
     const aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
 
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
@@ -229,6 +281,7 @@ export async function POST(req: NextRequest) {
         const LINGERIE_PHOTO = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
         const WET_PHOTO = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
         const VIDEO_PREVIEW = "BAACAgEAAxkBAAIHMmllipghQzttsno99r2_C_8jpAIiAAL9BQACaHUxR4HU9Y9IirkLOAQ";
+        const HOT_PREVIEW_VIDEO = "BAACAgEAAxkBAAIJ52ll0E_2iOfBZnzMe34rOr6Mi5hjAAIsBQACWoUoR8dO8XUHmuEwOAQ";
 
         let mediaUrl = null;
         let mediaType = null;
@@ -239,6 +292,7 @@ export async function POST(req: NextRequest) {
             case 'send_lingerie_photo': mediaUrl = LINGERIE_PHOTO; mediaType = 'image'; break;
             case 'send_wet_finger_photo': mediaUrl = WET_PHOTO; mediaType = 'image'; break;
             case 'send_video_preview': mediaUrl = VIDEO_PREVIEW; mediaType = 'video'; break;
+            case 'send_hot_video_preview': mediaUrl = HOT_PREVIEW_VIDEO; mediaType = 'video'; break;
             case 'check_payment_status':
                 // Verificar se o último pagamento foi pago
                 try {
@@ -310,11 +364,12 @@ export async function POST(req: NextRequest) {
                         await sendTelegramMessage(botToken, chatId, "amor qual pix? nao achei aqui");
 
 
-                    } catch (e: any) {
-                        console.error("Erro Verificação Pagamento", e);
-                        await sendTelegramMessage(botToken, chatId, "deu erro ao verificar amor, manda o comprovante?");
                     }
-                    break;
+                } catch (e: any) {
+                    console.error("Erro Verificação Pagamento", e);
+                    await sendTelegramMessage(botToken, chatId, "deu erro ao verificar amor, manda o comprovante?");
+                }
+                break;
 
             case 'generate_pix_payment':
                 try {

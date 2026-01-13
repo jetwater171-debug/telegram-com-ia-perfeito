@@ -61,6 +61,12 @@ export async function POST(req: NextRequest) {
         text = `[VIDEO_UPLOAD] File_ID: ${message.video.file_id}`;
     }
 
+    if (message.photo && message.photo.length > 0) {
+        // Telegram envia várias resoluções. A última é a maior.
+        const largestPhoto = message.photo[message.photo.length - 1];
+        text = `[PHOTO_UPLOAD] File_ID: ${largestPhoto.file_id}`;
+    }
+
     if (!text) {
         return NextResponse.json({ ok: true });
     }
