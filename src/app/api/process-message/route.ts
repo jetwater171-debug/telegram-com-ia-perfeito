@@ -260,33 +260,35 @@ export async function POST(req: NextRequest) {
                         .single();
 
                     if (lastPayMsg) {
-                        // Extrair Valor do Conteúdo "[SYSTEM: PIX GENERATED - 31]"
-                        const valueMatch = lastPayMsg.content.match(/PIX GENERATED - (\d+(\.\d+)?)/);
+                        // Extrair Valor e ID
+                        // Formato esperado: "[SYSTEM: PIX GENERATED - 24.90 | ID: abc-123]"
+                        const content = lastPayMsg.content;
+                        const valueMatch = content.match(/PIX GENERATED - (\d+(\.\d+)?)/);
+                        const idMatch = content.match(/ID: ([a-zA-Z0-9\-_]+)/);
+
                         const value = valueMatch ? parseFloat(valueMatch[1]) : 0;
+                        const paymentId = idMatch ? idMatch[1] : null;
 
-                        // Verificação Falsa (Fake Check) porque não temos o Payment ID facilmente acessível sem salvá-lo corretamente.
-                        // Idealmente deveríamos ter salvo paymentId na coluna `payment_data` em messages.
-                        // Vamos assumir por enquanto que confiamos no usuário ou verificamos o mais recente no WiinPay se tivéssemos um endpoint 'listar por email'
+                        if (!paymentId) {
+                            await sendTelegramMessage(botToken, chatId, "amor nao achei o codigo da transação aqui... manda o comprovante?");
+                            break;
+                        }
 
-                        // IMPLEMENTAÇÃO REAL A FAZER: Armazenar payment_id em sessões ou mensagens corretamente.
-                        // Para este protótipo, se o usuário diz "Paguei" e temos um PIX gerado recentemente, MARCAMOS COMO PAGO.
-                        // OU assumimos que o webhook do WiinPay teria atualizado isso.
+                        console.log(`[PROCESSADOR] Verificando Pagamento ID: ${paymentId}`);
+                        const statusData = await WiinPayService.getPaymentStatus(paymentId);
 
-                        // Vamos simular uma "Checagem" acreditando por enquanto OU verificando se conseguimos pegar status.
-                        // Como não temos o ID aqui facilmente sem fazer parse, vamos implementar a LÓGICA
-                        // como se tivéssemos verificado com sucesso (Sucesso Simulado para Teste de LTV).
+                        console.log(`[PROCESSADOR] Status WiinPay:`, JSON.stringify(statusData));
 
-                        const isPaid = true; // FORÇAR TRUE PARA TESTE DE LÓGICA LTV como solicitado pelo usuário "adiciona tbm o tanto de dinheiro..."
+                        const status = statusData.status || statusData.data?.status || 'pending';
+                        const isPaid = ['approved', 'paid', 'completed'].includes(status.toLowerCase());
 
                         if (isPaid) {
                             // Incrementar LTV
-                            // Buscar total_paid atual
                             const currentTotal = session.total_paid || 0;
                             const newTotal = currentTotal + value;
 
                             await supabase.from('sessions').update({
                                 total_paid: newTotal,
-                                // Talvez liberar conteúdo?
                             }).eq('id', session.id);
 
                             // Notificar IA sobre sucesso (via Mensagem de Sistema oculta)
@@ -296,20 +298,23 @@ export async function POST(req: NextRequest) {
                                 content: `[SISTEMA: PAGAMENTO CONFIRMADO - R$ ${value}. TOTAL PAGO: R$ ${newTotal}]`
                             });
 
-                            await sendTelegramMessage(botToken, chatId, "confirmado amor, obrigada... vou te mandar agora");
+                            await sendTelegramMessage(botToken, chatId, "confirmado amor! obrigada... vou te mandar agora");
+
+                            // Forçar IA a saber que pagou na proxima iteração se necessário, 
+                            // mas aqui ela já recebe o input de sistema acima.
                         } else {
-                            await sendTelegramMessage(botToken, chatId, "amor ainda não caiu aqui... tem certeza?");
+                            await sendTelegramMessage(botToken, chatId, "amor ainda não caiu aqui... tem certeza? (Status: " + status + ")");
                         }
 
                     } else {
                         await sendTelegramMessage(botToken, chatId, "amor qual pix? nao achei aqui");
-                    }
 
-                } catch (e: any) {
-                    console.error("Erro Verificação Pagamento", e);
-                    await sendTelegramMessage(botToken, chatId, "deu erro ao verificar amor, manda o comprovante?");
-                }
-                break;
+
+                    } catch (e: any) {
+                        console.error("Erro Verificação Pagamento", e);
+                        await sendTelegramMessage(botToken, chatId, "deu erro ao verificar amor, manda o comprovante?");
+                    }
+                    break;
 
             case 'generate_pix_payment':
                 try {
@@ -334,11 +339,10 @@ export async function POST(req: NextRequest) {
                         await sendTelegramMessage(botToken, chatId, "ta aqui o pix amor 👇");
                         await sendTelegramCopyableCode(botToken, chatId, payment.pixCopiaCola);
 
-                        // Salvar Mensagem de Sistema
                         await supabase.from('messages').insert({
                             session_id: session.id,
                             sender: 'system',
-                            content: "[SYSTEM: PIX GENERATED - " + value + "]"
+                            content: "[SYSTEM: PIX GENERATED - " + value + " | ID: " + payment.paymentId + "]"
                         });
                     } else {
                         await sendTelegramMessage(botToken, chatId, "amor o sistema caiu aqui rapidinho... tenta daqui a pouco?");

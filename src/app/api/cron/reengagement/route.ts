@@ -69,9 +69,10 @@ export async function GET(req: NextRequest) {
                 await new Promise(r => setTimeout(r, 1500));
             }
 
-            // Registrar envio para não mandar de novo
+            // Registrar envio para não mandar de novo E atualizar timestamp
             await supabase.from('sessions').update({
-                reengagement_sent: true
+                reengagement_sent: true,
+                last_bot_activity_at: new Date().toISOString()
             }).eq('id', session.id);
 
             // Registrar mensagens no histórico como 'bot'

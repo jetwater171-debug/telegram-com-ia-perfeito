@@ -114,9 +114,11 @@ export async function POST(req: NextRequest) {
 
         // 3.5. Reset Reengagement Flag & Update Timestamp
         // Quando o usuário fala, o bot não precisa mais cobrar.
+        // ATUALIZAMOS 'last_bot_activity_at' para AGORA para impedir que o cron dispare
+        // enquanto a IA ainda está pensando (o que causava o bug de duplicidade).
         await supabase.from('sessions').update({
             reengagement_sent: false,
-            // Opcional: last_user_activity aqui se quiséssemos trackear
+            last_bot_activity_at: new Date().toISOString()
         }).eq('id', session.id);
 
         // 3. Save User Message
