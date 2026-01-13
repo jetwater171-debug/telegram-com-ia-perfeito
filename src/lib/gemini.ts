@@ -25,7 +25,7 @@ const responseSchema = {
                 sentimental: { type: "NUMBER" },
                 financeiro: { type: "NUMBER" },
             },
-            required: ["tarado", "carente", "sentimental", "financeiro"],
+            // required: ["tarado", "carente", "sentimental", "financeiro"], // REMOVIDO PARA PERMITIR UPATES PARCIAIS
         },
         extracted_user_name: { type: "STRING", nullable: true },
         audio_transcription: { type: "STRING", nullable: true, description: "Se o usuário enviou um áudio, transcreva EXATAMENTE o que ele disse aqui. Se não for áudio, mande null." },
@@ -301,14 +301,15 @@ Você tem que tentar vender a "Avaliação do seu pau" como um extra safado por 
 - Se ele disser "Paguei": Use **\`check_payment_status\`**.
 - Só envie o conteúdo se o sistema confirmar.
 
-# 📊 SISTEMA DE PONTUAÇÃO (CRÍTICO: ATUALIZE A CADA TURNO)
-Você é um ANALISTA SILENCIOSO. A cada mensagem, julgue o lead e ATUALIZE os valores de \`lead_stats\` no JSON.
-**OBRIGATÓRIO:**
-- **NUNCA DEVOLVA OS MESMOS NÚMEROS DE ENTRADA.** Se a conversa avançou, os números DEVEM MUDAR (nem que seja +1 ou -1).
-- Se o lead falou algo picante, **AUMENTE O TARADO IMEDIATAMENTE**.
-- Se ele falou de dinheiro/iPhone, **AUMENTE O FINANCEIRO**.
-- Se ele falar algo neutro, **DIMINUA LEVEMENTE (Decaimento)**.
-**NÃO USE VALORES ALEATÓRIOS. SEJA COERENTE.**
+# 📊 SISTEMA DE PONTUAÇÃO (DINÂMICO)
+Você é um ANALISTA SILENCIOSO. A cada mensagem, julgue se o lead mudou de "score".
+**REGRAS DE ATUALIZAÇÃO:**
+- **MANTER:** Se o score não mudou, NÃO ENVIE o campo no JSON (ou envie null). O sistema manterá o valor antigo.
+- **MUDAR:** Se o lead falou algo relevante, ENVIE O NOVO VALOR TOTAL.
+  - Ex: Se Tarado era 10 e ele falou putaria -> Envie \`"tarado": 30\`.
+- **NUNCA ZERE** (Envie 0) a menos que o lead tenha pedido para parar/resetar.
+
+**CRITÉRIOS:**
 
 ### 🔥 TARADO (0 a 100)
 - **Base:** Começa baixo (5-10).
@@ -431,10 +432,10 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
                 jsonResponse.lead_stats = context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
             } else {
                 jsonResponse.lead_stats = {
-                    tarado: jsonResponse.lead_stats.tarado ?? context?.currentStats?.tarado ?? 0,
-                    financeiro: jsonResponse.lead_stats.financeiro ?? context?.currentStats?.financeiro ?? 0,
-                    carente: jsonResponse.lead_stats.carente ?? context?.currentStats?.carente ?? 0,
-                    sentimental: jsonResponse.lead_stats.sentimental ?? context?.currentStats?.sentimental ?? 0
+                    tarado: jsonResponse.lead_stats.tarado || context?.currentStats?.tarado || 0,
+                    financeiro: jsonResponse.lead_stats.financeiro || context?.currentStats?.financeiro || 0,
+                    carente: jsonResponse.lead_stats.carente || context?.currentStats?.carente || 0,
+                    sentimental: jsonResponse.lead_stats.sentimental || context?.currentStats?.sentimental || 0
                 };
             }
 

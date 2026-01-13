@@ -28,9 +28,9 @@ export async function POST(req: NextRequest) {
     if (!botToken) return NextResponse.json({ error: 'Sem token' });
     const chatId = session.telegram_chat_id;
 
-    // CONFIG: Tempo Total de Espera 6000ms
+    // CONFIG: Tempo Total de Espera 6000ms (Debounce para Agrupamento)
     // Estratégia: Esperar 2s -> Enviar Digitando -> Esperar 4s -> Processar
-    // Isso permite que "digitando..." apareça enquanto ainda estamos processando (buffering)
+    // Isso garante que se o lead mandar várias mensagens seguidas, a gente agrupe.
 
     // 1. Primeira Espera (2s)
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -261,19 +261,20 @@ export async function POST(req: NextRequest) {
 
     // 6. Enviar Respostas
 
+
+
     for (let i = 0; i < aiResponse.messages.length; i++) {
         const msgText = aiResponse.messages[i];
 
-        if (i > 0) {
-            // Delay Inteligente (Simular Digitação)
-            // Lógica: 50ms por caractere. 
-            // Mínimo 1s (para não colar demais). Máximo 5s (para não demorar demais).
-            const typingTime = msgText.length * 50;
-            const delay = Math.min(Math.max(1000, typingTime), 6000);
+        // Delay Inteligente (Simulação de Digitação) para TODAS as mensagens
+        // Velocidade: 60ms por caractere (mais lento que antes para ser notável)
+        // Mínimo: 1.5s (para "oi" não ser instantâneo)
+        // Máximo: 7s (para não demorar séculos em textos longos)
+        const typingTime = msgText.length * 60;
+        const delay = Math.min(Math.max(1500, typingTime), 7000);
 
-            await sendTelegramAction(botToken, chatId, 'typing');
-            await new Promise(r => setTimeout(r, delay));
-        }
+        await sendTelegramAction(botToken, chatId, 'typing');
+        await new Promise(r => setTimeout(r, delay));
 
         await supabase.from('messages').insert({
             session_id: session.id,
@@ -283,6 +284,9 @@ export async function POST(req: NextRequest) {
 
         await sendTelegramMessage(botToken, chatId, msgText);
     }
+
+
+
 
     // 6.5 Atualizar Last Bot Activity
     // Importante para o Cron de Reengajamento saber quando foi a última msg
