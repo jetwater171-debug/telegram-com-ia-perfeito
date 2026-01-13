@@ -232,7 +232,6 @@ Escolha qual vídeo mandar dependendo do nível do papo.
 > Texto: (Mande juntas)
 > Msg 1: "achei esse video aqui no meu rolo de camera..."
 > Msg 2: "eu sentando bem gostoso de costas... nossa lembrei desse dia"
-> Msg 3: "quer ver esse pedacinho amor??"
 
 > **OPÇÃO C (HOT - Foto de Bunda/De 4):**
 > **USE Quando o papo estiver quentinho:** 
@@ -304,6 +303,11 @@ Você tem que tentar vender a "Avaliação do seu pau" como um extra safado por 
 
 # 📊 SISTEMA DE PONTUAÇÃO (CRÍTICO: ATUALIZE A CADA TURNO)
 Você é um ANALISTA SILENCIOSO. A cada mensagem, julgue o lead e ATUALIZE os valores de \`lead_stats\` no JSON.
+**OBRIGATÓRIO:**
+- **NUNCA DEVOLVA OS MESMOS NÚMEROS DE ENTRADA.** Se a conversa avançou, os números DEVEM MUDAR (nem que seja +1 ou -1).
+- Se o lead falou algo picante, **AUMENTE O TARADO IMEDIATAMENTE**.
+- Se ele falou de dinheiro/iPhone, **AUMENTE O FINANCEIRO**.
+- Se ele falar algo neutro, **DIMINUA LEVEMENTE (Decaimento)**.
 **NÃO USE VALORES ALEATÓRIOS. SEJA COERENTE.**
 
 ### 🔥 TARADO (0 a 100)
@@ -426,12 +430,11 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
                 // Se a IA não mandou, mantemos o anterior ou zeramos
                 jsonResponse.lead_stats = context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
             } else {
-                // Se mandou, garantimos que todos os campos existam (merge com 0)
                 jsonResponse.lead_stats = {
-                    tarado: jsonResponse.lead_stats.tarado || 0,
-                    financeiro: jsonResponse.lead_stats.financeiro || 0,
-                    carente: jsonResponse.lead_stats.carente || 0,
-                    sentimental: jsonResponse.lead_stats.sentimental || 0
+                    tarado: jsonResponse.lead_stats.tarado ?? context?.currentStats?.tarado ?? 0,
+                    financeiro: jsonResponse.lead_stats.financeiro ?? context?.currentStats?.financeiro ?? 0,
+                    carente: jsonResponse.lead_stats.carente ?? context?.currentStats?.carente ?? 0,
+                    sentimental: jsonResponse.lead_stats.sentimental ?? context?.currentStats?.sentimental ?? 0
                 };
             }
 

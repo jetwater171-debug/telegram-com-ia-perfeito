@@ -261,7 +261,20 @@ export async function POST(req: NextRequest) {
 
     // 6. Enviar Respostas
 
-    for (const msgText of aiResponse.messages) {
+    for (let i = 0; i < aiResponse.messages.length; i++) {
+        const msgText = aiResponse.messages[i];
+
+        if (i > 0) {
+            // Delay Inteligente (Simular Digitação)
+            // Lógica: 50ms por caractere. 
+            // Mínimo 1s (para não colar demais). Máximo 5s (para não demorar demais).
+            const typingTime = msgText.length * 50;
+            const delay = Math.min(Math.max(1000, typingTime), 6000);
+
+            await sendTelegramAction(botToken, chatId, 'typing');
+            await new Promise(r => setTimeout(r, delay));
+        }
+
         await supabase.from('messages').insert({
             session_id: session.id,
             sender: 'bot',
@@ -269,7 +282,6 @@ export async function POST(req: NextRequest) {
         });
 
         await sendTelegramMessage(botToken, chatId, msgText);
-        await new Promise(r => setTimeout(r, 1000)); // Typing delay
     }
 
     // 6.5 Atualizar Last Bot Activity
