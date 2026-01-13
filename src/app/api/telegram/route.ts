@@ -50,6 +50,13 @@ export async function POST(req: NextRequest) {
     // Extract Text OR Video File ID
     let text = message.text;
 
+    // 0. Detect Audio/Voice
+    if (message.voice) {
+        text = `[AUDIO_UUID: ${message.voice.file_id}]`;
+    } else if (message.audio) {
+        text = `[AUDIO_UUID: ${message.audio.file_id}]`;
+    }
+
     if (message.video) {
         text = `[VIDEO_UPLOAD] File_ID: ${message.video.file_id}`;
     }
@@ -60,11 +67,7 @@ export async function POST(req: NextRequest) {
     const senderName = message.from.first_name || "Desconhecido";
 
     // 0. Detect Audio/Voice
-    if (message.voice) {
-        text = `[AUDIO_UUID: ${message.voice.file_id}]`;
-    } else if (message.audio) {
-        text = `[AUDIO_UUID: ${message.audio.file_id}]`;
-    }
+
 
 
     try {
