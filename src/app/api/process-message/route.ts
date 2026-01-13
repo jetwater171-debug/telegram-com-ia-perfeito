@@ -266,12 +266,9 @@ export async function POST(req: NextRequest) {
     for (let i = 0; i < aiResponse.messages.length; i++) {
         const msgText = aiResponse.messages[i];
 
-        // Delay Inteligente (Simulação de Digitação) para TODAS as mensagens
-        // Velocidade: 60ms por caractere (mais lento que antes para ser notável)
-        // Mínimo: 1.5s (para "oi" não ser instantâneo)
-        // Máximo: 7s (para não demorar séculos em textos longos)
-        const typingTime = msgText.length * 60;
-        const delay = Math.min(Math.max(1500, typingTime), 7000);
+        // Delay fixo entre 3 a 4 segundos (solicitado pelo usuário)
+        // Isso dá um tempo de leitura/digitação consistente para cada balão.
+        const delay = Math.floor(Math.random() * (4000 - 3000 + 1)) + 3000;
 
         await sendTelegramAction(botToken, chatId, 'typing');
         await new Promise(r => setTimeout(r, delay));
