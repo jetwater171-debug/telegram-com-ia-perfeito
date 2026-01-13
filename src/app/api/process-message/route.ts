@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
         const SHOWER_PHOTO = "https://i.ibb.co/dwf177Kc/download.jpg";
         const LINGERIE_PHOTO = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
         const WET_PHOTO = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
-        const VIDEO_PREVIEW = "BAACAgEAAxkBAAII9GllhASxJVJmbBZPORGHdc14YPNXAAIZBgACgiEoRxaUGJ1dO-SlOAQ";
+        const VIDEO_PREVIEW = "BAACAgEAAxkBAAIHMmllipghQzttsno99r2_C_8jpAIiAAL9BQACaHUxR4HU9Y9IirkLOAQ";
 
         let mediaUrl = null;
         let mediaType = null;

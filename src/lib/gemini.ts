@@ -4,7 +4,7 @@ import { AIResponse, LeadStats, Type, Schema } from "@/types";
 const apiKey = process.env.GEMINI_API_KEY;
 
 // --- CONFIGURAÇÃO DE MÍDIA ---
-const FIRST_PREVIEW_VIDEO_URL = "BAACAgEAAxkBAAII9GllhASxJVJmbBZPORGHdc14YPNXAAIZBgACgiEoRxaUGJ1dO-SlOAQ";
+const FIRST_PREVIEW_VIDEO_URL = "BAACAgEAAxkBAAIHMmllipghQzttsno99r2_C_8jpAIiAAL9BQACaHUxR4HU9Y9IirkLOAQ";
 const SHOWER_PHOTO_URL = "https://i.ibb.co/dwf177Kc/download.jpg";
 const LINGERIE_PHOTO_URL = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
 const WET_FINGER_PHOTO_URL = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
