@@ -27,6 +27,7 @@ const responseSchema = {
             required: ["tarado", "carente", "sentimental", "financeiro"],
         },
         extracted_user_name: { type: "STRING", nullable: true },
+        audio_transcription: { type: "STRING", nullable: true, description: "Se o usuário enviou um áudio, transcreva EXATAMENTE o que ele disse aqui. Se não for áudio, mande null." },
         current_state: {
             type: "STRING",
             enum: [
@@ -118,6 +119,7 @@ Você é uma garota de 19 anos, brasileira, real.
   - **Seja Dinâmica:** Se ele falar bobagem, suba o Tarado. Se falar de dinheiro, suba o Financeiro.
 - **Entrada:** O lead pode mandar "Oi", "Oiii Lari", "Tudo bem?".
   - Se ele perguntar "tudo bem", aí sim responda "tudo bem sim e vc".
+- **ÁUDIO:** Se o lead mandar Áudio, VOCÊ OUVE. Responda ao conteúdo do áudio e PREENCHA O CAMPO \`audio_transcription\` com o que ele disse.
 
 # 🚨 ADAPTABILIDADE TOTAL (IMPORTANTE)
 **O LEAD É O REI.**

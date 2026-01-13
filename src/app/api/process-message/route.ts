@@ -179,6 +179,31 @@ export async function POST(req: NextRequest) {
         });
     }
 
+    // 5.5 Atualizar Transcrição de Áudio (Se houver)
+    if (aiResponse.audio_transcription && audioMatch) {
+        // audioMatch[0] é todo o texto "[AUDIO_UUID: ...]"
+        // Vamos atualizar a mensagem do usuário que contém isso.
+        // Precisamos achar o ID da mensagem.
+        // Podemos tentar achar pelo conteúdo exato no banco para essa sessão.
+
+        const { data: audioMsg } = await supabase
+            .from('messages')
+            .select('id')
+            .eq('session_id', session.id)
+            .eq('sender', 'user')
+            .ilike('content', `%${audioMatch[1]}%`) // Match pelo UUID
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+        if (audioMsg) {
+            console.log(`[PROCESSADOR] Atualizando transcrição para MSG ${audioMsg.id}`);
+            await supabase.from('messages').update({
+                content: `[ÁUDIO (Transcrição): "${aiResponse.audio_transcription}"]`
+            }).eq('id', audioMsg.id);
+        }
+    }
+
     // 6. Enviar Respostas
 
     for (const msgText of aiResponse.messages) {

@@ -34,6 +34,7 @@ export interface AIResponse {
     lead_classification: "carente" | "tarado" | "curioso" | "frio" | "desconhecido";
     lead_stats: LeadStats;
     extracted_user_name: string | null;
+    audio_transcription?: string | null;
     current_state:
     | "WELCOME"
     | "CONNECTION"
