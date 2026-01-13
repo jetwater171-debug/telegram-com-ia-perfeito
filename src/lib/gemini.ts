@@ -288,7 +288,7 @@ export const initializeGenAI = () => {
 
 import { supabase } from '@/lib/supabaseClient';
 
-export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null }) => {
+export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null }, media?: { mimeType: string, data: string }) => {
     initializeGenAI();
     if (!genAI) throw new Error("API Key not configured");
 
@@ -321,6 +321,22 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         cleanHistory.pop();
     }
 
+    // 3. Montar Mensagem Atual (Com ou sem mídia)
+    const currentMessageParts: any[] = [{ text: userMessage }];
+
+    if (media) {
+        currentMessageParts.push({
+            inline_data: {
+                mime_type: media.mimeType,
+                data: media.data
+            }
+        });
+    }
+
+    // Se tiver mídia, não usamos o chat session padrão com `errorMessage` simples,
+    // precisamos usar o generateContent passando o histórico manualmente ou usar o sendMessage do chat com array de parts.
+    // O SDK do Gemini suporta sendMessage com parts.
+
     const chat = model.startChat({
         history: cleanHistory
     });
@@ -330,7 +346,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 
     while (attempt < maxRetries) {
         try {
-            const result = await chat.sendMessage(userMessage);
+            const result = await chat.sendMessage(currentMessageParts);
             const responseText = result.response.text();
 
             console.log(`🤖 Gemini Clean Response (Attempt ${attempt + 1}):`, responseText);

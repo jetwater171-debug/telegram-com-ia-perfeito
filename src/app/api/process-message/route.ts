@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
     const combinedText = groupMessages.map(m => m.content).join("\n");
     console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
 
-    // 4. Chamar Gemini
+    // 4. Preparar Contexto e Mídia (Se hover)
     const context = {
         userCity: session.user_city || "São Paulo",
         isHighTicket: session.device_type === 'iPhone',
@@ -110,7 +110,43 @@ export async function POST(req: NextRequest) {
         currentStats: session.lead_score
     };
 
-    const aiResponse = await sendMessageToGemini(session.id, combinedText, context);
+    let finalUserMessage = combinedText;
+    let mediaData = undefined;
+
+    // Detectar Audio
+    const audioMatch = combinedText.match(/\[AUDIO_UUID: (.+)\]/);
+    if (audioMatch && botToken) {
+        const fileId = audioMatch[1];
+        console.log(`[PROCESSADOR] Detectado Áudio ID: ${fileId}`);
+
+        try {
+            // Importar dinamicamente para evitar erro circular se houver, ou usar as funcoes diretas
+            const { getTelegramFilePath, getTelegramFileDownloadUrl } = await import('@/lib/telegram');
+
+            const filePath = await getTelegramFilePath(botToken, fileId);
+            if (filePath) {
+                const downloadUrl = getTelegramFileDownloadUrl(botToken, filePath);
+                console.log(`[PROCESSADOR] Baixando áudio de: ${downloadUrl}`);
+
+                const res = await fetch(downloadUrl);
+                const arrayBuffer = await res.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
+                const base64Audio = buffer.toString('base64');
+
+                mediaData = {
+                    mimeType: 'audio/ogg', // Telegram voice notes are usually OGG Opus
+                    data: base64Audio
+                };
+
+                // Remove o tag interna para a IA não se confundir, ou passamos uma instrução
+                finalUserMessage = "Enviou um áudio de voz.";
+            }
+        } catch (e) {
+            console.error("Erro ao baixar áudio:", e);
+        }
+    }
+
+    const aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
 
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
 

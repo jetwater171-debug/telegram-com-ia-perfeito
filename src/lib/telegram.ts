@@ -58,3 +58,22 @@ export const sendTelegramCopyableCode = async (token: string, chatId: string, co
         console.error("Failed to send copyable code to Telegram:", e);
     }
 }
+
+export const getTelegramFilePath = async (token: string, fileId: string): Promise<string | null> => {
+    try {
+        const url = `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.ok && data.result) {
+            return data.result.file_path;
+        }
+        return null;
+    } catch (e) {
+        console.error("Error getting file path:", e);
+        return null;
+    }
+};
+
+export const getTelegramFileDownloadUrl = (token: string, filePath: string) => {
+    return `https://api.telegram.org/file/bot${token}/${filePath}`;
+};
