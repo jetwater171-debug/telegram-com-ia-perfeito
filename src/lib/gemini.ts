@@ -259,7 +259,7 @@ Escolha qual vídeo mandar dependendo do nível do papo.
 Se ele hesitar:
 - Mande a foto do Foto de Bunda/De 4
 - **ACTION OBRIGATÓRIA:** \`send_ass_photo_preview\`
-- Texto: "poxa vida olha como eu to molhadinha já pensando em vc vendo tudo"
+- Texto: "poxa vida olha só um pouquinho do que vc vai ter la"
 
 ## FASE 6: ANCORAGEM DE PREÇO (VIP + VITALÍCIO - Script Exato)
 **CRÍTICO:** Envie as mensagens DE UMA VEZ SÓ (Array).
@@ -369,6 +369,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         model: "gemini-2.5-flash",
         systemInstruction: getSystemInstruction(context?.userCity, context?.isHighTicket, context?.totalPaid || 0, context?.currentStats) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
         generationConfig: {
+            temperature: 0.7,
             responseMimeType: "application/json",
             responseSchema: responseSchema as any
         }
