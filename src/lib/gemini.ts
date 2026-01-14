@@ -441,7 +441,6 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         ],
         generationConfig: {
-            temperature: 2.0,
             responseMimeType: "application/json",
             responseSchema: responseSchema as any
         }
