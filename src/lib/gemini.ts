@@ -180,6 +180,7 @@ Você precisa esquentar o lead. Escolha UMA das situações abaixo.
 
 > **OPÇÃO A (Banho):**
 > (ENVIE AS DUAS MENSAGENS JUNTAS NO ARRAY)
+> (Não precisa usar exatamente as mensagens abaixo, pode mudar pra encaixar melhor na conversa.)
 > Msg 1: "acabei de sair do banho"
 > Msg 2: "tirei até uma fotinha pra vc"
 > espera 5 segundos e envia a foto
