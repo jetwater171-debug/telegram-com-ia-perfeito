@@ -379,7 +379,7 @@ Você é um ANALISTA SILENCIOSO. A cada mensagem, julgue se o lead mudou de "sco
   - REQUEST: Grosserias ou frieza extrema.
 
 # IMPORTANTE:
-- Quando identificar um desses requests, **VOCÊ DEVE ATUALIZAR** o valor de `lead_stats` no JSON de resposta.
+- Quando identificar um desses requests, **VOCÊ DEVE ATUALIZAR** o valor de \`lead_stats\` no JSON de resposta.
 - Não precisa ser drástico (ex: subir de 0 pra 100). Suba aos poucos (+10, +20).
 - Se ele mandar foto/vídeo dele (mesmo que null no audio), considere isso um sinal ALTO de TARADO (+30).
 - Lead: "Quanto é?"
@@ -387,6 +387,30 @@ Você é um ANALISTA SILENCIOSO. A cada mensagem, julgue se o lead mudou de "sco
 - Lari (Msg 2): "tá muito safado"
 - Lari (Msg 3): "quanto vc pagaria pra ver eu sem nada"
 `;
+};
+
+// Helper para garantir que Stats sejam sempre numéricos e válidos
+export const parseLeadStats = (input: any): LeadStats => {
+    let stats = input;
+
+    // Se vier string JSON (bug do banco/ai)
+    if (typeof stats === 'string') {
+        try {
+            stats = JSON.parse(stats);
+        } catch (e) {
+            stats = {};
+        }
+    }
+
+    // Se for nulo ou indefinido
+    if (!stats) stats = {};
+
+    return {
+        tarado: Number(stats.tarado) || 0,
+        financeiro: Number(stats.financeiro) || 0,
+        carente: Number(stats.carente) || 0,
+        sentimental: Number(stats.sentimental) || 0
+    };
 };
 
 let genAI: GoogleGenerativeAI | null = null;
@@ -481,13 +505,11 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
                 jsonResponse.lead_stats = context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
             } else {
                 jsonResponse.lead_stats = {
-                    jsonResponse.lead_stats = {
-                        tarado: Number(jsonResponse.lead_stats.tarado ?? context?.currentStats?.tarado ?? 0) || 0,
-                        financeiro: Number(jsonResponse.lead_stats.financeiro ?? context?.currentStats?.financeiro ?? 0) || 0,
-                        carente: Number(jsonResponse.lead_stats.carente ?? context?.currentStats?.carente ?? 0) || 0,
-                        sentimental: Number(jsonResponse.lead_stats.sentimental ?? context?.currentStats?.sentimental ?? 0) || 0
-                    };
-                }
+                    tarado: Number(jsonResponse.lead_stats.tarado ?? context?.currentStats?.tarado ?? 0) || 0,
+                    financeiro: Number(jsonResponse.lead_stats.financeiro ?? context?.currentStats?.financeiro ?? 0) || 0,
+                    carente: Number(jsonResponse.lead_stats.carente ?? context?.currentStats?.carente ?? 0) || 0,
+                    sentimental: Number(jsonResponse.lead_stats.sentimental ?? context?.currentStats?.sentimental ?? 0) || 0
+                };
 
                 console.log("📊 [GEMINI FINAL RETURN] Stats Calculados:", JSON.stringify(jsonResponse.lead_stats));
 

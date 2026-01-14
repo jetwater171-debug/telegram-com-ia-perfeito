@@ -112,6 +112,29 @@ export default function AdminDashboard() {
         }
     };
 
+    const getSafeStats = (session: Session) => {
+        let stats = session.lead_score;
+
+        // Se vier como string (bug comum do supabase em alguns casos ou erro de gravação), tenta parsear
+        if (typeof stats === 'string') {
+            try {
+                stats = JSON.parse(stats);
+            } catch (e) {
+                return { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
+            }
+        }
+
+        // Se for nulo ou indefinido
+        if (!stats) return { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
+
+        return {
+            tarado: Number(stats.tarado) || 0,
+            financeiro: Number(stats.financeiro) || 0,
+            carente: Number(stats.carente) || 0,
+            sentimental: Number(stats.sentimental) || 0
+        };
+    };
+
     return (
         <div className="min-h-screen bg-[#0f111a] text-gray-100 font-sans selection:bg-pink-500 selection:text-white">
 
@@ -186,90 +209,94 @@ export default function AdminDashboard() {
 
                 {/* GRID DE CARDS */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {getFilteredSessions().map(session => (
-                        <Link key={session.id} href={`/admin/chat/${session.telegram_chat_id}`}>
-                            <div className={`group relative bg-[#161b22] rounded-xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-xl overflow-hidden
+                    {getFilteredSessions().map(session => {
+                        const safeStats = getSafeStats(session); // UTLIZA O HELPER AQUI
+
+                        return (
+                            <Link key={session.id} href={`/admin/chat/${session.telegram_chat_id}`}>
+                                <div className={`group relative bg-[#161b22] rounded-xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-xl overflow-hidden
                                 ${session.status === 'paused' ? 'border-red-900/50 hover:border-red-500/50' : 'border-gray-800 hover:border-pink-500/30'}
                             `}>
-                                {/* Status Indicator Strip */}
-                                <div className={`absolute top-0 left-0 w-full h-1 ${session.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`} />
+                                    {/* Status Indicator Strip */}
+                                    <div className={`absolute top-0 left-0 w-full h-1 ${session.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`} />
 
-                                <div className="p-5">
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div>
-                                            <h2 className="text-lg font-bold text-gray-100 group-hover:text-pink-400 transition">
-                                                {session.user_name || "Desconhecido"}
-                                            </h2>
-                                            <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-                                                <span>📍 {session.user_city || "N/A"}</span>
-                                                <span>•</span>
-                                                <span>📱 {session.device_type || "N/A"}</span>
+                                    <div className="p-5">
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div>
+                                                <h2 className="text-lg font-bold text-gray-100 group-hover:text-pink-400 transition">
+                                                    {session.user_name || "Desconhecido"}
+                                                </h2>
+                                                <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+                                                    <span>📍 {session.user_city || "N/A"}</span>
+                                                    <span>•</span>
+                                                    <span>📱 {session.device_type || "N/A"}</span>
+                                                </div>
                                             </div>
-                                        </div>
-                                        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide border
+                                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide border
                                             ${session.status === 'active'
-                                                ? 'bg-green-900/20 text-green-400 border-green-900/50'
-                                                : 'bg-red-900/20 text-red-400 border-red-900/50'}
+                                                    ? 'bg-green-900/20 text-green-400 border-green-900/50'
+                                                    : 'bg-red-900/20 text-red-400 border-red-900/50'}
                                         `}>
-                                            {translateStatus(session.status)}
-                                        </span>
-                                    </div>
-
-                                    {/* Total Paid Badge if > 0 */}
-                                    {(session.total_paid > 0) && (
-                                        <div className="mb-4 bg-green-900/20 border border-green-900/30 rounded-lg p-2 flex items-center justify-between">
-                                            <span className="text-xs text-green-400 font-bold uppercase tracking-wider">Total Pago (LTV)</span>
-                                            <span className="text-sm font-bold text-white">
-                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(session.total_paid)}
+                                                {translateStatus(session.status)}
                                             </span>
                                         </div>
-                                    )}
 
-                                    {/* Stats Grid */}
-                                    <div className="grid grid-cols-2 gap-3 mb-4">
-                                        <div className="bg-gray-800/50 p-2 rounded border border-gray-800">
-                                            <div className="flex justify-between text-xs mb-1">
-                                                <span className="text-gray-400">🔥 Tarado</span>
-                                                <span className="font-bold">{session.lead_score?.tarado || 0}%</span>
+                                        {/* Total Paid Badge if > 0 */}
+                                        {(session.total_paid > 0) && (
+                                            <div className="mb-4 bg-green-900/20 border border-green-900/30 rounded-lg p-2 flex items-center justify-between">
+                                                <span className="text-xs text-green-400 font-bold uppercase tracking-wider">Total Pago (LTV)</span>
+                                                <span className="text-sm font-bold text-white">
+                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(session.total_paid)}
+                                                </span>
                                             </div>
-                                            <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
-                                                <div className={`h-full ${getScoreColor(session.lead_score?.tarado || 0)}`} style={{ width: `${session.lead_score?.tarado || 0}%` }}></div>
-                                            </div>
+                                        )}
 
-                                        </div>
-                                        <div className="bg-gray-800/50 p-2 rounded border border-gray-800">
-                                            <div className="flex justify-between text-xs mb-1">
-                                                <span className="text-gray-400">💰 Financeiro</span>
-                                                <span className="font-bold">{session.lead_score?.financeiro || 0}%</span>
-                                            </div>
-                                            <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
-                                                <div className="h-full bg-green-500" style={{ width: `${session.lead_score?.financeiro || 0}%` }}></div>
-                                            </div>
-                                        </div>
-                                        <div className="bg-gray-800/50 p-2 rounded border border-gray-800 col-span-2">
-                                            <div className="flex justify-between text-xs mb-1">
-                                                <span className="text-blue-400">❤️ Carente</span>
-                                                <span className="font-bold">{session.lead_score?.carente || 0}%</span>
-                                            </div>
-                                            <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
-                                                <div className="h-full bg-blue-500" style={{ width: `${session.lead_score?.carente || 0}%` }}></div>
-                                            </div>
-                                        </div>
-                                    </div>
+                                        {/* Stats Grid */}
+                                        <div className="grid grid-cols-2 gap-3 mb-4">
+                                            <div className="bg-gray-800/50 p-2 rounded border border-gray-800">
+                                                <div className="flex justify-between text-xs mb-1">
+                                                    <span className="text-gray-400">🔥 Tarado</span>
+                                                    <span className="font-bold">{safeStats.tarado || 0}%</span>
+                                                </div>
+                                                <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                                                    <div className={`h-full ${getScoreColor(safeStats.tarado || 0)}`} style={{ width: `${safeStats.tarado || 0}%` }}></div>
+                                                </div>
 
-                                    <div className="flex justify-between items-center text-xs text-gray-500 pt-4 border-t border-gray-800">
-                                        <div className="flex items-center gap-1">
-                                            <span>🕒</span>
-                                            <span>{formatTimeAgo(session.last_message_at)}</span>
+                                            </div>
+                                            <div className="bg-gray-800/50 p-2 rounded border border-gray-800">
+                                                <div className="flex justify-between text-xs mb-1">
+                                                    <span className="text-gray-400">💰 Financeiro</span>
+                                                    <span className="font-bold">{safeStats.financeiro || 0}%</span>
+                                                </div>
+                                                <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                                                    <div className="h-full bg-green-500" style={{ width: `${safeStats.financeiro || 0}%` }}></div>
+                                                </div>
+                                            </div>
+                                            <div className="bg-gray-800/50 p-2 rounded border border-gray-800 col-span-2">
+                                                <div className="flex justify-between text-xs mb-1">
+                                                    <span className="text-blue-400">❤️ Carente</span>
+                                                    <span className="font-bold">{safeStats.carente || 0}%</span>
+                                                </div>
+                                                <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                                                    <div className="h-full bg-blue-500" style={{ width: `${safeStats.carente || 0}%` }}></div>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="font-mono opacity-50">
-                                            #{session.telegram_chat_id}
+
+
+                                        <div className="flex justify-between items-center text-xs text-gray-500 pt-4 border-t border-gray-800">
+                                            <div className="flex items-center gap-1">
+                                                <span>🕒</span>
+                                                <span>{formatTimeAgo(session.last_message_at)}</span>
+                                            </div>
+                                            <div className="font-mono opacity-50">
+                                                #{session.telegram_chat_id}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                        </Link>
-                    ))}
+                            </Link>
+                        ))}
 
                     {getFilteredSessions().length === 0 && (
                         <div className="col-span-full py-12 text-center text-gray-500 flex flex-col items-center">
