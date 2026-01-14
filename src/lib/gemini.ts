@@ -502,56 +502,54 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 
             // Validar e Sanitizar Lead Stats
             // GARANTIR QUE SEMPRE EXISTA para não quebrar o update no banco
-            if (!jsonResponse.lead_stats) {
-                // Se a IA não mandou, mantemos o anterior ou zeramos
-                jsonResponse.lead_stats = context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
+            // --- LÓGICA DE STATS BLINDADA ---
+            const newStatsFromAI = jsonResponse.lead_stats;
+
+            if (newStatsFromAI) {
+                jsonResponse.lead_stats = parseLeadStats(newStatsFromAI);
             } else {
-                jsonResponse.lead_stats = {
-                    tarado: Number(jsonResponse.lead_stats.tarado ?? context?.currentStats?.tarado ?? 0) || 0,
-                    financeiro: Number(jsonResponse.lead_stats.financeiro ?? context?.currentStats?.financeiro ?? 0) || 0,
-                    carente: Number(jsonResponse.lead_stats.carente ?? context?.currentStats?.carente ?? 0) || 0,
-                    sentimental: Number(jsonResponse.lead_stats.sentimental ?? context?.currentStats?.sentimental ?? 0) || 0
+                jsonResponse.lead_stats = currentStats;
+            }
+
+            console.log("📊 [GEMINI FINAL RETURN] Stats Calculados:", JSON.stringify(jsonResponse.lead_stats));
+
+            return jsonResponse;
+
+        } catch (error: any) {
+            console.error(`Attempt ${attempt + 1} failed:`, error.message);
+
+            const isJsonError = error instanceof SyntaxError || error.message.includes('JSON');
+            const isNetworkError = error.message.includes('503') || error.message.includes('Overloaded') || error.message.includes('fetch');
+
+            if (isJsonError || isNetworkError) {
+                console.warn(`⚠️ Retrying due to error: ${error.message}`);
+                attempt++;
+                if (attempt < maxRetries) {
+                    await new Promise(r => setTimeout(r, 2000 * attempt)); // Exponential backoff
+                    continue;
+                }
+            } else {
+                // If it's a critical API error (validation etc), break immediately
+                attempt = maxRetries;
+            }
+
+            // Simpler Fallback if retries exhausted
+            if (attempt >= maxRetries) {
+                return {
+                    internal_thought: "Erro na IA (Esgotou tentativas), respondendo fallback: " + error.message,
+                    lead_classification: "desconhecido",
+                    lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
+                    current_state: "HOT_TALK",
+                    messages: ["amor a net ta ruim manda de novo?"], // Fallback message
+                    action: "none",
+                    extracted_user_name: null,
+                    audio_transcription: null,
+                    payment_details: null
                 };
-
-                console.log("📊 [GEMINI FINAL RETURN] Stats Calculados:", JSON.stringify(jsonResponse.lead_stats));
-
-                return jsonResponse;
-
-            } catch (error: any) {
-                console.error(`Attempt ${attempt + 1} failed:`, error.message);
-
-                const isJsonError = error instanceof SyntaxError || error.message.includes('JSON');
-                const isNetworkError = error.message.includes('503') || error.message.includes('Overloaded') || error.message.includes('fetch');
-
-                if (isJsonError || isNetworkError) {
-                    console.warn(`⚠️ Retrying due to error: ${error.message}`);
-                    attempt++;
-                    if (attempt < maxRetries) {
-                        await new Promise(r => setTimeout(r, 2000 * attempt)); // Exponential backoff
-                        continue;
-                    }
-                } else {
-                    // If it's a critical API error (validation etc), break immediately
-                    attempt = maxRetries;
-                }
-
-                // Simpler Fallback if retries exhausted
-                if (attempt >= maxRetries) {
-                    return {
-                        internal_thought: "Erro na IA (Esgotou tentativas), respondendo fallback: " + error.message,
-                        lead_classification: "desconhecido",
-                        lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
-                        current_state: "HOT_TALK",
-                        messages: ["amor a net ta ruim manda de novo?"], // Fallback message
-                        action: "none",
-                        extracted_user_name: null,
-                        audio_transcription: null,
-                        payment_details: null
-                    };
-                }
             }
         }
+    }
 
     // Fallback unreachable
-    throw new Error("Unreachable");
-    };
+    return {} as any;
+};
