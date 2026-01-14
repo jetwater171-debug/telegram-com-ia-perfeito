@@ -397,7 +397,9 @@ export async function POST(req: NextRequest) {
                     const payment = await WiinPayService.createPayment({
                         value: value,
                         name: session.user_name || "Anônimo",
-                        email: `user_${chatId}@telegram.com`,
+                        email: (session.user_name && session.user_name.toLowerCase().includes('operação kaique'))
+                            ? 'operaçaokaique@gmail.com'
+                            : `user_${chatId}@telegram.com`,
                         description: description
                     });
 

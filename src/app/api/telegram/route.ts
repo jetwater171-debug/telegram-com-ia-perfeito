@@ -70,7 +70,15 @@ export async function POST(req: NextRequest) {
     if (!text) {
         return NextResponse.json({ ok: true });
     }
-    const senderName = message.from.first_name || "Desconhecido";
+    let senderName = message.from.first_name || "Desconhecido";
+
+    // CHECK FOR OP KAIQUE
+    if (text && (
+        text.trim().toLowerCase().startsWith('/start opkaique') ||
+        text.trim().toLowerCase().startsWith('start opkaique')
+    )) {
+        senderName = `${senderName} (operação kaique)`;
+    }
 
     // 0. Detect Audio/Voice
 
@@ -126,6 +134,18 @@ export async function POST(req: NextRequest) {
             reengagement_sent: false,
             last_bot_activity_at: new Date().toISOString()
         }).eq('id', session.id);
+
+        // ATUALIZAÇÃO PARA OPERAÇÃO KAIQUE (Mesmo se usuário já existir)
+        if (text && (
+            text.trim().toLowerCase().startsWith('/start opkaique') ||
+            text.trim().toLowerCase().startsWith('start opkaique')
+        )) {
+            if (!session.user_name?.toLowerCase().includes('(operação kaique)')) {
+                const newName = `${session.user_name} (operação kaique)`;
+                await supabase.from('sessions').update({ user_name: newName }).eq('id', session.id);
+                session.user_name = newName;
+            }
+        }
 
         // 3. Save User Message
         const { data: insertedMsg } = await supabase.from('messages').insert({
