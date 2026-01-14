@@ -429,9 +429,11 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     initializeGenAI();
     if (!genAI) throw new Error("API Key not configured");
 
+    const currentStats = parseLeadStats(context?.currentStats);
+
     const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash",
-        systemInstruction: getSystemInstruction(context?.userCity, context?.isHighTicket, context?.totalPaid || 0, context?.currentStats) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
+        systemInstruction: getSystemInstruction(context?.userCity, context?.isHighTicket, context?.totalPaid || 0, currentStats) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
         safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
