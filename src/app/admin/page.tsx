@@ -296,7 +296,8 @@ export default function AdminDashboard() {
                                     </div>
                                 </div>
                             </Link>
-                        ))}
+                        );
+                    })}
 
                     {getFilteredSessions().length === 0 && (
                         <div className="col-span-full py-12 text-center text-gray-500 flex flex-col items-center">
