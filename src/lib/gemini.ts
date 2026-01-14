@@ -25,7 +25,7 @@ const responseSchema = {
                 sentimental: { type: "NUMBER" },
                 financeiro: { type: "NUMBER" },
             },
-            // required: ["tarado", "carente", "sentimental", "financeiro"], // REMOVIDO PARA PERMITIR UPATES PARCIAIS
+            required: ["tarado", "carente", "sentimental", "financeiro"], // OBRIGATÓRIO: Sempre mande o estado completo.
         },
         extracted_user_name: { type: "STRING", nullable: true },
         audio_transcription: { type: "STRING", nullable: true, description: "Se o usuário enviou um áudio, transcreva EXATAMENTE o que ele disse aqui. Se não for áudio, mande null." },
@@ -342,7 +342,42 @@ Você é um ANALISTA SILENCIOSO. A cada mensagem, julgue se o lead mudou de "sco
   - Seco, direto ao ponto (só quer o nude e tchau).
   - Trata você como nada ou uma puta.
 
-# EXEMPLOS DE FORMATAÇÃO
+# OBJETIVO PRINCIPAL: ATUALIZAÇÃO DE STATS
+# IMPORTANTE: Você É OBRIGADO a mudar o valor de lead_stats sempre que identificar um gatilho.
+
+# GATILHOS DE ALTERAÇÃO DE STATUS (REQUESTS)
+# Aqui estão os REQUESTS (Gatilhos) explícitos que você deve observar para alterar as barrinhas:
+
+## 1. MEXER NO TARADO (Requests do Usuário)
+- **SUBIR (+):**
+  - REQUEST: "manda foto", "quero ver", "deixa eu ver", "cadê".
+  - REQUEST: "vc é gostosa", "delicia", "linda", "tesão".
+  - REQUEST: "quero transar", "chupar", "comer".
+- **DESCER (-):**
+  - REQUEST: "para com isso", "não quero", "respeita".
+  - REQUEST: Assuntos de igreja, família, trabalho sério.
+
+## 2. MEXER NO FINANCEIRO (Requests do Usuário)
+- **SUBIR (+):**
+  - REQUEST: "quanto custa?", "passa o pix", "vou comprar".
+  - REQUEST: "tenho dinheiro", "sou rico", "tenho carro", "viajei pra europa".
+- **DESCER (-):**
+  - REQUEST: "tá caro", "não tenho dinheiro", "faz de graça".
+  - REQUEST: "sou pobre", "desempregado", "tô liso".
+
+## 3. MEXER NO CARENTE (Requests do Usuário)
+- **SUBIR (+):**
+  - REQUEST: "bom dia amor", "boa noite vida", "sonhei com vc".
+  - REQUEST: "tô sozinho", "queria uma namorada", "ninguém me quer".
+  - REQUEST: Desabafos longos sobre a vida.
+- **DESCER (-):**
+  - REQUEST: Respostas curtas ("sim", "não", "ok").
+  - REQUEST: Grosserias ou frieza extrema.
+
+# IMPORTANTE:
+- Quando identificar um desses requests, **VOCÊ DEVE ATUALIZAR** o valor de `lead_stats` no JSON de resposta.
+- Não precisa ser drástico (ex: subir de 0 pra 100). Suba aos poucos (+10, +20).
+- Se ele mandar foto/vídeo dele (mesmo que null no audio), considere isso um sinal ALTO de TARADO (+30).
 - Lead: "Quanto é?"
 - Lari (Msg 1): "amor vc viu a prévia"
 - Lari (Msg 2): "tá muito safado"
@@ -436,50 +471,53 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
                 jsonResponse.lead_stats = context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
             } else {
                 jsonResponse.lead_stats = {
-                    tarado: jsonResponse.lead_stats.tarado || context?.currentStats?.tarado || 0,
-                    financeiro: jsonResponse.lead_stats.financeiro || context?.currentStats?.financeiro || 0,
-                    carente: jsonResponse.lead_stats.carente || context?.currentStats?.carente || 0,
-                    sentimental: jsonResponse.lead_stats.sentimental || context?.currentStats?.sentimental || 0
-                };
-            }
-
-            return jsonResponse;
-
-        } catch (error: any) {
-            console.error(`Attempt ${attempt + 1} failed:`, error.message);
-
-            const isJsonError = error instanceof SyntaxError || error.message.includes('JSON');
-            const isNetworkError = error.message.includes('503') || error.message.includes('Overloaded') || error.message.includes('fetch');
-
-            if (isJsonError || isNetworkError) {
-                console.warn(`⚠️ Retrying due to error: ${error.message}`);
-                attempt++;
-                if (attempt < maxRetries) {
-                    await new Promise(r => setTimeout(r, 2000 * attempt)); // Exponential backoff
-                    continue;
+                    jsonResponse.lead_stats = {
+                        tarado: Number(jsonResponse.lead_stats.tarado ?? context?.currentStats?.tarado ?? 0) || 0,
+                        financeiro: Number(jsonResponse.lead_stats.financeiro ?? context?.currentStats?.financeiro ?? 0) || 0,
+                        carente: Number(jsonResponse.lead_stats.carente ?? context?.currentStats?.carente ?? 0) || 0,
+                        sentimental: Number(jsonResponse.lead_stats.sentimental ?? context?.currentStats?.sentimental ?? 0) || 0
+                    };
                 }
-            } else {
-                // If it's a critical API error (validation etc), break immediately
-                attempt = maxRetries;
-            }
 
-            // Simpler Fallback if retries exhausted
-            if (attempt >= maxRetries) {
-                return {
-                    internal_thought: "Erro na IA (Esgotou tentativas), respondendo fallback: " + error.message,
-                    lead_classification: "desconhecido",
-                    lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
-                    current_state: "HOT_TALK",
-                    messages: ["amor a net ta ruim manda de novo?"], // Fallback message
-                    action: "none",
-                    extracted_user_name: null,
-                    audio_transcription: null,
-                    payment_details: null
-                };
+                console.log("📊 [GEMINI FINAL RETURN] Stats Calculados:", JSON.stringify(jsonResponse.lead_stats));
+
+                return jsonResponse;
+
+            } catch (error: any) {
+                console.error(`Attempt ${attempt + 1} failed:`, error.message);
+
+                const isJsonError = error instanceof SyntaxError || error.message.includes('JSON');
+                const isNetworkError = error.message.includes('503') || error.message.includes('Overloaded') || error.message.includes('fetch');
+
+                if (isJsonError || isNetworkError) {
+                    console.warn(`⚠️ Retrying due to error: ${error.message}`);
+                    attempt++;
+                    if (attempt < maxRetries) {
+                        await new Promise(r => setTimeout(r, 2000 * attempt)); // Exponential backoff
+                        continue;
+                    }
+                } else {
+                    // If it's a critical API error (validation etc), break immediately
+                    attempt = maxRetries;
+                }
+
+                // Simpler Fallback if retries exhausted
+                if (attempt >= maxRetries) {
+                    return {
+                        internal_thought: "Erro na IA (Esgotou tentativas), respondendo fallback: " + error.message,
+                        lead_classification: "desconhecido",
+                        lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
+                        current_state: "HOT_TALK",
+                        messages: ["amor a net ta ruim manda de novo?"], // Fallback message
+                        action: "none",
+                        extracted_user_name: null,
+                        audio_transcription: null,
+                        payment_details: null
+                    };
+                }
             }
         }
-    }
 
     // Fallback unreachable
     throw new Error("Unreachable");
-};
+    };
