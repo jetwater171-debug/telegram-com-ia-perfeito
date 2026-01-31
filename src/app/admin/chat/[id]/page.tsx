@@ -23,6 +23,7 @@ export default function AdminChatPage() {
     const [actionMsg, setActionMsg] = useState('');
     const [forceLoading, setForceLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const didInitialScroll = useRef(false);
 
     useEffect(() => {
         let active = true;
@@ -108,7 +109,18 @@ export default function AdminChatPage() {
         return () => { supabase.removeChannel(channel); };
     };
 
-    const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const scrollToBottom = (behavior: ScrollBehavior = 'smooth') =>
+        messagesEndRef.current?.scrollIntoView({ behavior });
+
+    useEffect(() => {
+        if (!messages.length) return;
+        if (!didInitialScroll.current) {
+            didInitialScroll.current = true;
+            scrollToBottom('auto');
+            return;
+        }
+        scrollToBottom('smooth');
+    }, [messages.length]);
 
     const getSafeLeadScore = (raw: any) => {
         let stats = raw;
