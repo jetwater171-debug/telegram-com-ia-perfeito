@@ -309,10 +309,14 @@ export async function POST(req: NextRequest) {
 
     // 6. Enviar Respostas
 
-    const messages = Array.isArray(aiResponse.messages) ? aiResponse.messages : [String(aiResponse.messages || '')].filter(Boolean);
+    const outgoingMessages = Array.isArray(aiResponse.messages)
+        ? aiResponse.messages
+        : [String(aiResponse.messages || '')].filter(Boolean);
 
-    for (let i = 0; i < messages.length; i++) {
-        const msgText = messages[i];
+    const safeMessages = outgoingMessages.length > 0 ? outgoingMessages : ['amor?'];
+
+    for (let i = 0; i < safeMessages.length; i++) {
+        const msgText = safeMessages[i];
 
         // Delay fixo entre 3 a 4 segundos (solicitado pelo usuário)
         // Isso dá um tempo de leitura/digitação consistente para cada balão.

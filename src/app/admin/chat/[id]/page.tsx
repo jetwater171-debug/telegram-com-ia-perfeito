@@ -19,6 +19,7 @@ export default function AdminChatPage() {
     const [session, setSession] = useState<any>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [showMenu, setShowMenu] = useState(false);
+    const [leadTyping, setLeadTyping] = useState(false);
 
     useEffect(() => {
         let active = true;
@@ -40,6 +41,32 @@ export default function AdminChatPage() {
         };
     }, [telegramChatId]);
 
+
+    useEffect(() => {
+        if (!messages || messages.length == 0) {
+            setLeadTyping(false);
+            return;
+        }
+
+        const lastMsg = messages[messages.length - 1];
+        const lastIsUser = lastMsg.sender == 'user';
+        if (!lastIsUser) {
+            setLeadTyping(false);
+            return;
+        }
+
+        const lastTime = new Date(lastMsg.created_at).getTime();
+        const now = Date.now();
+        const isRecent = (now - lastTime) <= 20000;
+        setLeadTyping(isRecent);
+
+        const typingTimeout = setTimeout(() => {
+            setLeadTyping(false);
+        }, 20000);
+
+        return () => clearTimeout(typingTimeout);
+
+    }, [messages]);
     const loadMessages = async (sessionId: string) => {
         const { data } = await supabase.from('messages').select('*').eq('session_id', sessionId).order('created_at', { ascending: true });
         if (data) setMessages(data as Message[]);
@@ -166,7 +193,7 @@ export default function AdminChatPage() {
                                     {session?.user_name || "Carregando..."}
                                 </h1>
                                 <p className="text-xs text-blue-400">
-                                    {session?.status === 'active' ? 'online (IA Ativa)' : 'offline (Pausado)'}
+                                    {leadTyping ? 'digitando...' : (session?.status === 'active' ? 'online (IA Ativa)' : 'offline (Pausado)')}
                                 </p>
                             </div>
                         </div>
