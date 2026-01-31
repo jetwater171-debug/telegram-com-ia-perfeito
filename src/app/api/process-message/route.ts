@@ -678,12 +678,12 @@ export async function POST(req: NextRequest) {
                     if (lastPayMsg) {
                         // Extrair Valor e ID
                         // Formato esperado: "[SYSTEM: PIX GENERATED - 24.90 | ID: abc-123]"
-                        const content = lastPayMsg.content;
+                        const content = lastPayMsg.content || '';
                         const valueMatch = content.match(/PIX GENERATED - (\d+(\.\d+)?)/);
                         const idMatch = content.match(/ID: ([a-zA-Z0-9\-_]+)/);
 
-                        const value = valueMatch ? parseFloat(valueMatch[1]) : 0;
-                        const paymentId = idMatch ? idMatch[1] : null;
+                        const value = lastPayMsg.payment_data?.value ?? (valueMatch ? parseFloat(valueMatch[1]) : 0);
+                        const paymentId = lastPayMsg.payment_data?.paymentId ?? (idMatch ? idMatch[1] : null);
 
                         if (!paymentId) {
                             await sendTelegramMessage(botToken, chatId, "amor nao achei o codigo da transação aqui... manda o comprovante?");
@@ -695,8 +695,9 @@ export async function POST(req: NextRequest) {
 
                         console.log(`[PROCESSADOR] Status WiinPay:`, JSON.stringify(statusData));
 
-                        const status = statusData.status || statusData.data?.status || 'pending';
-                        const isPaid = ['approved', 'paid', 'completed'].includes(status.toLowerCase());
+                        const rawStatus = statusData?.status || statusData?.data?.status || statusData?.payment?.status || statusData?.data?.payment?.status || 'pending';
+                        const status = String(rawStatus).toLowerCase();
+                        const isPaid = ['approved', 'paid', 'completed', 'confirmed', 'success', 'aprovado'].includes(status);
 
                         if (isPaid) {
                             // Incrementar LTV
@@ -718,6 +719,27 @@ export async function POST(req: NextRequest) {
 
                             // Forçar IA a saber que pagou na proxima iteração se necessário, 
                             // mas aqui ela já recebe o input de sistema acima.
+                            if (paymentId) {
+                                const { data: lastPixMsg } = await supabase
+                                    .from('messages')
+                                    .select('id, payment_data')
+                                    .eq('session_id', session.id)
+                                    .eq('sender', 'system')
+                                    .ilike('content', '%PIX GENERATED%')
+                                    .order('created_at', { ascending: false })
+                                    .limit(1)
+                                    .single();
+                                if (lastPixMsg?.id) {
+                                    await supabase.from('messages').update({
+                                        payment_data: {
+                                            ...(lastPixMsg.payment_data || {}),
+                                            paid: true,
+                                            status: status,
+                                            paid_at: new Date().toISOString()
+                                        }
+                                    }).eq('id', lastPixMsg.id);
+                                }
+                            }
                             try {
                                 await supabase.from('funnel_events').insert({
                                     session_id: session.id,
@@ -772,6 +794,38 @@ export async function POST(req: NextRequest) {
                 try {
                     const value = aiResponse.payment_details?.value || 31.00;
                     const description = aiResponse.payment_details?.description || "Pack Exclusivo";
+                    // Se já existe PIX pendente com o mesmo valor, reenviar o mesmo
+                    const { data: lastPixMsg } = await supabase
+                        .from('messages')
+                        .select('id, payment_data, created_at')
+                        .eq('session_id', session.id)
+                        .eq('sender', 'system')
+                        .ilike('content', '%PIX GENERATED%')
+                        .order('created_at', { ascending: false })
+                        .limit(1)
+                        .single();
+
+                    const lastPaymentData: any = lastPixMsg?.payment_data || {};
+                    const sameValue = Number(lastPaymentData.value || 0) === Number(value);
+                    const notPaid = lastPaymentData.paid !== true;
+                    const lastPixCode = lastPaymentData.pixCopiaCola;
+                    const lastPaymentId = lastPaymentData.paymentId;
+
+                    if (sameValue && notPaid && lastPixCode) {
+                        await sendTelegramMessage(botToken, chatId, "ta aqui o pix de novo amor 👇");
+                        await sendTelegramCopyableCode(botToken, chatId, lastPixCode);
+
+                        await supabase.from('messages').insert({
+                            session_id: session.id,
+                            sender: 'system',
+                            content: "[SYSTEM: PIX RESENT - " + value + " | ID: " + (lastPaymentId || "unknown") + "]",
+                            payment_data: {
+                                ...lastPaymentData,
+                                resent_at: new Date().toISOString()
+                            }
+                        });
+                        break;
+                    }
                     // Gerar Pagamento
                     const payment = await WiinPayService.createPayment({
                         value: value,
@@ -796,7 +850,15 @@ export async function POST(req: NextRequest) {
                         await supabase.from('messages').insert({
                             session_id: session.id,
                             sender: 'system',
-                            content: "[SYSTEM: PIX GENERATED - " + value + " | ID: " + payment.paymentId + "]"
+                            content: "[SYSTEM: PIX GENERATED - " + value + " | ID: " + payment.paymentId + "]",
+                            payment_data: {
+                                paymentId: payment.paymentId,
+                                value,
+                                description,
+                                pixCopiaCola: payment.pixCopiaCola,
+                                paid: false,
+                                status: payment.status || 'pending'
+                            }
                         });
                     } else {
                         await sendTelegramMessage(botToken, chatId, "amor o sistema caiu aqui rapidinho... tenta daqui a pouco?");
