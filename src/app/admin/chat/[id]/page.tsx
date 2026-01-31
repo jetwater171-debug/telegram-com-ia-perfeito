@@ -117,12 +117,21 @@ export default function AdminChatPage() {
         }
         const base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
         if (!stats) stats = base;
+
+        const isAllZero = (s: any) =>
+            (Number(s.tarado) || 0) === 0 &&
+            (Number(s.financeiro) || 0) === 0 &&
+            (Number(s.carente) || 0) === 0 &&
+            (Number(s.sentimental) || 0) === 0;
+
+        if (isAllZero(stats)) stats = base;
+
         const clamp = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
         return {
-            tarado: clamp(stats.tarado ?? base.tarado),
-            financeiro: clamp(stats.financeiro ?? base.financeiro),
-            carente: clamp(stats.carente ?? base.carente),
-            sentimental: clamp(stats.sentimental ?? base.sentimental)
+            tarado: clamp((stats as any).tarado ?? base.tarado),
+            financeiro: clamp((stats as any).financeiro ?? base.financeiro),
+            carente: clamp((stats as any).carente ?? base.carente),
+            sentimental: clamp((stats as any).sentimental ?? base.sentimental)
         };
     };
 

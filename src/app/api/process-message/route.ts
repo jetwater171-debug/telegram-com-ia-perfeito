@@ -249,12 +249,27 @@ export async function POST(req: NextRequest) {
         }
     }
 
+    const isAllZero = (stats: any) => {
+        if (!stats) return true;
+        return (Number(stats.tarado) || 0) == 0 &&
+            (Number(stats.financeiro) || 0) == 0 &&
+            (Number(stats.carente) || 0) == 0 &&
+            (Number(stats.sentimental) || 0) == 0;
+    };
+
+    const baseStats = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
+
     const aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
 
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
 
     // 5. Atualizar Stats & Salvar Pensamentos
     if (aiResponse.lead_stats) {
+        const safeStats = aiResponse.lead_stats;
+        if (isAllZero(safeStats)) {
+            const current = session.lead_score || {};
+            aiResponse.lead_stats = isAllZero(current) ? baseStats : current;
+        }
         console.log("📊 [STATS UPDATE] ANTES:", JSON.stringify(session.lead_score));
         console.log("📊 [STATS UPDATE] DEPOIS (IA):", JSON.stringify(aiResponse.lead_stats));
 
