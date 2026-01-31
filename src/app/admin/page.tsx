@@ -54,11 +54,7 @@ export default function AdminDashboard() {
     const getSafeStats = (session: Session) => {
         let stats = session.lead_score as any;
         if (typeof stats === 'string') {
-            try {
-                stats = JSON.parse(stats);
-            } catch {
-                stats = null;
-            }
+            try { stats = JSON.parse(stats); } catch { stats = null; }
         }
 
         const base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
@@ -73,7 +69,6 @@ export default function AdminDashboard() {
         if (isAllZero(stats)) stats = base;
 
         const clamp = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
-
         return {
             tarado: clamp(stats.tarado ?? base.tarado),
             financeiro: clamp(stats.financeiro ?? base.financeiro),
@@ -132,34 +127,34 @@ export default function AdminDashboard() {
     };
 
     return (
-        <div className="min-h-screen bg-[#0d1119] text-gray-100 font-sans">
-            <header className="border-b border-gray-800 bg-[#0f1522]">
-                <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-6">
+        <div className="min-h-screen bg-gradient-to-br from-[#0b0f18] via-[#0c1220] to-[#0b0f18] text-gray-100 font-sans">
+            <header className="border-b border-white/5 bg-black/20 backdrop-blur">
+                <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-8">
                     <div className="flex items-center gap-4">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-500/20 text-cyan-300 font-bold">LM</div>
+                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400/30 to-emerald-400/30 text-cyan-200 font-bold">LM</div>
                         <div>
                             <h1 className="text-xl font-semibold">Painel Lari Morais</h1>
-                            <p className="text-sm text-gray-400">Controle total das conversas e scores</p>
+                            <p className="text-sm text-gray-400">Acompanhe a conversao em tempo real</p>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-3">
                         <div className="hidden md:flex items-center gap-2 text-xs font-semibold text-gray-300">
-                            <span className="rounded-full border border-gray-700 bg-gray-800/60 px-3 py-1">Total {stats.total}</span>
-                            <span className="rounded-full border border-emerald-700/50 bg-emerald-900/30 px-3 py-1 text-emerald-300">Ativos {stats.active}</span>
-                            <span className="rounded-full border border-rose-700/50 bg-rose-900/30 px-3 py-1 text-rose-300">Quentes {stats.hot}</span>
-                            <span className="rounded-full border border-amber-700/40 bg-amber-900/20 px-3 py-1 text-amber-200">Pausados {stats.paused}</span>
+                            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">Total {stats.total}</span>
+                            <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-emerald-200">Ativos {stats.active}</span>
+                            <span className="rounded-full border border-rose-400/20 bg-rose-500/10 px-3 py-1 text-rose-200">Quentes {stats.hot}</span>
+                            <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1 text-amber-200">Pausados {stats.paused}</span>
                         </div>
-                        <Link href="/admin/settings" className="rounded-full border border-gray-700 bg-gray-800/60 px-4 py-2 text-sm font-semibold text-gray-200 transition hover:border-gray-600">
+                        <Link href="/admin/settings" className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold text-gray-100 transition hover:border-white/20">
                             Configuracoes
                         </Link>
                     </div>
                 </div>
             </header>
 
-            <div className="mx-auto w-full max-w-7xl px-6 py-8">
-                <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
-                    <aside className="rounded-3xl border border-gray-800 bg-[#0f1522] p-4">
+            <div className="mx-auto w-full max-w-7xl px-6 py-10">
+                <div className="grid gap-6 lg:grid-cols-[240px_1fr]">
+                    <aside className="rounded-3xl border border-white/10 bg-white/5 p-4 backdrop-blur">
                         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Filtros</p>
                         <div className="mt-3 flex flex-col gap-2">
                             {['all', 'active', 'paused', 'hot'].map((f) => (
@@ -182,19 +177,19 @@ export default function AdminDashboard() {
                                 placeholder="Buscar por nome, cidade ou ID"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
-                                className="mt-3 w-full rounded-2xl border border-gray-800 bg-[#141b2a] px-4 py-2.5 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                                className="mt-3 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-2.5 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
                             />
                         </div>
                     </aside>
 
                     <section>
-                        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
                             {filteredSessions.map(session => {
                                 const safeStats = getSafeStats(session);
 
                                 return (
                                     <Link key={session.id} href={`/admin/chat/${session.telegram_chat_id}`}
-                                        className="group rounded-3xl border border-gray-800/80 bg-[#121826] p-5 transition hover:border-cyan-500/40 hover:shadow-lg">
+                                        className="group rounded-3xl border border-white/10 bg-white/5 p-5 shadow-[0_12px_30px_rgba(0,0,0,0.35)] backdrop-blur transition hover:border-cyan-400/40 hover:shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
                                         <div className="flex items-start justify-between">
                                             <div>
                                                 <h2 className="text-lg font-semibold text-gray-100">{session.user_name || 'Desconhecido'}</h2>
@@ -205,8 +200,8 @@ export default function AdminDashboard() {
                                                 </div>
                                             </div>
                                             <span className={`rounded-full border px-2 py-1 text-[10px] font-bold uppercase ${session.status === 'active'
-                                                ? 'border-emerald-800/60 bg-emerald-900/30 text-emerald-300'
-                                                : 'border-rose-800/60 bg-rose-900/30 text-rose-300'}`}>
+                                                ? 'border-emerald-300/30 bg-emerald-400/10 text-emerald-200'
+                                                : 'border-rose-300/30 bg-rose-400/10 text-rose-200'}`}>
                                                 {translateStatus(session.status)}
                                             </span>
                                         </div>
@@ -255,7 +250,7 @@ export default function AdminDashboard() {
                             })}
 
                             {filteredSessions.length === 0 && (
-                                <div className="col-span-full rounded-2xl border border-gray-800/80 bg-[#121826] p-10 text-center text-gray-500">
+                                <div className="col-span-full rounded-2xl border border-white/10 bg-white/5 p-10 text-center text-gray-500">
                                     Nenhum chat encontrado com esse filtro.
                                 </div>
                             )}

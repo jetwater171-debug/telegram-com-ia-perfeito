@@ -327,13 +327,18 @@ export async function POST(req: NextRequest) {
     if (aiResponse.lead_stats) {
         const currentStats = normalizeStats(session.lead_score);
         const aiStats = normalizeStats(aiResponse.lead_stats);
-        const heuristicStats = applyHeuristicStats(combinedText, aiStats);
+        const heuristicStats = applyHeuristicStats(combinedText, currentStats);
 
         const aiUnchanged = JSON.stringify(aiStats) === JSON.stringify(currentStats);
         if (isAllZero(aiStats) || aiUnchanged) {
             aiResponse.lead_stats = heuristicStats;
         } else {
-            aiResponse.lead_stats = aiStats;
+            aiResponse.lead_stats = {
+                tarado: Math.max(aiStats.tarado, heuristicStats.tarado),
+                financeiro: Math.max(aiStats.financeiro, heuristicStats.financeiro),
+                carente: Math.max(aiStats.carente, heuristicStats.carente),
+                sentimental: Math.max(aiStats.sentimental, heuristicStats.sentimental)
+            };
         }
         console.log("📊 [STATS UPDATE] ANTES:", JSON.stringify(session.lead_score));
         console.log("📊 [STATS UPDATE] DEPOIS (IA):", JSON.stringify(aiResponse.lead_stats));
@@ -353,6 +358,11 @@ export async function POST(req: NextRequest) {
         }
     }
 
+
+    if (!aiResponse.lead_stats) {
+        const currentStats = normalizeStats(session.lead_score);
+        aiResponse.lead_stats = applyHeuristicStats(combinedText, currentStats);
+    }
 
     if (aiResponse.internal_thought) {
         await supabase.from('messages').insert({
