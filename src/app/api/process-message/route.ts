@@ -96,14 +96,14 @@ const stageIndex = (stage?: string | null) => {
     return FUNNEL_STEPS.indexOf(stage.toUpperCase());
 };
 
-const randNormal = () => {
+const randNormal = (): number => {
     let u = 0, v = 0;
     while (u === 0) u = Math.random();
     while (v === 0) v = Math.random();
     return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 };
 
-const sampleGamma = (alpha: number) => {
+const sampleGamma = (alpha: number): number => {
     if (alpha < 1) {
         const u = Math.random();
         return sampleGamma(1 + alpha) * Math.pow(u, 1 / alpha);
@@ -121,7 +121,7 @@ const sampleGamma = (alpha: number) => {
     }
 };
 
-const sampleBeta = (alpha: number, beta: number) => {
+const sampleBeta = (alpha: number, beta: number): number => {
     const x = sampleGamma(alpha);
     const y = sampleGamma(beta);
     return x / (x + y);
