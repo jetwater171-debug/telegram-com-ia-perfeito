@@ -358,15 +358,30 @@ export async function POST(req: NextRequest) {
         // LÓGICA DE CONFIANÇA NA IA: A IA recebe os stats atuais no contexto.
         // Confiamos na saída dela para aumentar OU diminuir os valores.
 
+        const previousStep = session.funnel_step;
+        const nextStep = aiResponse.current_state;
+
         const updateResult = await supabase.from('sessions').update({
             lead_score: aiResponse.lead_stats,
-            funnel_step: aiResponse.current_state,
+            funnel_step: nextStep,
         }).eq('id', session.id).select();
 
         if (updateResult.error) {
             console.error("❌ ERRO ao Atualizar Stats:", updateResult.error);
         } else {
             console.log("✅ Stats Atualizados no DB com Sucesso:", updateResult.data);
+        }
+
+        if (nextStep && previousStep !== nextStep) {
+            try {
+                await supabase.from('funnel_events').insert({
+                    session_id: session.id,
+                    step: nextStep,
+                    source: 'ai'
+                });
+            } catch (e: any) {
+                console.warn("Falha ao registrar funnel_events:", e?.message || e);
+            }
         }
     }
 
@@ -530,6 +545,15 @@ export async function POST(req: NextRequest) {
 
                             // Forçar IA a saber que pagou na proxima iteração se necessário, 
                             // mas aqui ela já recebe o input de sistema acima.
+                            try {
+                                await supabase.from('funnel_events').insert({
+                                    session_id: session.id,
+                                    step: 'PAYMENT_CONFIRMED',
+                                    source: 'system'
+                                });
+                            } catch (e: any) {
+                                console.warn("Falha ao registrar pagamento no funil:", e?.message || e);
+                            }
                         } else {
                             await sendTelegramMessage(botToken, chatId, "amor ainda não caiu aqui... tem certeza? (Status: " + status + ")");
                         }

@@ -60,7 +60,11 @@ export default function AdminSettingsPage() {
             <div className="w-full max-w-md bg-gray-800 p-6 rounded-lg border border-gray-700">
                 <div className="flex justify-between items-center mb-6">
                     <h1 className="text-2xl font-bold">Configurações do Bot</h1>
-                    <Link href="/admin" className="text-blue-400 hover:underline">Voltar</Link>
+                    <div className="flex items-center gap-3 text-sm">
+                        <Link href="/admin/insights" className="text-blue-400 hover:underline">Insights</Link>
+                        <Link href="/admin/scripts" className="text-blue-400 hover:underline">Scripts</Link>
+                        <Link href="/admin" className="text-blue-400 hover:underline">Voltar</Link>
+                    </div>
                 </div>
 
                 <div className="mb-4">

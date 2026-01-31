@@ -20,12 +20,14 @@ interface Session {
     user_city: string;
     device_type: string;
     total_paid: number;
+    funnel_step?: string;
 }
 
 export default function AdminDashboard() {
     const [sessions, setSessions] = useState<Session[]>([]);
     const [filter, setFilter] = useState<'all' | 'active' | 'paused' | 'hot'>('all');
     const [search, setSearch] = useState('');
+    const [phaseFilter, setPhaseFilter] = useState('all');
 
     useEffect(() => {
         fetchSessions();
@@ -81,6 +83,7 @@ export default function AdminDashboard() {
         if (filter === 'active') filtered = filtered.filter(s => s.status === 'active');
         if (filter === 'paused') filtered = filtered.filter(s => s.status === 'paused');
         if (filter === 'hot') filtered = filtered.filter(s => (s.lead_score?.tarado || 0) > 70);
+        if (phaseFilter !== 'all') filtered = filtered.filter(s => (s.funnel_step || '').toUpperCase() === phaseFilter);
 
         if (search) {
             const lower = search.toLowerCase();
@@ -92,7 +95,7 @@ export default function AdminDashboard() {
         }
 
         return filtered;
-    }, [sessions, filter, search]);
+    }, [sessions, filter, search, phaseFilter]);
 
     const stats = useMemo(() => {
         return {
@@ -149,6 +152,12 @@ export default function AdminDashboard() {
                             <span className="rounded-full border border-rose-400/20 bg-rose-500/10 px-3 py-1 text-rose-200">Quentes {stats.hot}</span>
                             <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1 text-amber-200">Pausados {stats.paused}</span>
                         </div>
+                        <Link href="/admin/insights" className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold text-gray-100 transition hover:border-white/20">
+                            Insights
+                        </Link>
+                        <Link href="/admin/scripts" className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold text-gray-100 transition hover:border-white/20">
+                            Scripts
+                        </Link>
                         <Link href="/admin/settings" className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold text-gray-100 transition hover:border-white/20">
                             Configuracoes
                         </Link>
@@ -183,6 +192,26 @@ export default function AdminDashboard() {
                                 onChange={(e) => setSearch(e.target.value)}
                                 className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-2.5 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
                             />
+                        </div>
+
+                        <div className="mt-8">
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Fase do funil</p>
+                            <select
+                                value={phaseFilter}
+                                onChange={(e) => setPhaseFilter(e.target.value)}
+                                className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-2.5 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                            >
+                                <option value="all">Todas</option>
+                                <option value="WELCOME">WELCOME</option>
+                                <option value="CONNECTION">CONNECTION</option>
+                                <option value="TRIGGER_PHASE">TRIGGER_PHASE</option>
+                                <option value="HOT_TALK">HOT_TALK</option>
+                                <option value="PREVIEW">PREVIEW</option>
+                                <option value="SALES_PITCH">SALES_PITCH</option>
+                                <option value="NEGOTIATION">NEGOTIATION</option>
+                                <option value="CLOSING">CLOSING</option>
+                                <option value="PAYMENT_CHECK">PAYMENT_CHECK</option>
+                            </select>
                         </div>
 
                         <div className="mt-8 rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -252,6 +281,9 @@ export default function AdminDashboard() {
 
                                         <div className="mt-4 flex items-center justify-between text-xs text-gray-500">
                                             <span>{formatTimeAgo(session.last_message_at)}</span>
+                                            <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase text-gray-300">
+                                                {session.funnel_step?.replace(/_/g, ' ') || 'INICIO'}
+                                            </span>
                                             <span className="font-mono opacity-60">#{session.telegram_chat_id}</span>
                                         </div>
                                     </Link>

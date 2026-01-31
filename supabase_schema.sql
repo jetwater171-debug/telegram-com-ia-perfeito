@@ -31,16 +31,42 @@ CREATE TABLE IF NOT EXISTS bot_settings (
     value TEXT NOT NULL
 );
 
+-- Dynamic prompt blocks (editable without deploy)
+CREATE TABLE IF NOT EXISTS prompt_blocks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    key TEXT UNIQUE NOT NULL,
+    label TEXT,
+    content TEXT NOT NULL,
+    enabled BOOLEAN DEFAULT true,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Funnel events for analytics
+CREATE TABLE IF NOT EXISTS funnel_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+    step TEXT NOT NULL,
+    source TEXT DEFAULT 'ai',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- Enable Realtime for messages (crucial for admin chat)
 alter publication supabase_realtime add table messages;
 alter publication supabase_realtime add table sessions;
+alter publication supabase_realtime add table prompt_blocks;
+alter publication supabase_realtime add table funnel_events;
 
 -- Policy (optional: currently public for anon, but in prod should be restricted)
 -- For now allowing anon access to make it work with the anon key provided in env for the bot logic
 ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE prompt_blocks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE funnel_events ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Enable read/write for all" ON sessions FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON messages FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON bot_settings FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Enable read/write for all" ON prompt_blocks FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Enable read/write for all" ON funnel_events FOR ALL USING (true) WITH CHECK (true);

@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { AIResponse, LeadStats } from "@/types";
+import { supabase } from '@/lib/supabaseClient';
 
 const apiKey = process.env.GEMINI_API_KEY;
 
@@ -52,7 +53,7 @@ const responseSchema = {
     required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action"],
 };
 
-export const getSystemInstruction = (userCity: string = "Sao Paulo", neighborCity: string = "uma cidade vizinha", isHighTicketDevice: boolean = false, totalPaid: number = 0, currentStats: LeadStats | null = null, minutesSinceOffer: number = 999) => {
+export const getSystemInstruction = (userCity: string = "Sao Paulo", neighborCity: string = "uma cidade vizinha", isHighTicketDevice: boolean = false, totalPaid: number = 0, currentStats: LeadStats | null = null, minutesSinceOffer: number = 999, dynamicScript: string = "") => {
     const deviceType = isHighTicketDevice ? "iPhone (Rico)" : "Android (Comum)";
     const now = new Date();
     // Ajuste para Horário de Brasília UTC-3
@@ -75,6 +76,8 @@ export const getSystemInstruction = (userCity: string = "Sao Paulo", neighborCit
 const statsText = currentStats
         ? `🔥 Tarado: ${currentStats.tarado || 0}% | 💰 Financeiro: ${currentStats.financeiro || 0}% | ❤️ Carente: ${currentStats.carente || 0}% | 😭 Sentimental: ${currentStats.sentimental || 0}%`
         : "Novo Lead (Sem dados)";
+
+    const dynamicBlock = dynamicScript ? `\n\n${dynamicScript}\n` : "";
 
     return `
 # PERSONA: LARISSA MORAIS
@@ -416,7 +419,7 @@ Você é um ANALISTA SILENCIOSO. A cada mensagem, julgue se o lead mudou de "sco
 - Lari (Msg 1): "amor vc viu a prévia"
 - Lari (Msg 2): "tá muito safado"
 - Lari (Msg 3): "quanto vc pagaria pra ver eu sem nada"
-`;
+${dynamicBlock}`;
 };
 
 // Helper para garantir que Stats sejam sempre numéricos e válidos
@@ -458,17 +461,39 @@ export const initializeGenAI = () => {
     return genAI;
 }
 
-import { supabase } from '@/lib/supabaseClient';
+const buildDynamicPromptBlock = async () => {
+    try {
+        const { data, error } = await supabase
+            .from('prompt_blocks')
+            .select('key, label, content, enabled, updated_at')
+            .eq('enabled', true)
+            .order('updated_at', { ascending: false });
+
+        if (error || !data || data.length === 0) return "";
+
+        const blocks = data.map((block) => {
+            const title = block.label || block.key;
+            return `# ${title}\n${block.content}`;
+        }).join("\n\n");
+
+        return `# BLOCO DINAMICO (EDITAVEL NO PAINEL)\n- ESTE BLOCO TEM PRIORIDADE SOBRE INSTRUCOES ANTERIORES.\n${blocks}`;
+    } catch (e) {
+        console.warn("Prompt blocks load failed:", e);
+        return "";
+    }
+};
+
 
 export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, neighborCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null, minutesSinceOffer?: number }, media?: { mimeType: string, data: string }) => {
     initializeGenAI();
     if (!genAI) throw new Error("API Key not configured");
 
     const currentStats = parseLeadStats(context?.currentStats);
+    const dynamicScript = await buildDynamicPromptBlock();
 
     const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash",
-        systemInstruction: getSystemInstruction(context?.userCity, context?.neighborCity, context?.isHighTicket, context?.totalPaid || 0, currentStats, context?.minutesSinceOffer || 999) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
+        systemInstruction: getSystemInstruction(context?.userCity, context?.neighborCity, context?.isHighTicket, context?.totalPaid || 0, currentStats, context?.minutesSinceOffer || 999, dynamicScript) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
         safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
