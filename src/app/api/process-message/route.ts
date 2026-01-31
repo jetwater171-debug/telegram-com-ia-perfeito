@@ -78,6 +78,28 @@ const applyHeuristicStats = (text: string, current: any) => {
     return s;
 };
 
+const normalizeLoopText = (text: string) => {
+    return (text || '')
+        .toLowerCase()
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/\s+/g, ' ')
+        .replace(/[^\p{L}\p{N}\s]/gu, '')
+        .trim();
+};
+
+const detectRepetition = (messages: { content: string }[]) => {
+    const last = messages[messages.length - 1]?.content || '';
+    const normLast = normalizeLoopText(last);
+    if (!normLast) return { repeats: 0, last: last };
+    let repeats = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const norm = normalizeLoopText(messages[i].content);
+        if (norm === normLast) repeats++;
+        else break;
+    }
+    return { repeats, last };
+};
+
 export async function POST(req: NextRequest) {
     const body = await req.json();
     const { sessionId, triggerMessageId } = body;
@@ -150,7 +172,7 @@ export async function POST(req: NextRequest) {
     // Encontrar tempo da última mensagem do bot
     const { data: lastBotMsg } = await supabase
         .from('messages')
-        .select('created_at')
+        .select('created_at, content')
         .eq('session_id', sessionId)
         .eq('sender', 'bot')
         .order('created_at', { ascending: false })
@@ -162,9 +184,8 @@ export async function POST(req: NextRequest) {
     // Buscar mensagens agrupadas
     const { data: groupMessages } = await supabase
         .from('messages')
-        .select('content')
+        .select('content, sender')
         .eq('session_id', sessionId)
-        .eq('sender', 'user')
         .gt('created_at', cutoffTime)
         .order('created_at', { ascending: true });
 
@@ -173,7 +194,20 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ status: 'done' });
     }
 
-    const combinedText = groupMessages.map(m => m.content).join("\n");
+    const triggerPrefix = "[ADMIN_TRIGGER_SALE]";
+    const filteredGroupMessages = (groupMessages || []).filter((m: any) => {
+        if (m.sender === 'user') return true;
+        if (m.sender === 'system' && typeof m.content === 'string' && m.content.startsWith(triggerPrefix)) return true;
+        return false;
+    });
+
+    if (!filteredGroupMessages || filteredGroupMessages.length === 0) {
+        console.log("[PROCESSADOR] Sem mensagens para processar?");
+        return NextResponse.json({ status: 'done' });
+    }
+
+    const combinedText = filteredGroupMessages.map((m: any) => m.content).join("\n");
+    const repetition = detectRepetition(filteredGroupMessages);
     console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
 
     const { data: lastOfferMsg } = await supabase
@@ -331,64 +365,68 @@ export async function POST(req: NextRequest) {
         }
     }
 
+    if (combinedText.includes(triggerPrefix)) {
+        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o admin pediu para iniciar a venda agora. Use o contexto da conversa e leve para proposta/preco de forma natural.]`;
+    }
+    if (repetition.repeats >= 2) {
+        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead repetiu a mesma mensagem ${repetition.repeats}x ("${repetition.last}"). Responda diferente, quebre o loop e puxe o assunto com algo novo e humano. Nao repita a mesma frase.]`;
+    }
+
     const aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
 
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
 
     // 5. Atualizar Stats & Salvar Pensamentos
-    if (aiResponse.lead_stats) {
-        const currentStats = normalizeStats(session.lead_score);
-        const aiStats = normalizeStats(aiResponse.lead_stats);
-        const heuristicStats = applyHeuristicStats(combinedText, currentStats);
-
-        const aiUnchanged = JSON.stringify(aiStats) === JSON.stringify(currentStats);
-        if (isAllZero(aiStats) || aiUnchanged) {
-            aiResponse.lead_stats = heuristicStats;
-        } else {
-            aiResponse.lead_stats = {
-                tarado: Math.max(aiStats.tarado, heuristicStats.tarado),
-                financeiro: Math.max(aiStats.financeiro, heuristicStats.financeiro),
-                carente: Math.max(aiStats.carente, heuristicStats.carente),
-                sentimental: Math.max(aiStats.sentimental, heuristicStats.sentimental)
-            };
-        }
-        console.log("📊 [STATS UPDATE] ANTES:", JSON.stringify(session.lead_score));
-        console.log("📊 [STATS UPDATE] DEPOIS (IA):", JSON.stringify(aiResponse.lead_stats));
-
-        // LÓGICA DE CONFIANÇA NA IA: A IA recebe os stats atuais no contexto.
-        // Confiamos na saída dela para aumentar OU diminuir os valores.
-
-        const previousStep = session.funnel_step;
-        const nextStep = aiResponse.current_state;
-
-        const updateResult = await supabase.from('sessions').update({
-            lead_score: aiResponse.lead_stats,
-            funnel_step: nextStep,
-        }).eq('id', session.id).select();
-
-        if (updateResult.error) {
-            console.error("❌ ERRO ao Atualizar Stats:", updateResult.error);
-        } else {
-            console.log("✅ Stats Atualizados no DB com Sucesso:", updateResult.data);
-        }
-
-        if (nextStep && previousStep !== nextStep) {
-            try {
-                await supabase.from('funnel_events').insert({
-                    session_id: session.id,
-                    step: nextStep,
-                    source: 'ai'
-                });
-            } catch (e: any) {
-                console.warn("Falha ao registrar funnel_events:", e?.message || e);
-            }
-        }
+    const currentStats = normalizeStats(session.lead_score);
+    if (!aiResponse.lead_stats) {
+        aiResponse.lead_stats = applyHeuristicStats(combinedText, currentStats);
     }
 
+    const aiStats = normalizeStats(aiResponse.lead_stats);
+    const heuristicStats = applyHeuristicStats(combinedText, currentStats);
 
-    if (!aiResponse.lead_stats) {
-        const currentStats = normalizeStats(session.lead_score);
-        aiResponse.lead_stats = applyHeuristicStats(combinedText, currentStats);
+    const aiUnchanged = JSON.stringify(aiStats) === JSON.stringify(currentStats);
+    if (isAllZero(aiStats) || aiUnchanged) {
+        aiResponse.lead_stats = heuristicStats;
+    } else {
+        aiResponse.lead_stats = {
+            tarado: Math.max(aiStats.tarado, heuristicStats.tarado),
+            financeiro: Math.max(aiStats.financeiro, heuristicStats.financeiro),
+            carente: Math.max(aiStats.carente, heuristicStats.carente),
+            sentimental: Math.max(aiStats.sentimental, heuristicStats.sentimental)
+        };
+    }
+
+    console.log("📊 [STATS UPDATE] ANTES:", JSON.stringify(session.lead_score));
+    console.log("📊 [STATS UPDATE] DEPOIS (IA):", JSON.stringify(aiResponse.lead_stats));
+
+    // LÓGICA DE CONFIANÇA NA IA: A IA recebe os stats atuais no contexto.
+    // Confiamos na saída dela para aumentar OU diminuir os valores.
+
+    const previousStep = session.funnel_step;
+    const nextStep = aiResponse.current_state || previousStep || "WELCOME";
+
+    const updateResult = await supabase.from('sessions').update({
+        lead_score: aiResponse.lead_stats,
+        funnel_step: nextStep,
+    }).eq('id', session.id).select();
+
+    if (updateResult.error) {
+        console.error("❌ ERRO ao Atualizar Stats:", updateResult.error);
+    } else {
+        console.log("✅ Stats Atualizados no DB com Sucesso:", updateResult.data);
+    }
+
+    if (nextStep && previousStep !== nextStep) {
+        try {
+            await supabase.from('funnel_events').insert({
+                session_id: session.id,
+                step: nextStep,
+                source: 'ai'
+            });
+        } catch (e: any) {
+            console.warn("Falha ao registrar funnel_events:", e?.message || e);
+        }
     }
 
     if (aiResponse.internal_thought) {
@@ -431,6 +469,13 @@ export async function POST(req: NextRequest) {
         : [String(aiResponse.messages || '')].filter(Boolean);
 
     const safeMessages = outgoingMessages.length > 0 ? outgoingMessages : ['amor?'];
+
+    const lastBotContent = lastBotMsg?.content || '';
+    const normLastBot = normalizeLoopText(lastBotContent);
+    const normFirstOut = normalizeLoopText(safeMessages[0] || '');
+    if (normLastBot && normFirstOut && normLastBot === normFirstOut) {
+        safeMessages[0] = `ei amor ${safeMessages[0]}`;
+    }
 
     for (let i = 0; i < safeMessages.length; i++) {
         const msgText = safeMessages[i];

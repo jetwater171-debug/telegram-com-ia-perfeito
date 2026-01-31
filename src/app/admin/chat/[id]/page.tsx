@@ -20,6 +20,8 @@ export default function AdminChatPage() {
     const [leadTyping, setLeadTyping] = useState(false);
     const [showThoughts, setShowThoughts] = useState(false);
     const [showSystem, setShowSystem] = useState(true);
+    const [actionMsg, setActionMsg] = useState('');
+    const [forceLoading, setForceLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -153,6 +155,28 @@ export default function AdminChatPage() {
         }
     };
 
+    const forceSale = async () => {
+        if (!telegramChatId) return;
+        setForceLoading(true);
+        setActionMsg('');
+        try {
+            const res = await fetch('/api/admin/force-sale', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chatId: telegramChatId })
+            });
+            const data = await res.json();
+            if (data?.ok) {
+                setActionMsg('forcando venda...');
+            } else {
+                setActionMsg(data?.error || 'falha ao forcar venda');
+            }
+        } catch (e: any) {
+            setActionMsg(e?.message || 'erro ao forcar venda');
+        }
+        setForceLoading(false);
+    };
+
     const toggleBot = async () => {
         if (!session) return;
         const newStatus = session.status === 'paused' ? 'active' : 'paused';
@@ -223,6 +247,13 @@ export default function AdminChatPage() {
                                     Ideias
                                 </button>
                             </div>
+                            <button
+                                onClick={forceSale}
+                                className="rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60"
+                                disabled={forceLoading}
+                            >
+                                {forceLoading ? 'forcando...' : 'forcar venda'}
+                            </button>
                             <button
                                 onClick={toggleBot}
                                 className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-gray-100 transition hover:border-white/20"
@@ -310,6 +341,11 @@ export default function AdminChatPage() {
                             Enviar
                         </button>
                     </div>
+                    {actionMsg && (
+                        <div className="mx-auto mt-3 w-full max-w-3xl text-center text-xs text-amber-200">
+                            {actionMsg}
+                        </div>
+                    )}
                 </footer>
             </div>
 
