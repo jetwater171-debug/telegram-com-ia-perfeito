@@ -1,6 +1,5 @@
 "use client";
 import React, { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
 
 export default function AdminSettingsPage() {
@@ -13,21 +12,23 @@ export default function AdminSettingsPage() {
     }, []);
 
     const loadToken = async () => {
-        const { data } = await supabase.from('bot_settings').select('value').eq('key', 'telegram_bot_token').single();
-        if (data) setToken(data.value);
+        const res = await fetch('/api/admin/bot-settings');
+        const data = await res.json();
+        if (data?.token !== undefined) setToken(data.token);
     };
 
     const saveToken = async () => {
         setLoading(true);
         setMsg("");
 
-        const { error } = await supabase.from('bot_settings').upsert({
-            key: 'telegram_bot_token',
-            value: token
+        const res = await fetch('/api/admin/bot-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token })
         });
-
-        if (error) {
-            setMsg("Erro ao salvar: " + error.message);
+        const data = await res.json();
+        if (data?.error) {
+            setMsg("Erro ao salvar: " + data.error);
         } else {
             setMsg("Token salvo com sucesso!");
         }

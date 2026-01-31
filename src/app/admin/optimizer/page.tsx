@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
 
 export default function AdminOptimizerPage() {
@@ -16,27 +15,25 @@ export default function AdminOptimizerPage() {
     }, []);
 
     const loadSettings = async () => {
-        const { data } = await supabase.from('bot_settings').select('key,value').in('key', [
-            'auto_optimizer_enabled',
-            'auto_optimizer_min_interval_min',
-            'auto_optimizer_last_run',
-            'auto_optimizer_last_result'
-        ]);
-        const map = new Map((data || []).map((d: any) => [d.key, d.value]));
-        setEnabled(map.get('auto_optimizer_enabled') === 'true');
-        setMinInterval(Number(map.get('auto_optimizer_min_interval_min') || 60));
-        setLastRun(map.get('auto_optimizer_last_run') || null);
-        setLastResult(map.get('auto_optimizer_last_result') || null);
+        const res = await fetch('/api/admin/optimizer-settings');
+        const data = await res.json();
+        const settings = data?.settings || {};
+        setEnabled(settings.auto_optimizer_enabled === 'true');
+        setMinInterval(Number(settings.auto_optimizer_min_interval_min || 60));
+        setLastRun(settings.auto_optimizer_last_run || null);
+        setLastResult(settings.auto_optimizer_last_result || null);
     };
 
     const saveSettings = async () => {
         setLoading(true);
         setMsg('');
-        await supabase.from('bot_settings').upsert([
-            { key: 'auto_optimizer_enabled', value: enabled ? 'true' : 'false' },
-            { key: 'auto_optimizer_min_interval_min', value: String(minInterval) }
-        ]);
-        setMsg('configuracoes salvas');
+        const res = await fetch('/api/admin/optimizer-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled, minInterval })
+        });
+        const data = await res.json();
+        setMsg(data?.error ? `erro: ${data.error}` : 'configuracoes salvas');
         setLoading(false);
     };
 

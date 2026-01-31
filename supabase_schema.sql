@@ -10,7 +10,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_name TEXT,
     total_paid NUMERIC DEFAULT 0,
     funnel_step TEXT,
-    last_message_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+    last_message_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    last_bot_activity_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    reengagement_sent BOOLEAN DEFAULT FALSE,
+    processing_token TEXT
 );
 
 -- Create messages table
@@ -74,6 +77,9 @@ CREATE TABLE IF NOT EXISTS funnel_events (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- Index para reengajamento
+CREATE INDEX IF NOT EXISTS idx_sessions_reengagement ON sessions (last_bot_activity_at) WHERE reengagement_sent = FALSE;
+
 -- Enable Realtime for messages (crucial for admin chat)
 alter publication supabase_realtime add table messages;
 alter publication supabase_realtime add table sessions;
@@ -94,7 +100,7 @@ ALTER TABLE funnel_events ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Enable read/write for all" ON sessions FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON messages FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Enable read/write for all" ON bot_settings FOR ALL USING (true) WITH CHECK (true);
+-- bot_settings deve ser protegido (use service role via API routes)
 CREATE POLICY "Enable read/write for all" ON prompt_blocks FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON prompt_variants FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON variant_assignments FOR ALL USING (true) WITH CHECK (true);

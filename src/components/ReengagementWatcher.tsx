@@ -4,6 +4,8 @@ import { useEffect } from 'react';
 
 export default function ReengagementWatcher() {
     useEffect(() => {
+        const enabled = process.env.NEXT_PUBLIC_ENABLE_CLIENT_CRON === 'true';
+        if (!enabled) return;
         const interval = setInterval(async () => {
             try {
                 // Chama o endpoint CRON a cada 60 segundos

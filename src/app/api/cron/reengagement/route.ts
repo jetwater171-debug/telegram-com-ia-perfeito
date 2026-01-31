@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabaseClient';
+import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendTelegramMessage } from '@/lib/telegram';
 
 export const dynamic = 'force-dynamic'; // Garantir que não faça cache
@@ -21,9 +21,8 @@ export async function GET(req: NextRequest) {
             .select('*')
             .lt('last_bot_activity_at', fiveMinutesAgo)
             .eq('reengagement_sent', false)
-            .eq('status', 'active')
             .eq('status', 'active') // Evitar mandar pra pausados/fechados
-            .limit(10); // Processar em lotes para evitar overload
+            .limit(5); // Processar em lotes menores para evitar timeout
 
         if (error) {
             console.error("[CRON] Erro ao buscar sessões:", error);
@@ -63,12 +62,9 @@ export async function GET(req: NextRequest) {
 
             console.log(`[CRON] Enviando reengajamento para sessão ${session.id} (Chat ${chatId})`);
 
-            // Enviar mensagens em sequência
-            for (const msg of messagesToSent) {
-                await sendTelegramMessage(botToken, chatId, msg);
-                // Pequeno delay entre mensagens para parecer natural
-                await new Promise(r => setTimeout(r, 1500));
-            }
+            const msg = messagesToSent[Math.floor(Math.random() * messagesToSent.length)];
+            await sendTelegramMessage(botToken, chatId, msg);
+            await new Promise(r => setTimeout(r, 500));
 
             // Registrar envio para não mandar de novo E atualizar timestamp
             await supabase.from('sessions').update({
@@ -76,14 +72,12 @@ export async function GET(req: NextRequest) {
                 last_bot_activity_at: new Date().toISOString()
             }).eq('id', session.id);
 
-            // Registrar mensagens no histórico como 'bot'
-            for (const msg of messagesToSent) {
-                await supabase.from('messages').insert({
-                    session_id: session.id,
-                    sender: 'bot',
-                    content: msg
-                });
-            }
+            // Registrar mensagem no histórico como 'bot'
+            await supabase.from('messages').insert({
+                session_id: session.id,
+                sender: 'bot',
+                content: msg
+            });
 
             processedCount++;
         }

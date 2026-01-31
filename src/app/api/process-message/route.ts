@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabaseClient';
+import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode } from '@/lib/telegram';
 import { WiinPayService } from '@/lib/wiinpayService';
@@ -8,8 +8,16 @@ import { WiinPayService } from '@/lib/wiinpayService';
 // Ela aguarda, verifica mensagens mais recentes (debounce), e então processa a resposta.
 // É chamada pelo Webhook principal mas NÃO DEVE atrasar a resposta do webhook.
 
+const normalizeCityKey = (input: string) => {
+    return (input || '')
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '')
+        .toLowerCase()
+        .trim();
+};
+
 const detectCityFromText = (input: string): string | null => {
-    const match = input.match(/\b(?:sou|moro)\s+(?:de|do|da|em)\s+([A-Za-z\s]{2,40})/i);
+    const match = input.match(/\b(?:sou|moro)\s+(?:de|do|da|em)\s+([\p{L}\s]{2,40})/iu);
     if (!match) return null;
     let city = match[1].trim();
     city = city.replace(/[\n\r\.\!\?].*$/, '').trim();
@@ -20,14 +28,14 @@ const detectCityFromText = (input: string): string | null => {
 
 const getNeighborCity = (city: string | null) => {
     if (!city) return 'uma cidade vizinha';
-    const c = city.toLowerCase();
-    if (c.includes('rio') || c == 'rj') return 'niteroi';
-    if (c.includes('sao paulo') || c == 'sp') return 'suzano';
+    const c = normalizeCityKey(city);
+    if (c.includes('rio') || c === 'rj') return 'niteroi';
+    if (c.includes('sao paulo') || c === 'sp' || c.includes('sampa')) return 'suzano';
     if (c.includes('campinas')) return 'hortolandia';
     if (c.includes('santos')) return 'sao vicente';
     if (c.includes('guarulhos')) return 'aruja';
     if (c.includes('curitiba')) return 'sao jose dos pinhais';
-    if (c.includes('belo horizonte') || c == 'bh') return 'contagem';
+    if (c.includes('belo horizonte') || c === 'bh') return 'contagem';
     if (c.includes('fortaleza')) return 'eusebio';
     if (c.includes('salvador')) return 'lauro de freitas';
     return 'uma cidade vizinha';
@@ -62,20 +70,66 @@ const applyHeuristicStats = (text: string, current: any) => {
         s[key] = clampStat(s[key] + val);
     };
 
-    if (/(manda foto|quero ver|deixa eu ver|cad[e?]|nudes)/i.test(t)) inc('tarado', 20);
-    if (/(gostosa|delicia|tes[a?]o|safada)/i.test(t)) inc('tarado', 10);
-    if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra)/i.test(t)) inc('tarado', 30);
+    if (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|vídeo|video|pelada|sem roupa|manda mais)/i.test(t)) inc('tarado', 20);
+    if (/(gostosa|delicia|tes[a?]o|safada|linda|d[ei]l?icia)/i.test(t)) inc('tarado', 10);
+    if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t)) inc('tarado', 30);
 
-    if (/(quanto custa|pix|vou comprar|passa o pix|quanto e)/i.test(t)) inc('financeiro', 20);
+    if (/(quanto custa|pix|vou comprar|passa o pix|quanto e|pre[cç]o|valor|mensal|vital[ií]cio)/i.test(t)) inc('financeiro', 20);
     if (/(tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t)) inc('financeiro', 20);
     if (/(ta caro|caro|sem dinheiro|liso|desempregado)/i.test(t)) inc('financeiro', -20);
 
-    if (/(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ningu[e?]m me quer|queria uma namorada)/i.test(t)) inc('carente', 15);
+    if (/(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ningu[e?]m me quer|queria uma namorada|carente|me chama|sdds|saudade)/i.test(t)) inc('carente', 15);
     if (t.trim().split(/\s+/).length <= 2) inc('carente', -10);
 
     if (/(saudade|solid[a?]o|sentindo falta|carinho|afeto)/i.test(t)) inc('sentimental', 15);
 
     return s;
+};
+
+const GLUE_DICT = new Set([
+    'amor', 'vida', 'casa', 'banho', 'foto', 'video', 'hoje', 'agora', 'aqui', 'sozinha', 'cansada', 'cansado',
+    'deitada', 'molhada', 'pelada', 'safada', 'gostosa', 'quente', 'fria', 'carente', 'tesao', 'tesão',
+    'buceta', 'pau', 'gozar', 'porra', 'queria', 'querendo', 'saudade'
+]);
+
+const fixGluedWords = (text: string) => {
+    return (text || '').split(/(\s+)/).map((part) => {
+        if (!part || /^\s+$/.test(part)) return part;
+        if (!/^[\p{L}]+$/u.test(part)) return part;
+        const lower = part.toLowerCase();
+        if (lower.length < 8 || lower.length > 22) return part;
+        for (let i = 3; i <= lower.length - 3; i++) {
+            const left = lower.slice(0, i);
+            const right = lower.slice(i);
+            if (GLUE_DICT.has(left) && GLUE_DICT.has(right)) {
+                return `${left} ${right}`;
+            }
+        }
+        return part;
+    }).join('');
+};
+
+const sanitizeOutgoingMessage = (text: string) => {
+    let out = (text || '').trim();
+    out = out.replace(/\ba\s+lari\b/gi, 'eu');
+    out = out.replace(/\ba\s+larissa\b/gi, 'eu');
+    out = out.replace(/\s+/g, ' ');
+    out = fixGluedWords(out);
+    return out;
+};
+
+const extractPrices = (text: string) => {
+    if (!text) return [];
+    const matches = text.match(/\b\d{1,3}[.,]\d{2}\b/g) || [];
+    return matches.map(m => Number(m.replace(',', '.'))).filter(n => !Number.isNaN(n));
+};
+
+const inferPixValue = (texts: string[]) => {
+    for (let i = texts.length - 1; i >= 0; i--) {
+        const prices = extractPrices(texts[i]);
+        if (prices.length > 0) return prices[prices.length - 1];
+    }
+    return null;
 };
 
 const FUNNEL_STEPS = [
@@ -94,6 +148,26 @@ const FUNNEL_STEPS = [
 const stageIndex = (stage?: string | null) => {
     if (!stage) return -1;
     return FUNNEL_STEPS.indexOf(stage.toUpperCase());
+};
+
+const ACTION_STAGE_MAP: Record<string, string> = {
+    send_shower_photo: 'TRIGGER_PHASE',
+    send_lingerie_photo: 'TRIGGER_PHASE',
+    send_wet_finger_photo: 'TRIGGER_PHASE',
+    send_ass_photo_preview: 'PREVIEW',
+    send_video_preview: 'PREVIEW',
+    send_hot_video_preview: 'PREVIEW',
+    generate_pix_payment: 'PAYMENT_CHECK',
+    check_payment_status: 'PAYMENT_CHECK'
+};
+
+const inferStageFromText = (text: string) => {
+    const t = (text || '').toLowerCase();
+    if (/(pix|paguei|comprovante)/i.test(t)) return 'PAYMENT_CHECK';
+    if (/(r\$|\b\d{1,3}[.,]\d{2}\b|pre[cç]o|valor|quanto custa|quanto e)/i.test(t)) return 'NEGOTIATION';
+    if (/(vip|acesso|mensal|vital[ií]cio)/i.test(t)) return 'SALES_PITCH';
+    if (/(prévia|previa|video|vídeo|foto|pelada|sem roupa)/i.test(t)) return 'PREVIEW';
+    return null;
 };
 
 const randNormal = (): number => {
@@ -280,6 +354,7 @@ export async function POST(req: NextRequest) {
     }
 
     const combinedText = filteredGroupMessages.map((m: any) => m.content).join("\n");
+    const userOnlyText = filteredGroupMessages.filter((m: any) => m.sender === 'user').map((m: any) => m.content).join("\n");
     const repetition = detectRepetition(filteredGroupMessages);
     console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
 
@@ -312,19 +387,35 @@ export async function POST(req: NextRequest) {
         if (assignment) variantAssignment = assignment;
     }
 
+    const detectedCity = detectCityFromText(userOnlyText);
+    const storedCity = typeof session.user_city === 'string' ? session.user_city.trim() : '';
+    let userCity = storedCity;
+    if (detectedCity) {
+        const detectedKey = normalizeCityKey(detectedCity);
+        const storedKey = normalizeCityKey(storedCity);
+        if (!storedKey || detectedKey !== storedKey) {
+            userCity = detectedCity;
+            await supabase.from('sessions').update({ user_city: detectedCity }).eq('id', session.id);
+        }
+    }
+    const hasCity = Boolean(userCity);
+    const neighborCity = hasCity ? getNeighborCity(userCity) : '';
+
     const context = {
-        userCity: session.user_city || "São Paulo",
+        userCity: hasCity ? userCity : undefined,
+        neighborCity: hasCity ? neighborCity : undefined,
         isHighTicket: session.device_type === 'iPhone',
         totalPaid: session.total_paid || 0,
         currentStats: session.lead_score,
+        minutesSinceOffer,
         extraScript
     };
 
     const extractFileAndCaption = (input: string) => {
         const lines = input.split(/\r?\n/);
         const firstLine = lines[0] || '';
-        const captionLine = lines.find(l => l.startsWith('CAPTION: '));
-        const caption = captionLine ? captionLine.replace('CAPTION: ', '') : '';
+        const captionMatch = input.match(/caption:\s*(.*)$/i);
+        const caption = captionMatch ? captionMatch[1].trim() : '';
         const match = firstLine.match(/File_ID: ([^\s]+)/);
         const fileId = match ? match[1].trim() : '';
         return { fileId, caption };
@@ -461,6 +552,9 @@ export async function POST(req: NextRequest) {
     if (repetition.repeats >= 2) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead repetiu a mesma mensagem ${repetition.repeats}x ("${repetition.last}"). Responda diferente, quebre o loop e puxe o assunto com algo novo e humano. Nao repita a mesma frase.]`;
     }
+    if (!hasCity && /(de onde (voce|vc) e|vc e de onde|qual (sua|a) cidade|onde (voce|vc) mora)/i.test(userOnlyText)) {
+        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou sua cidade, mas voce AINDA NAO sabe a cidade dele. Pergunte primeiro "de onde vc e anjo?" e NAO diga sua cidade agora.]`;
+    }
 
     const aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
 
@@ -469,11 +563,11 @@ export async function POST(req: NextRequest) {
     // 5. Atualizar Stats & Salvar Pensamentos
     const currentStats = normalizeStats(session.lead_score);
     if (!aiResponse.lead_stats) {
-        aiResponse.lead_stats = applyHeuristicStats(combinedText, currentStats);
+        aiResponse.lead_stats = applyHeuristicStats(userOnlyText, currentStats);
     }
 
     const aiStats = normalizeStats(aiResponse.lead_stats);
-    const heuristicStats = applyHeuristicStats(combinedText, currentStats);
+    const heuristicStats = applyHeuristicStats(userOnlyText, currentStats);
 
     const aiUnchanged = JSON.stringify(aiStats) === JSON.stringify(currentStats);
     if (isAllZero(aiStats) || aiUnchanged) {
@@ -494,7 +588,21 @@ export async function POST(req: NextRequest) {
     // Confiamos na saída dela para aumentar OU diminuir os valores.
 
     const previousStep = session.funnel_step;
-    const nextStep = aiResponse.current_state || previousStep || "WELCOME";
+    const aiStep = aiResponse.current_state ? String(aiResponse.current_state).toUpperCase().trim() : "";
+    let nextStep = FUNNEL_STEPS.includes(aiStep) ? aiStep : (previousStep || "WELCOME");
+    const actionStep = ACTION_STAGE_MAP[aiResponse.action || ''] || null;
+    const inferredStep = actionStep || inferStageFromText([
+        ...(Array.isArray(aiResponse.messages) ? aiResponse.messages : []),
+        combinedText
+    ].join('\n'));
+
+    if (inferredStep) {
+        const nextIdx = stageIndex(nextStep);
+        const infIdx = stageIndex(inferredStep);
+        if (infIdx > nextIdx) {
+            nextStep = inferredStep;
+        }
+    }
 
     const updateResult = await supabase.from('sessions').update({
         lead_score: aiResponse.lead_stats,
@@ -587,7 +695,9 @@ export async function POST(req: NextRequest) {
         ? aiResponse.messages
         : [String(aiResponse.messages || '')].filter(Boolean);
 
-    const safeMessages = outgoingMessages.length > 0 ? outgoingMessages : ['amor?'];
+    const safeMessages = (outgoingMessages.length > 0 ? outgoingMessages : ['amor?'])
+        .map(m => sanitizeOutgoingMessage(m))
+        .filter(Boolean);
 
     const lastBotContent = lastBotMsg?.content || '';
     const normLastBot = normalizeLoopText(lastBotContent);
@@ -796,7 +906,12 @@ export async function POST(req: NextRequest) {
 
             case 'generate_pix_payment':
                 try {
-                    const value = aiResponse.payment_details?.value || 31.00;
+                    const inferredValue = inferPixValue([
+                        ...(Array.isArray(aiResponse.messages) ? aiResponse.messages : []),
+                        combinedText,
+                        lastBotMsg?.content || ''
+                    ]);
+                    const value = Number(aiResponse.payment_details?.value ?? inferredValue ?? 19.90);
                     const description = aiResponse.payment_details?.description || "Pack Exclusivo";
                     // Se já existe PIX pendente com o mesmo valor, reenviar o mesmo
                     const { data: lastPixMsg } = await supabase
@@ -909,6 +1024,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
         success: true,
         debug_stats: aiResponse.lead_stats,
-        debug_funnel: aiResponse.current_state
+        debug_funnel: nextStep
     });
 }

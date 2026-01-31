@@ -56,6 +56,6 @@ export interface AIResponse {
     | "send_shower_photo"
     | "send_lingerie_photo"
     | "send_wet_finger_photo"
-    | "request_app_install";
+    ;
     payment_details?: PaymentDetails | null;
 }

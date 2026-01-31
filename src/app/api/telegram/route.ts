@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
-import { supabase } from '@/lib/supabaseClient';
+import { supabaseServer as supabase } from '@/lib/supabaseServer';
 
 export async function GET(req: NextRequest) {
     // DIAGNOSTIC ROUTE
@@ -56,14 +56,14 @@ export async function POST(req: NextRequest) {
     }
 
     if (message.video) {
-        const caption = message.caption ? ` Caption: ${message.caption}` : '';
+        const caption = message.caption ? ` CAPTION: ${message.caption}` : '';
         text = `[VIDEO_UPLOAD] File_ID: ${message.video.file_id}${caption}`;
     }
 
     if (message.photo && message.photo.length > 0) {
         // Telegram envia várias resoluções. A última é a maior.
         const largestPhoto = message.photo[message.photo.length - 1];
-        const caption = message.caption ? ` Caption: ${message.caption}` : '';
+        const caption = message.caption ? ` CAPTION: ${message.caption}` : '';
         text = `[PHOTO_UPLOAD] File_ID: ${largestPhoto.file_id}${caption}`;
     }
 
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
                 .from('sessions')
                 .insert([{
                     telegram_chat_id: chatId,
-                    user_city: "São Paulo",
+                    user_city: null,
                     device_type: "Unknown",
                     user_name: senderName,
                     status: 'active'

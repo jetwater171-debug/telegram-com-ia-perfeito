@@ -1,4 +1,4 @@
-const API_KEY = process.env.WIINPAY_API_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTFiZmJkZmQ4Y2U4YTAzYzg0NjFhMjkiLCJyb2xlIjoiVVNFUiIsImlhdCI6MTc2NDc3NjY2MX0.ryM5L-iDWg4gXJIHAciiJ7OovZhkkZny2dxyd9Z_U4o";
+const API_KEY = process.env.WIINPAY_API_KEY;
 const BASE_URL = 'https://api-v2.wiinpay.com.br';
 
 export interface CreatePaymentParams {
@@ -20,6 +20,9 @@ export interface PaymentResponse {
 
 export const WiinPayService = {
   async createPayment(params: CreatePaymentParams): Promise<PaymentResponse> {
+    if (!API_KEY) {
+      throw new Error('WIINPAY_API_KEY not configured');
+    }
     const response = await fetch(`${BASE_URL}/payment/create`, {
       method: 'POST',
       headers: {
@@ -52,6 +55,9 @@ export const WiinPayService = {
   },
 
   async getPaymentStatus(paymentId: string): Promise<any> {
+    if (!API_KEY) {
+      throw new Error('WIINPAY_API_KEY not configured');
+    }
     const response = await fetch(`${BASE_URL}/payment/list/${paymentId}`, {
       method: 'GET',
       headers: {

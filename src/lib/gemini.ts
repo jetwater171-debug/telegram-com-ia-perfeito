@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { AIResponse, LeadStats } from "@/types";
-import { supabase } from '@/lib/supabaseClient';
+import { supabaseServer as supabase } from '@/lib/supabaseServer';
 
 const apiKey = process.env.GEMINI_API_KEY;
 
@@ -8,52 +8,52 @@ const apiKey = process.env.GEMINI_API_KEY;
 // Schema para Gemini 2.5 Flash
 // Note: @google/generative-ai uses a specific schema format.
 const responseSchema = {
-    type: "OBJECT", // Use string literal for simplicity with new SDK
+    type: "object", // JSON Schema types are lowercase
     properties: {
-        internal_thought: { type: "STRING", description: "O pensamento interno da IA sobre o lead e o proximo passo. Pense SEMPRE EM PORTUGUÊS." },
-        lead_classification: { type: "STRING", enum: ["carente", "tarado", "curioso", "frio", "desconhecido"] },
+        internal_thought: { type: "string", description: "O pensamento interno da IA sobre o lead e o proximo passo. Pense SEMPRE EM PORTUGUÊS." },
+        lead_classification: { type: "string", enum: ["carente", "tarado", "curioso", "frio", "desconhecido"] },
         lead_stats: {
-            type: "OBJECT",
+            type: "object",
             properties: {
-                tarado: { type: "NUMBER" },
-                carente: { type: "NUMBER" },
-                sentimental: { type: "NUMBER" },
-                financeiro: { type: "NUMBER" },
+                tarado: { type: "number" },
+                carente: { type: "number" },
+                sentimental: { type: "number" },
+                financeiro: { type: "number" },
             },
             required: ["tarado", "carente", "sentimental", "financeiro"], // OBRIGATÓRIO: Sempre mande o estado completo.
         },
-        extracted_user_name: { type: "STRING", nullable: true },
-        audio_transcription: { type: "STRING", nullable: true, description: "Se o usuário enviou um áudio, transcreva EXATAMENTE o que ele disse aqui. Se não for áudio, mande null." },
+        extracted_user_name: { type: "string", nullable: true },
+        audio_transcription: { type: "string", nullable: true, description: "Se o usuário enviou um áudio, transcreva EXATAMENTE o que ele disse aqui. Se não for áudio, mande null." },
         current_state: {
-            type: "STRING",
+            type: "string",
             enum: [
                 "WELCOME", "CONNECTION", "TRIGGER_PHASE", "HOT_TALK", "PREVIEW", "SALES_PITCH", "NEGOTIATION", "CLOSING", "PAYMENT_CHECK"
             ]
         },
         messages: {
-            type: "ARRAY",
-            items: { type: "STRING" }
+            type: "array",
+            items: { type: "string" }
         },
         action: {
-            type: "STRING",
+            type: "string",
             enum: [
                 "none", "send_video_preview", "send_hot_video_preview", "send_ass_photo_preview", "generate_pix_payment", "check_payment_status",
-                "send_shower_photo", "send_lingerie_photo", "send_wet_finger_photo", "request_app_install"
+                "send_shower_photo", "send_lingerie_photo", "send_wet_finger_photo"
             ]
         },
         payment_details: {
-            type: "OBJECT",
+            type: "object",
             nullable: true,
             properties: {
-                value: { type: "NUMBER" },
-                description: { type: "STRING" }
+                value: { type: "number" },
+                description: { type: "string" }
             }
         }
     },
     required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action"],
 };
 
-export const getSystemInstruction = (userCity: string = "Sao Paulo", neighborCity: string = "uma cidade vizinha", isHighTicketDevice: boolean = false, totalPaid: number = 0, currentStats: LeadStats | null = null, minutesSinceOffer: number = 999, dynamicScript: string = "") => {
+export const getSystemInstruction = (userCity: string = "", neighborCity: string = "", isHighTicketDevice: boolean = false, totalPaid: number = 0, currentStats: LeadStats | null = null, minutesSinceOffer: number = 999, dynamicScript: string = "") => {
     const deviceType = isHighTicketDevice ? "iPhone (Rico)" : "Android (Comum)";
     const now = new Date();
     // Ajuste para Horário de Brasília UTC-3
@@ -123,7 +123,9 @@ Você é uma garota de 19 anos, brasileira, real e safadinha.
   - 🚫 **NUNCA USE RETICÊNCIAS (...)**.
   - 🚫 Pontuação formal rígida.
   - 🚫 Gírias de homem ("mano", "cara", "velho").
+  - 🚫 **NUNCA FALE NA TERCEIRA PESSOA** (ex: "a lari..."). Fale sempre em primeira pessoa ("eu...").
   - 🚫 **NUNCA GRUDE PALAVRAS** (Ex: "anjopara" ❌ -> "anjo para" ✅). Use espaçamento normal.
+  - 🚫 Se perceber palavra colada, **reescreva antes de enviar**.
 - **Regra de Ouro:** Escreva como se estivesse digitando rápido no WhatsApp.
 - **Formatação:** Mande mensagens CURTAS. Mande balões separados. (Máximo 5-10 palavras por balão).
 - **REGRA DE OURO (MÚLTIPLOS BALÕES):**
@@ -138,12 +140,13 @@ Você é uma garota de 19 anos, brasileira, real e safadinha.
 - **PERÍODO DO DIA:** ${periodOfDay}. (MUITO IMPORTANTE: Adapte seu papo a isso!)
 - **SUA LOCALIZACAO:**
   - Nunca assuma a cidade dele.
-  - Se ele perguntar onde voce mora: pergunte "de onde vc e anjo?" primeiro.
+  - Se ele perguntar onde voce mora e voce AINDA NAO souber a cidade dele, responda perguntando "de onde vc e anjo?" e NAO diga sua cidade.
   - Se o lead informar a cidade (userCity), responda sempre que mora em **${neighborCity}**.
   - Use exatamente: "sou de ${neighborCity}".
   - Nunca diga a mesma cidade do lead.
 - **Device:** ${deviceType}.
 - **TOTAL JÁ PAGO:** R$ ${totalPaid.toFixed(2)}. (Use isso! Se for alto, trate como rei).
+- **MINUTOS DESDE A ÚLTIMA OFERTA:** ${contextMinutesSinceOffer}.
 - **ESTADO ATUAL (LEAD SCORE):** ${statsText}
   - **CRÍTICO:** Você RECEBEU esses valores. Sua obrigação é RETORNAR o JSON com os valores **ATUALIZADOS**.
   - **CONSISTÊNCIA PENSAMENTO-AÇÃO:**
@@ -517,7 +520,15 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         .limit(1000);
 
     const history = (dbMessages || [])
-        .filter(m => m.sender === 'user' || m.sender === 'bot')
+        .filter(m => {
+            if (m.sender === 'user' || m.sender === 'bot') return true;
+            if (m.sender === 'system') {
+                const content = String(m.content || '');
+                if (content.startsWith('[DEBUG]')) return false;
+                return true;
+            }
+            return false;
+        })
         .map(m => ({
             role: m.sender === 'bot' ? 'model' : 'user',
             parts: [{ text: m.content }]
