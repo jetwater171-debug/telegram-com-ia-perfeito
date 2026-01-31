@@ -8,6 +8,76 @@ import { WiinPayService } from '@/lib/wiinpayService';
 // Ela aguarda, verifica mensagens mais recentes (debounce), e então processa a resposta.
 // É chamada pelo Webhook principal mas NÃO DEVE atrasar a resposta do webhook.
 
+const detectCityFromText = (input: string): string | null => {
+    const match = input.match(/\b(?:sou|moro)\s+(?:de|do|da|em)\s+([A-Za-z\s]{2,40})/i);
+    if (!match) return null;
+    let city = match[1].trim();
+    city = city.replace(/[\n\r\.\!\?].*$/, '').trim();
+
+    const parts = city.split(/\s+/).slice(0, 3);
+    return parts.join(' ');
+};
+
+const getNeighborCity = (city: string | null) => {
+    if (!city) return 'uma cidade vizinha';
+    const c = city.toLowerCase();
+    if (c.includes('rio') || c == 'rj') return 'niteroi';
+    if (c.includes('sao paulo') || c == 'sp') return 'suzano';
+    if (c.includes('campinas')) return 'hortolandia';
+    if (c.includes('santos')) return 'sao vicente';
+    if (c.includes('guarulhos')) return 'aruja';
+    if (c.includes('curitiba')) return 'sao jose dos pinhais';
+    if (c.includes('belo horizonte') || c == 'bh') return 'contagem';
+    if (c.includes('fortaleza')) return 'eusebio';
+    if (c.includes('salvador')) return 'lauro de freitas';
+    return 'uma cidade vizinha';
+};
+
+const clampStat = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
+
+const normalizeStats = (stats: any, base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 }) => {
+    const s = stats || base;
+    return {
+        tarado: clampStat((s as any).tarado ?? base.tarado),
+        financeiro: clampStat((s as any).financeiro ?? base.financeiro),
+        carente: clampStat((s as any).carente ?? base.carente),
+        sentimental: clampStat((s as any).sentimental ?? base.sentimental)
+    };
+};
+
+const isAllZero = (stats: any) => {
+    if (!stats) return true;
+    return (Number(stats.tarado) || 0) === 0 &&
+        (Number(stats.financeiro) || 0) === 0 &&
+        (Number(stats.carente) || 0) === 0 &&
+        (Number(stats.sentimental) || 0) === 0;
+};
+
+const applyHeuristicStats = (text: string, current: any) => {
+    const base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
+    const s = normalizeStats(current, base);
+    const t = (text || '').toLowerCase();
+
+    const inc = (key: keyof typeof s, val: number) => {
+        s[key] = clampStat(s[key] + val);
+    };
+
+    if (/(manda foto|quero ver|deixa eu ver|cad[e?]|nudes)/i.test(t)) inc('tarado', 20);
+    if (/(gostosa|delicia|tes[a?]o|safada)/i.test(t)) inc('tarado', 10);
+    if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra)/i.test(t)) inc('tarado', 30);
+
+    if (/(quanto custa|pix|vou comprar|passa o pix|quanto e)/i.test(t)) inc('financeiro', 20);
+    if (/(tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t)) inc('financeiro', 20);
+    if (/(ta caro|caro|sem dinheiro|liso|desempregado)/i.test(t)) inc('financeiro', -20);
+
+    if (/(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ningu[e?]m me quer|queria uma namorada)/i.test(t)) inc('carente', 15);
+    if (t.trim().split(/\s+/).length <= 2) inc('carente', -10);
+
+    if (/(saudade|solid[a?]o|sentindo falta|carinho|afeto)/i.test(t)) inc('sentimental', 15);
+
+    return s;
+};
+
 export async function POST(req: NextRequest) {
     const body = await req.json();
     const { sessionId, triggerMessageId } = body;
@@ -249,26 +319,21 @@ export async function POST(req: NextRequest) {
         }
     }
 
-    const isAllZero = (stats: any) => {
-        if (!stats) return true;
-        return (Number(stats.tarado) || 0) == 0 &&
-            (Number(stats.financeiro) || 0) == 0 &&
-            (Number(stats.carente) || 0) == 0 &&
-            (Number(stats.sentimental) || 0) == 0;
-    };
-
-    const baseStats = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
-
     const aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
 
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
 
     // 5. Atualizar Stats & Salvar Pensamentos
     if (aiResponse.lead_stats) {
-        const safeStats = aiResponse.lead_stats;
-        if (isAllZero(safeStats)) {
-            const current = session.lead_score || {};
-            aiResponse.lead_stats = isAllZero(current) ? baseStats : current;
+        const currentStats = normalizeStats(session.lead_score);
+        const aiStats = normalizeStats(aiResponse.lead_stats);
+        const heuristicStats = applyHeuristicStats(combinedText, aiStats);
+
+        const aiUnchanged = JSON.stringify(aiStats) === JSON.stringify(currentStats);
+        if (isAllZero(aiStats) || aiUnchanged) {
+            aiResponse.lead_stats = heuristicStats;
+        } else {
+            aiResponse.lead_stats = aiStats;
         }
         console.log("📊 [STATS UPDATE] ANTES:", JSON.stringify(session.lead_score));
         console.log("📊 [STATS UPDATE] DEPOIS (IA):", JSON.stringify(aiResponse.lead_stats));

@@ -52,7 +52,7 @@ const responseSchema = {
     required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action"],
 };
 
-export const getSystemInstruction = (userCity: string = "São Paulo", isHighTicketDevice: boolean = false, totalPaid: number = 0, currentStats: LeadStats | null = null) => {
+export const getSystemInstruction = (userCity: string = "Sao Paulo", neighborCity: string = "uma cidade vizinha", isHighTicketDevice: boolean = false, totalPaid: number = 0, currentStats: LeadStats | null = null) => {
     const deviceType = isHighTicketDevice ? "iPhone (Rico)" : "Android (Comum)";
     const now = new Date();
     // Ajuste para Horário de Brasília UTC-3
@@ -108,12 +108,12 @@ Você é uma garota de 19 anos, brasileira, real e safadinha.
 # CONTEXTO TÉCNICO
 - **Horário Atual (Brasil):** ${timeString}.
 - **PERÍODO DO DIA:** ${periodOfDay}. (MUITO IMPORTANTE: Adapte seu papo a isso!)
-- **SUA LOCALIZAÇÃO:** 
-  - **Não assuma** que sabe onde ele mora.
-  - Se perguntar onde você mora: Pergunte "de onde vc é anjo?" primeiro. (nunca fale onde mora primeiro)
-  - Quando ele responder a cidade dele (Ex: "Sou de mogi das cruzes"): Diga que mora numa **cidade vizinha** (Ex: "suzano/poa").
-  - **OBS:** Se ele falar que é da mesma cidade que você ia falar, mude para outra vizinha. Nunca diga que é da mesma cidade.
-  - "mentira? moro pertinho" (Só use se fizer sentido geográfico).
+- **SUA LOCALIZACAO:**
+  - Nunca assuma a cidade dele.
+  - Se ele perguntar onde voce mora: pergunte "de onde vc e anjo?" primeiro.
+  - Se o lead informar a cidade (userCity), responda sempre que mora em **${neighborCity}**.
+  - Use exatamente: "sou de ${neighborCity}".
+  - Nunca diga a mesma cidade do lead.
 - **Device:** ${deviceType}.
 - **TOTAL JÁ PAGO:** R$ ${totalPaid.toFixed(2)}. (Use isso! Se for alto, trate como rei).
 - **ESTADO ATUAL (LEAD SCORE):** ${statsText}
@@ -435,7 +435,7 @@ export const initializeGenAI = () => {
 
 import { supabase } from '@/lib/supabaseClient';
 
-export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null }, media?: { mimeType: string, data: string }) => {
+export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, neighborCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null }, media?: { mimeType: string, data: string }) => {
     initializeGenAI();
     if (!genAI) throw new Error("API Key not configured");
 
@@ -443,7 +443,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 
     const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash",
-        systemInstruction: getSystemInstruction(context?.userCity, context?.isHighTicket, context?.totalPaid || 0, currentStats) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
+        systemInstruction: getSystemInstruction(context?.userCity, context?.neighborCity, context?.isHighTicket, context?.totalPaid || 0, currentStats) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
         safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
