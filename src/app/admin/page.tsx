@@ -161,6 +161,9 @@ export default function AdminDashboard() {
                         <Link href="/admin/variants" className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold text-gray-100 transition hover:border-white/20">
                             Variacoes
                         </Link>
+                        <Link href="/admin/optimizer" className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold text-gray-100 transition hover:border-white/20">
+                            IA
+                        </Link>
                         <Link href="/admin/settings" className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold text-gray-100 transition hover:border-white/20">
                             Configuracoes
                         </Link>

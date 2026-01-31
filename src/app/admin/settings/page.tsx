@@ -64,6 +64,7 @@ export default function AdminSettingsPage() {
                         <Link href="/admin/insights" className="text-blue-400 hover:underline">Insights</Link>
                         <Link href="/admin/scripts" className="text-blue-400 hover:underline">Scripts</Link>
                         <Link href="/admin/variants" className="text-blue-400 hover:underline">Variacoes</Link>
+                        <Link href="/admin/optimizer" className="text-blue-400 hover:underline">IA</Link>
                         <Link href="/admin" className="text-blue-400 hover:underline">Voltar</Link>
                     </div>
                 </div>

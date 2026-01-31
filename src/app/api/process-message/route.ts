@@ -523,7 +523,11 @@ export async function POST(req: NextRequest) {
         try {
             const prevIdx = stageIndex(previousStep);
             const nextIdx = stageIndex(nextStep);
-            const outcome = prevIdx >= 0 && nextIdx >= 0 ? (nextIdx > prevIdx) : null;
+            let outcome: boolean | null = null;
+            if (prevIdx >= 0 && nextIdx >= 0) {
+                if (nextIdx > prevIdx) outcome = true;
+                if (nextIdx < prevIdx) outcome = false;
+            }
             if (outcome !== null) {
                 await supabase.from('variant_assignments').update({ success: outcome }).eq('id', variantAssignment.id);
                 const { data: variantRow } = await supabase
