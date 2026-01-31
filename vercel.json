@@ -1,0 +1,6 @@
+{
+  "crons": [
+    { "path": "/api/cron/reengagement", "schedule": "0 3 * * *" },
+    { "path": "/api/cron/optimizer", "schedule": "0 4 * * *" }
+  ]
+}

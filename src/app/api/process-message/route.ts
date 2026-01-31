@@ -696,7 +696,7 @@ export async function POST(req: NextRequest) {
         : [String(aiResponse.messages || '')].filter(Boolean);
 
     const safeMessages = (outgoingMessages.length > 0 ? outgoingMessages : ['amor?'])
-        .map(m => sanitizeOutgoingMessage(m))
+        .map((m: string) => sanitizeOutgoingMessage(m))
         .filter(Boolean);
 
     const lastBotContent = lastBotMsg?.content || '';
