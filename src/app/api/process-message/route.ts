@@ -581,6 +581,17 @@ export async function POST(req: NextRequest) {
         };
     }
 
+    const afterStats = normalizeStats(aiResponse.lead_stats);
+    const stillSame = JSON.stringify(afterStats) === JSON.stringify(currentStats);
+    if (stillSame && userOnlyText.trim().length > 0) {
+        const words = userOnlyText.trim().split(/\s+/).length;
+        const bump = words >= 5 ? 5 : 2;
+        aiResponse.lead_stats = {
+            ...afterStats,
+            carente: clampStat(afterStats.carente + bump)
+        };
+    }
+
     console.log("📊 [STATS UPDATE] ANTES:", JSON.stringify(session.lead_score));
     console.log("📊 [STATS UPDATE] DEPOIS (IA):", JSON.stringify(aiResponse.lead_stats));
 
@@ -602,6 +613,9 @@ export async function POST(req: NextRequest) {
         if (infIdx > nextIdx) {
             nextStep = inferredStep;
         }
+    }
+    if ((previousStep == null || String(previousStep).toUpperCase() === 'WELCOME') && nextStep === 'WELCOME' && userOnlyText.trim().length > 0) {
+        nextStep = 'CONNECTION';
     }
 
     const updateResult = await supabase.from('sessions').update({
