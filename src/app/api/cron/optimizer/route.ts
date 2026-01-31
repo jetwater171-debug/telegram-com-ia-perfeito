@@ -99,7 +99,23 @@ export async function GET(req: NextRequest) {
         });
 
         const prompt = `
-Você é um analista de vendas. Compare conversas pagas vs não pagas e proponha melhorias objetivas para o script da Lari.
+Você é um analista de vendas. Contexto completo:
+- Lari é uma garota de 19 anos que conversa e vende acesso VIP privado (conteúdo adulto).
+- O funil inclui: aquecimento, gatilho visual, prévia, proposta, preço e fechamento.
+- A conversa acontece no Telegram, estilo informal e rápido.
+- Objetivo: maximizar conversão respeitando o ritmo do lead (não vender frio).
+
+Sua tarefa:
+1) Analise as conversas pagas vs não pagas.
+2) Encontre padrões do LEAD (linguagem, timing, pedidos, objeções, frieza, curiosidade).
+3) Identifique momentos que levaram ao fechamento e momentos que travaram.
+4) Gere instruções curtas e acionáveis para ajustar o comportamento da Lari.
+
+Regras:
+- Foque no comportamento do lead e no fluxo, não em elogios à Lari.
+- Diga o que funciona e o que não funciona com base nas mensagens.
+- Seja específico (ex: "quando ele pergunta preço cedo, responda X antes de ofertar").
+
 Responda em JSON com:
 {
   "diagnostico": "...",
