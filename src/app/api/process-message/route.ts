@@ -73,6 +73,8 @@ const applyHeuristicStats = (text: string, current: any) => {
     if (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|vídeo|video|pelada|sem roupa|manda mais)/i.test(t)) inc('tarado', 20);
     if (/(gostosa|delicia|tes[a?]o|safada|linda|d[ei]l?icia)/i.test(t)) inc('tarado', 10);
     if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t)) inc('tarado', 30);
+    if (/(nao sou tarado|nao to tarado|nao curto|nao gosto disso|nao quero isso|para com isso|respeita|pare|sem putaria|sem nude|nao manda|nao gostei|voce e feia|vc e feia)/i.test(t)) inc('tarado', -30);
+    if (/(so quero conversar|nao quero nada sexual|so amizade)/i.test(t)) inc('tarado', -20);
 
     if (/(quanto custa|pix|vou comprar|passa o pix|quanto e|pre[cç]o|valor|mensal|vital[ií]cio)/i.test(t)) inc('financeiro', 20);
     if (/(tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t)) inc('financeiro', 20);
@@ -111,6 +113,11 @@ const fixGluedWords = (text: string) => {
 
 const sanitizeOutgoingMessage = (text: string) => {
     let out = (text || '').trim();
+    // Evita "eu sou eu" quando a IA se apresenta.
+    out = out.replace(/\beu\s+sou\s+a\s+lari\b/gi, 'eu sou lari');
+    out = out.replace(/\beu\s+sou\s+a\s+larissa\b/gi, 'eu sou larissa');
+    out = out.replace(/\bme\s+chamo\s+a\s+lari\b/gi, 'me chamo lari');
+    out = out.replace(/\bme\s+chamo\s+a\s+larissa\b/gi, 'me chamo larissa');
     out = out.replace(/\ba\s+lari\b/gi, 'eu');
     out = out.replace(/\ba\s+larissa\b/gi, 'eu');
     out = out.replace(/\s+/g, ' ');
@@ -573,11 +580,16 @@ export async function POST(req: NextRequest) {
     if (isAllZero(aiStats) || aiUnchanged) {
         aiResponse.lead_stats = heuristicStats;
     } else {
+        const pick = (key: keyof typeof aiStats) => {
+            const delta = heuristicStats[key] - currentStats[key];
+            if (delta <= -10) return Math.min(aiStats[key], heuristicStats[key]);
+            return Math.max(aiStats[key], heuristicStats[key]);
+        };
         aiResponse.lead_stats = {
-            tarado: Math.max(aiStats.tarado, heuristicStats.tarado),
-            financeiro: Math.max(aiStats.financeiro, heuristicStats.financeiro),
-            carente: Math.max(aiStats.carente, heuristicStats.carente),
-            sentimental: Math.max(aiStats.sentimental, heuristicStats.sentimental)
+            tarado: pick('tarado'),
+            financeiro: pick('financeiro'),
+            carente: pick('carente'),
+            sentimental: pick('sentimental')
         };
     }
 
@@ -737,8 +749,12 @@ export async function POST(req: NextRequest) {
         safeMessages[0] = `ei amor ${safeMessages[0]}`;
     }
 
-    for (let i = 0; i < safeMessages.length; i++) {
-        const msgText = safeMessages[i];
+    const stage = String(aiResponse.current_state || '').toUpperCase();
+    const allowLong = ['NEGOTIATION', 'SALES_PITCH', 'CLOSING', 'PAYMENT_CHECK'].includes(stage);
+    const outgoingToSend = (!allowLong && safeMessages.length > 2) ? safeMessages.slice(0, 2) : safeMessages;
+
+    for (let i = 0; i < outgoingToSend.length; i++) {
+        const msgText = outgoingToSend[i];
 
         // Delay fixo entre 3 a 4 segundos (solicitado pelo usuário)
         // Isso dá um tempo de leitura/digitação consistente para cada balão.
