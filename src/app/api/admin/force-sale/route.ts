@@ -15,6 +15,23 @@ export async function POST(req: NextRequest) {
 
         if (!session) return NextResponse.json({ error: 'session not found' }, { status: 404 });
 
+        const { data: recentTrigger } = await supabase
+            .from('messages')
+            .select('id, created_at')
+            .eq('session_id', session.id)
+            .eq('sender', 'system')
+            .ilike('content', '[ADMIN_TRIGGER_SALE]%')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+        if (recentTrigger?.created_at) {
+            const diffMs = Date.now() - new Date(recentTrigger.created_at).getTime();
+            if (diffMs < 2 * 60 * 1000) {
+                return NextResponse.json({ ok: true, skipped: true, reason: 'recent_trigger' });
+            }
+        }
+
         await supabase.from('messages').insert({
             session_id: session.id,
             sender: 'system',

@@ -496,6 +496,19 @@ export async function POST(req: NextRequest) {
         await sendTelegramMessage(botToken, chatId, msgText);
     }
 
+    if (combinedText.includes(triggerPrefix)) {
+        try {
+            await supabase
+                .from('messages')
+                .delete()
+                .eq('session_id', session.id)
+                .eq('sender', 'system')
+                .ilike('content', '[ADMIN_TRIGGER_SALE]%');
+        } catch (e: any) {
+            console.warn("Falha ao limpar trigger de venda:", e?.message || e);
+        }
+    }
+
 
 
 
