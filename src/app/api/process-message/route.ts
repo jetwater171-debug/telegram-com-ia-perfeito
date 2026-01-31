@@ -102,7 +102,7 @@ const detectRepetition = (messages: { content: string }[]) => {
 
 export async function POST(req: NextRequest) {
     const body = await req.json();
-    const { sessionId, triggerMessageId } = body;
+    const { sessionId, triggerMessageId, force } = body;
 
     console.log(`[PROCESSADOR] Iniciado para sessão ${sessionId}`);
 
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
     const { data: session } = await supabase.from('sessions').select('*').eq('id', sessionId).single();
     if (!session) return NextResponse.json({ error: 'Sessão não encontrada' });
 
-    if (session.status && session.status !== 'active') {
+    if (!force && session.status && session.status !== 'active') {
         return NextResponse.json({ status: 'paused' });
     }
 

@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
         await fetch(workerUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: session.id })
+            body: JSON.stringify({ sessionId: session.id, force: true })
         });
 
         return NextResponse.json({ ok: true });
