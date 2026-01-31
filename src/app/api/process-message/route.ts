@@ -176,6 +176,18 @@ export async function POST(req: NextRequest) {
     const combinedText = groupMessages.map(m => m.content).join("\n");
     console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
 
+    const { data: lastOfferMsg } = await supabase
+        .from('messages')
+        .select('created_at')
+        .eq('session_id', sessionId)
+        .or("content.ilike.%[M?DIA:% ,content.ilike.%PIX GENERATED%")
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+    const lastOfferAt = lastOfferMsg?.created_at ? new Date(lastOfferMsg.created_at).getTime() : null;
+    const minutesSinceOffer = lastOfferAt ? Math.floor((Date.now() - lastOfferAt) / 60000) : 999;
+
     // 4. Preparar Contexto e Mídia (Se hover)
     const context = {
         userCity: session.user_city || "São Paulo",

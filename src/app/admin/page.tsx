@@ -46,9 +46,7 @@ export default function AdminDashboard() {
             .select('*')
             .order('last_message_at', { ascending: false });
 
-        if (data) {
-            setSessions(data as Session[]);
-        }
+        if (data) setSessions(data as Session[]);
     };
 
     const getSafeStats = (session: Session) => {
@@ -127,19 +125,25 @@ export default function AdminDashboard() {
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-[#0b0f18] via-[#0c1220] to-[#0b0f18] text-gray-100 font-sans">
-            <header className="border-b border-white/5 bg-black/20 backdrop-blur">
-                <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-8">
+        <div className="min-h-screen bg-[#0b0f17] text-gray-100 font-sans">
+            <div className="pointer-events-none fixed inset-0">
+                <div className="absolute left-[-140px] top-[-160px] h-[420px] w-[420px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(0,184,148,0.28),_transparent_70%)]" />
+                <div className="absolute right-[-160px] top-[120px] h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(56,189,248,0.20),_transparent_70%)]" />
+                <div className="absolute bottom-[-160px] left-1/2 h-[480px] w-[480px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle_at_center,_rgba(255,122,24,0.10),_transparent_70%)]" />
+            </div>
+
+            <header className="sticky top-0 z-30 border-b border-white/10 bg-black/30 backdrop-blur">
+                <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-6">
                     <div className="flex items-center gap-4">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400/30 to-emerald-400/30 text-cyan-200 font-bold">LM</div>
+                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400/40 to-emerald-400/30 text-cyan-100 font-bold">LM</div>
                         <div>
                             <h1 className="text-xl font-semibold">Painel Lari Morais</h1>
-                            <p className="text-sm text-gray-400">Acompanhe a conversao em tempo real</p>
+                            <p className="text-sm text-gray-400">Controle total das conversas e conversoes</p>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-3">
-                        <div className="hidden md:flex items-center gap-2 text-xs font-semibold text-gray-300">
+                        <div className="hidden lg:flex items-center gap-2 text-xs font-semibold text-gray-300">
                             <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">Total {stats.total}</span>
                             <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-emerald-200">Ativos {stats.active}</span>
                             <span className="rounded-full border border-rose-400/20 bg-rose-500/10 px-3 py-1 text-rose-200">Quentes {stats.hot}</span>
@@ -152,11 +156,11 @@ export default function AdminDashboard() {
                 </div>
             </header>
 
-            <div className="mx-auto w-full max-w-7xl px-6 py-10">
-                <div className="grid gap-6 lg:grid-cols-[240px_1fr]">
-                    <aside className="rounded-3xl border border-white/10 bg-white/5 p-4 backdrop-blur">
+            <main className="mx-auto w-full max-w-7xl px-6 py-10">
+                <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
+                    <aside className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur">
                         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Filtros</p>
-                        <div className="mt-3 flex flex-col gap-2">
+                        <div className="mt-4 flex flex-col gap-2">
                             {['all', 'active', 'paused', 'hot'].map((f) => (
                                 <button
                                     key={f}
@@ -170,15 +174,20 @@ export default function AdminDashboard() {
                             ))}
                         </div>
 
-                        <div className="mt-6">
+                        <div className="mt-8">
                             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Busca</p>
                             <input
                                 type="text"
                                 placeholder="Buscar por nome, cidade ou ID"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
-                                className="mt-3 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-2.5 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                                className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-2.5 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
                             />
+                        </div>
+
+                        <div className="mt-8 rounded-2xl border border-white/10 bg-black/20 p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Dica rapida</p>
+                            <p className="mt-2 text-sm text-gray-300">Acompanhe os quentes e avance direto para oferta.</p>
                         </div>
                     </aside>
 
@@ -189,7 +198,7 @@ export default function AdminDashboard() {
 
                                 return (
                                     <Link key={session.id} href={`/admin/chat/${session.telegram_chat_id}`}
-                                        className="group rounded-3xl border border-white/10 bg-white/5 p-5 shadow-[0_12px_30px_rgba(0,0,0,0.35)] backdrop-blur transition hover:border-cyan-400/40 hover:shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+                                        className="group rounded-3xl border border-white/10 bg-white/5 p-5 shadow-[0_12px_30px_rgba(0,0,0,0.35)] backdrop-blur transition hover:border-cyan-400/40 hover:shadow-[0_18px_45px_rgba(0,0,0,0.45)]">
                                         <div className="flex items-start justify-between">
                                             <div>
                                                 <h2 className="text-lg font-semibold text-gray-100">{session.user_name || 'Desconhecido'}</h2>
@@ -257,7 +266,7 @@ export default function AdminDashboard() {
                         </div>
                     </section>
                 </div>
-            </div>
+            </main>
         </div>
     );
 }

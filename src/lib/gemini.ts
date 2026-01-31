@@ -52,7 +52,7 @@ const responseSchema = {
     required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action"],
 };
 
-export const getSystemInstruction = (userCity: string = "Sao Paulo", neighborCity: string = "uma cidade vizinha", isHighTicketDevice: boolean = false, totalPaid: number = 0, currentStats: LeadStats | null = null) => {
+export const getSystemInstruction = (userCity: string = "Sao Paulo", neighborCity: string = "uma cidade vizinha", isHighTicketDevice: boolean = false, totalPaid: number = 0, currentStats: LeadStats | null = null, minutesSinceOffer: number = 999) => {
     const deviceType = isHighTicketDevice ? "iPhone (Rico)" : "Android (Comum)";
     const now = new Date();
     // Ajuste para Horário de Brasília UTC-3
@@ -70,7 +70,9 @@ export const getSystemInstruction = (userCity: string = "Sao Paulo", neighborCit
 
     const timeString = now.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
 
-    const statsText = currentStats
+    const contextMinutesSinceOffer = typeof (minutesSinceOffer) === 'number' ? minutesSinceOffer : 999;
+
+const statsText = currentStats
         ? `🔥 Tarado: ${currentStats.tarado || 0}% | 💰 Financeiro: ${currentStats.financeiro || 0}% | ❤️ Carente: ${currentStats.carente || 0}% | 😭 Sentimental: ${currentStats.sentimental || 0}%`
         : "Novo Lead (Sem dados)";
 
@@ -435,7 +437,7 @@ export const initializeGenAI = () => {
 
 import { supabase } from '@/lib/supabaseClient';
 
-export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, neighborCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null }, media?: { mimeType: string, data: string }) => {
+export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, neighborCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null, minutesSinceOffer?: number }, media?: { mimeType: string, data: string }) => {
     initializeGenAI();
     if (!genAI) throw new Error("API Key not configured");
 
@@ -443,7 +445,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 
     const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash",
-        systemInstruction: getSystemInstruction(context?.userCity, context?.neighborCity, context?.isHighTicket, context?.totalPaid || 0, currentStats) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
+        systemInstruction: getSystemInstruction(context?.userCity, context?.neighborCity, context?.isHighTicket, context?.totalPaid || 0, currentStats, context?.minutesSinceOffer || 999) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
         safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
