@@ -136,13 +136,13 @@ export default function AdminDashboard() {
     };
 
     return (
-        <div className="min-h-screen bg-[#0f111a] text-gray-100 font-sans selection:bg-pink-500 selection:text-white">
+        <div className="min-h-screen bg-[#0f111a] text-gray-100 font-sans">
 
             {/* TOP BAR */}
             <header className="bg-[#161b22] border-b border-gray-800 sticky top-0 z-20 shadow-lg">
                 <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
                     <div>
-                        <h1 className="text-2xl font-bold bg-gradient-to-r from-pink-500 to-purple-500 bg-clip-text text-transparent">
+                        <h1 className="text-2xl font-bold bg-gradient-to-r from-teal-400 to-cyan-500 bg-clip-text text-transparent">
                             Lari Morais <span className="text-gray-500 font-normal text-sm ml-2">Painel Administrativo</span>
                         </h1>
                     </div>
@@ -178,12 +178,12 @@ export default function AdminDashboard() {
 
                 {/* FILTERS & SEARCH */}
                 <div className="flex flex-col md:flex-row gap-4 mb-8 justify-between items-end md:items-center">
-                    <div className="flex bg-[#161b22] p-1 rounded-lg border border-gray-800 shadow-sm">
+                    <div className="flex bg-[#161b22] p-1 rounded-full border border-gray-800 shadow-sm">
                         {['all', 'active', 'paused', 'hot'].map((f) => (
                             <button
                                 key={f}
                                 onClick={() => setFilter(f as any)}
-                                className={`px-6 py-2 rounded-md text-sm font-medium transition-all ${filter === f
+                                className={`px-5 py-2 rounded-full text-sm font-medium transition-all ${filter === f
                                     ? 'bg-gray-700 text-white shadow-md'
                                     : 'text-gray-400 hover:text-white hover:bg-gray-800'
                                     } first-letter:uppercase`}
@@ -214,13 +214,13 @@ export default function AdminDashboard() {
 
                         return (
                             <Link key={session.id} href={`/admin/chat/${session.telegram_chat_id}`}>
-                                <div className={`group relative bg-[#161b22] rounded-xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-xl overflow-hidden
+                                <div className={`group relative bg-[#141820] rounded-2xl border border-gray-800/80 transition hover:border-cyan-500/30 hover:shadow-lg overflow-hidden
                                 ${session.status === 'paused' ? 'border-red-900/50 hover:border-red-500/50' : 'border-gray-800 hover:border-pink-500/30'}
                             `}>
                                     {/* Status Indicator Strip */}
-                                    <div className={`absolute top-0 left-0 w-full h-1 ${session.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`} />
+                                    <div className={`absolute top-0 left-0 h-full w-1 ${session.status === 'active' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
 
-                                    <div className="p-5">
+                                    <div className="p-4">
                                         <div className="flex justify-between items-start mb-4">
                                             <div>
                                                 <h2 className="text-lg font-bold text-gray-100 group-hover:text-pink-400 transition">
@@ -234,8 +234,8 @@ export default function AdminDashboard() {
                                             </div>
                                             <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide border
                                             ${session.status === 'active'
-                                                    ? 'bg-green-900/20 text-green-400 border-green-900/50'
-                                                    : 'bg-red-900/20 text-red-400 border-red-900/50'}
+                                                    ? 'bg-emerald-900/30 text-emerald-300 border-emerald-900/50'
+                                                    : 'bg-rose-900/30 text-rose-300 border-rose-900/50'}
                                         `}>
                                                 {translateStatus(session.status)}
                                             </span>
@@ -253,7 +253,7 @@ export default function AdminDashboard() {
 
                                         {/* Stats Grid */}
                                         <div className="grid grid-cols-2 gap-3 mb-4">
-                                            <div className="bg-gray-800/50 p-2 rounded border border-gray-800">
+                                            <div className="bg-[#0f131a] p-3 rounded-xl border border-gray-800/80">
                                                 <div className="flex justify-between text-xs mb-1">
                                                     <span className="text-gray-400">🔥 Tarado</span>
                                                     <span className="font-bold">{safeStats.tarado || 0}%</span>
@@ -263,7 +263,7 @@ export default function AdminDashboard() {
                                                 </div>
 
                                             </div>
-                                            <div className="bg-gray-800/50 p-2 rounded border border-gray-800">
+                                            <div className="bg-[#0f131a] p-3 rounded-xl border border-gray-800/80">
                                                 <div className="flex justify-between text-xs mb-1">
                                                     <span className="text-gray-400">💰 Financeiro</span>
                                                     <span className="font-bold">{safeStats.financeiro || 0}%</span>
@@ -272,7 +272,7 @@ export default function AdminDashboard() {
                                                     <div className="h-full bg-green-500" style={{ width: `${safeStats.financeiro || 0}%` }}></div>
                                                 </div>
                                             </div>
-                                            <div className="bg-gray-800/50 p-2 rounded border border-gray-800 col-span-2">
+                                            <div className="bg-[#0f131a] p-3 rounded-xl border border-gray-800/80 col-span-2">
                                                 <div className="flex justify-between text-xs mb-1">
                                                     <span className="text-blue-400">❤️ Carente</span>
                                                     <span className="font-bold">{safeStats.carente || 0}%</span>
@@ -284,7 +284,7 @@ export default function AdminDashboard() {
                                         </div>
 
 
-                                        <div className="flex justify-between items-center text-xs text-gray-500 pt-4 border-t border-gray-800">
+                                        <div className="flex justify-between items-center text-xs text-gray-500 pt-4 border-t border-gray-800/60">
                                             <div className="flex items-center gap-1">
                                                 <span>🕒</span>
                                                 <span>{formatTimeAgo(session.last_message_at)}</span>

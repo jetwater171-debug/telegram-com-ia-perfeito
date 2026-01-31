@@ -112,15 +112,17 @@ export default function AdminChatPage() {
             try {
                 stats = JSON.parse(stats);
             } catch {
-                return { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
+                stats = null;
             }
         }
-        if (!stats) return { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
+        const base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
+        if (!stats) stats = base;
+        const clamp = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
         return {
-            tarado: Number(stats.tarado) || 0,
-            financeiro: Number(stats.financeiro) || 0,
-            carente: Number(stats.carente) || 0,
-            sentimental: Number(stats.sentimental) || 0
+            tarado: clamp(stats.tarado ?? base.tarado),
+            financeiro: clamp(stats.financeiro ?? base.financeiro),
+            carente: clamp(stats.carente ?? base.carente),
+            sentimental: clamp(stats.sentimental ?? base.sentimental)
         };
     };
 
@@ -170,11 +172,11 @@ export default function AdminChatPage() {
     const safeLeadScore = getSafeLeadScore(session?.lead_score);
 
     return (
-        <div className="flex h-screen bg-[#0e1621] text-white font-sans overflow-hidden">
+        <div className="flex h-screen bg-[#0f141d] text-white font-sans overflow-hidden">
             <div className="flex-1 flex flex-col w-full h-full relative shadow-none">
 
                 {/* 1. TOP HEADER (Telegram Style) */}
-                <header className="bg-[#17212b] px-4 py-2 flex items-center justify-between shadow-md z-10 shrink-0 cursor-pointer" onClick={() => setShowMenu(!showMenu)}>
+                <header className="bg-[#141a24] px-4 py-2 flex items-center justify-between shadow-md z-10 shrink-0 " onClick={() => setShowMenu(!showMenu)}>
                     <div className="flex items-center gap-4">
                         <button onClick={(e) => { e.stopPropagation(); router.push('/admin'); }} className="text-gray-400 hover:text-white transition">
                             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>
@@ -192,7 +194,7 @@ export default function AdminChatPage() {
                                 <h1 className="text-md font-bold text-white leading-tight">
                                     {session?.user_name || "Carregando..."}
                                 </h1>
-                                <p className="text-xs text-blue-400">
+                                <p className="text-xs text-cyan-300">
                                     {leadTyping ? 'digitando...' : (session?.status === 'active' ? 'online (IA Ativa)' : 'offline (Pausado)')}
                                 </p>
                             </div>
@@ -206,7 +208,7 @@ export default function AdminChatPage() {
 
                         {/* Dropdown Menu */}
                         {showMenu && (
-                            <div className="absolute right-0 top-10 bg-[#17212b] border border-[#0e1621] rounded-lg shadow-xl w-48 py-2 z-50">
+                            <div className="absolute right-0 top-10 bg-[#141a24] border border-[#0e1621] rounded-lg shadow-xl w-48 py-2 z-50">
                                 <button onClick={toggleBot} className="w-full text-left px-4 py-2 hover:bg-[#202b36] text-sm flex items-center gap-2">
                                     {session?.status === 'paused' ? '▶ Ativar IA' : '⏸ Pausar IA'}
                                 </button>
@@ -220,7 +222,7 @@ export default function AdminChatPage() {
 
                 {/* 2. MESSAGES AREA (Telegram Pattern Background) */}
                 <main
-                    className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 bg-[#0e1621] relative"
+                    className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 bg-[#0f141d] relative"
                     style={{
                         backgroundImage: `url("https://web.telegram.org/img/bg_0.png")`, // Telegram default dark pattern
                         backgroundBlendMode: 'soft-light',
@@ -228,7 +230,7 @@ export default function AdminChatPage() {
                     }}
                 >
                     {/* Overlay to darken the background image matching theme */}
-                    <div className="absolute inset-0 bg-[#0e1621]/80 pointer-events-none fixed" />
+                    <div className="absolute inset-0 bg-[#0f141d]/80 pointer-events-none fixed" />
 
                     <div className="relative z-0 flex flex-col gap-1 pb-4">
                     {messages.map((msg) => {
@@ -239,7 +241,7 @@ export default function AdminChatPage() {
                         if (isSystem) {
                             return (
                                 <div key={msg.id} className="flex justify-center my-2">
-                                    <span className="bg-[#17212b]/80 text-gray-400 text-xs px-3 py-1 rounded-full">{msg.content}</span>
+                                    <span className="bg-[#141a24]/80 text-gray-400 text-xs px-3 py-1 rounded-full">{msg.content}</span>
                                 </div>
                             );
                         }
@@ -282,12 +284,12 @@ export default function AdminChatPage() {
                 </main>
 
                 {/* 3. INPUT AREA (Telegram Style) */}
-                <footer className="bg-[#17212b] p-2 sm:p-3 flex items-end gap-2 shrink-0">
+                <footer className="bg-[#141a24] p-2 sm:p-3 flex items-end gap-2 shrink-0">
                     <button className="p-3 text-gray-500 hover:text-gray-300 transition shrink-0 rounded-full hover:bg-[#2b2d31]/20">
                         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
                     </button>
 
-                    <div className="flex-1 bg-[#0e1621] rounded-2xl flex items-center min-h-[45px] max-h-[120px] shadow-inner">
+                    <div className="flex-1 bg-[#0f141d] rounded-2xl flex items-center min-h-[45px] max-h-[120px] shadow-inner">
                         <textarea
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
@@ -315,8 +317,8 @@ export default function AdminChatPage() {
             </div>
 
             {/* 4. RIGHT SIDEBAR (Lead Stats) */}
-            <div className="w-80 bg-[#17212b] border-l border-white/10 hidden lg:flex flex-col shrink-0 overflow-y-auto">
-                <div className="p-6 flex flex-col items-center border-b border-white/10 bg-[#17212b]">
+            <div className="w-80 bg-[#141a24] border-l border-white/10 hidden lg:flex flex-col shrink-0 overflow-y-auto">
+                <div className="p-6 flex flex-col items-center border-b border-white/10 bg-[#141a24]">
                     <div className={`w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold text-white mb-4 shadow-lg ring-4 ring-white/10
                         ${safeLeadScore.tarado > 70 ? 'bg-gradient-to-br from-pink-500 to-purple-600' : 'bg-gradient-to-br from-blue-400 to-blue-600'}
                     `}>
@@ -352,7 +354,7 @@ export default function AdminChatPage() {
                         </div>
                         <div className="flex justify-between items-center text-xs">
                             <span className="text-gray-300 font-medium">ID</span>
-                            <span className="text-white font-mono select-all cursor-pointer hover:text-blue-300 bg-black/20 px-2 py-1 rounded w-32 truncate text-right" title="Copiar">{session?.telegram_chat_id}</span>
+                            <span className="text-white font-mono select-all  hover:text-blue-300 bg-black/20 px-2 py-1 rounded w-32 truncate text-right" title="Copiar">{session?.telegram_chat_id}</span>
                         </div>
                         <div className="flex justify-between items-center text-xs">
                             <span className="text-gray-300 font-medium">Device</span>
