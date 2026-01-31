@@ -618,13 +618,30 @@ export async function POST(req: NextRequest) {
         nextStep = 'CONNECTION';
     }
 
-    const updateResult = await supabase.from('sessions').update({
+    const updatePayload: any = {
         lead_score: aiResponse.lead_stats,
         funnel_step: nextStep,
-    }).eq('id', session.id).select();
+    };
+    let updateResult = await supabase.from('sessions').update(updatePayload).eq('id', session.id).select();
 
     if (updateResult.error) {
-        console.error("❌ ERRO ao Atualizar Stats:", updateResult.error);
+        const msg = String(updateResult.error?.message || '');
+        const code = String((updateResult.error as any)?.code || '');
+        const missingFunnelStep = code === '42703' || msg.toLowerCase().includes('funnel_step');
+        if (missingFunnelStep) {
+            // Banco antigo sem a coluna funnel_step: salva pelo menos as stats.
+            const fallbackResult = await supabase.from('sessions').update({
+                lead_score: aiResponse.lead_stats,
+            }).eq('id', session.id).select();
+            if (fallbackResult.error) {
+                console.error("❌ ERRO ao Atualizar Stats (fallback):", fallbackResult.error);
+            } else {
+                console.log("✅ Stats Atualizados (fallback sem funnel_step):", fallbackResult.data);
+            }
+            updateResult = fallbackResult;
+        } else {
+            console.error("❌ ERRO ao Atualizar Stats:", updateResult.error);
+        }
     } else {
         console.log("✅ Stats Atualizados no DB com Sucesso:", updateResult.data);
     }

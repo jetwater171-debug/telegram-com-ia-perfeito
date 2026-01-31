@@ -17,6 +17,7 @@ export default function AdminChatPage() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [session, setSession] = useState<any>(null);
+    const [latestFunnelStep, setLatestFunnelStep] = useState<string | null>(null);
     const [leadTyping, setLeadTyping] = useState(false);
     const [showThoughts, setShowThoughts] = useState(false);
     const [showSystem, setShowSystem] = useState(true);
@@ -39,6 +40,17 @@ export default function AdminChatPage() {
 
             if (!active || !data) return;
             setSession(data);
+            if (!data.funnel_step) {
+                const { data: funnelRows } = await supabase
+                    .from('funnel_events')
+                    .select('step, created_at')
+                    .eq('session_id', data.id)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+                setLatestFunnelStep(funnelRows?.[0]?.step || null);
+            } else {
+                setLatestFunnelStep(null);
+            }
             await loadMessages(data.id);
             cleanup = subscribe(data.id);
         })();
@@ -104,6 +116,15 @@ export default function AdminChatPage() {
             }, (payload) => {
                 setSession(payload.new);
             })
+            .on('postgres_changes', {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'funnel_events',
+                filter: `session_id=eq.${sessionId}`
+            }, (payload) => {
+                const step = (payload.new as any)?.step;
+                if (step) setLatestFunnelStep(step);
+            })
             .subscribe();
 
         return () => { supabase.removeChannel(channel); };
@@ -122,7 +143,32 @@ export default function AdminChatPage() {
         scrollToBottom('smooth');
     }, [messages.length]);
 
-    const getSafeLeadScore = (raw: any) => {
+    const clampStat = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
+
+    const applyHeuristicStats = (text: string, current: any) => {
+        const s = { ...current };
+        const t = (text || '').toLowerCase();
+        const inc = (key: keyof typeof s, val: number) => {
+            s[key] = clampStat(s[key] + val);
+        };
+
+        if (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|video|pelada|sem roupa|manda mais)/i.test(t)) inc('tarado', 20);
+        if (/(gostosa|delicia|tesao|safada|linda|d[ei]l?icia)/i.test(t)) inc('tarado', 10);
+        if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t)) inc('tarado', 30);
+
+        if (/(quanto custa|pix|vou comprar|passa o pix|quanto e|preco|valor|mensal|vitalicio)/i.test(t)) inc('financeiro', 20);
+        if (/(tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t)) inc('financeiro', 20);
+        if (/(ta caro|caro|sem dinheiro|liso|desempregado)/i.test(t)) inc('financeiro', -20);
+
+        if (/(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ninguem me quer|queria uma namorada|carente|me chama|sdds|saudade)/i.test(t)) inc('carente', 15);
+        if (t.trim().split(/\s+/).length <= 2) inc('carente', -10);
+
+        if (/(saudade|solidao|sentindo falta|carinho|afeto)/i.test(t)) inc('sentimental', 15);
+
+        return s;
+    };
+
+    const getSafeLeadScore = (raw: any, fallbackText: string) => {
         let stats = raw;
         if (typeof stats === 'string') {
             try { stats = JSON.parse(stats); } catch { stats = null; }
@@ -138,12 +184,14 @@ export default function AdminChatPage() {
 
         if (isAllZero(stats)) stats = base;
 
-        const clamp = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
+        if (isAllZero(stats)) {
+            stats = fallbackText ? applyHeuristicStats(fallbackText, base) : base;
+        }
         return {
-            tarado: clamp((stats as any).tarado ?? base.tarado),
-            financeiro: clamp((stats as any).financeiro ?? base.financeiro),
-            carente: clamp((stats as any).carente ?? base.carente),
-            sentimental: clamp((stats as any).sentimental ?? base.sentimental)
+            tarado: clampStat((stats as any).tarado ?? base.tarado),
+            financeiro: clampStat((stats as any).financeiro ?? base.financeiro),
+            carente: clampStat((stats as any).carente ?? base.carente),
+            sentimental: clampStat((stats as any).sentimental ?? base.sentimental)
         };
     };
 
@@ -209,7 +257,15 @@ export default function AdminChatPage() {
         return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
 
-    const safeLeadScore = getSafeLeadScore(session?.lead_score);
+    const lastUserMessage = useMemo(() => {
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].sender === 'user' && messages[i].content) return messages[i].content;
+        }
+        return '';
+    }, [messages]);
+
+    const safeLeadScore = getSafeLeadScore(session?.lead_score, lastUserMessage);
+    const effectiveFunnelStep = session?.funnel_step || latestFunnelStep || '';
 
     const filteredMessages = useMemo(() => {
         return messages.filter(msg => {
@@ -378,7 +434,7 @@ export default function AdminChatPage() {
                         </div>
                         <div className="flex items-center justify-between">
                             <span>Fase funil</span>
-                            <span className="text-gray-100">{session?.funnel_step?.replace(/_/g, ' ') || 'INICIO'}</span>
+                            <span className="text-gray-100">{effectiveFunnelStep ? effectiveFunnelStep.replace(/_/g, ' ') : 'INICIO'}</span>
                         </div>
                         <div className="flex items-center justify-between">
                             <span>ID</span>

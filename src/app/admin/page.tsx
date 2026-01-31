@@ -16,7 +16,7 @@ interface Session {
     user_name: string;
     status: string;
     last_message_at: string;
-    lead_score: LeadStats;
+    lead_score: LeadStats | null | string;
     user_city: string;
     device_type: string;
     total_paid: number;
@@ -28,6 +28,8 @@ export default function AdminDashboard() {
     const [filter, setFilter] = useState<'all' | 'active' | 'paused' | 'hot'>('all');
     const [search, setSearch] = useState('');
     const [phaseFilter, setPhaseFilter] = useState('all');
+    const [latestFunnelBySession, setLatestFunnelBySession] = useState<Record<string, string>>({});
+    const [lastUserBySession, setLastUserBySession] = useState<Record<string, string>>({});
 
     useEffect(() => {
         fetchSessions();
@@ -42,39 +44,130 @@ export default function AdminDashboard() {
         return () => { supabase.removeChannel(channel); };
     }, []);
 
+    const clampStat = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
+
+    const parseLeadScore = (raw: any) => {
+        let stats = raw;
+        if (typeof stats === 'string') {
+            try { stats = JSON.parse(stats); } catch { stats = null; }
+        }
+        if (!stats || typeof stats !== 'object') return null;
+        return {
+            tarado: clampStat((stats as any).tarado),
+            financeiro: clampStat((stats as any).financeiro),
+            carente: clampStat((stats as any).carente),
+            sentimental: clampStat((stats as any).sentimental)
+        };
+    };
+
+    const isAllZero = (s: LeadStats) =>
+        (Number(s.tarado) || 0) === 0 &&
+        (Number(s.financeiro) || 0) === 0 &&
+        (Number(s.carente) || 0) === 0 &&
+        (Number(s.sentimental) || 0) === 0;
+
+    const applyHeuristicStats = (text: string, current: LeadStats) => {
+        const s = { ...current };
+        const t = (text || '').toLowerCase();
+        const inc = (key: keyof LeadStats, val: number) => {
+            s[key] = clampStat(s[key] + val);
+        };
+
+        if (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|video|pelada|sem roupa|manda mais)/i.test(t)) inc('tarado', 20);
+        if (/(gostosa|delicia|tesao|safada|linda|d[ei]l?icia)/i.test(t)) inc('tarado', 10);
+        if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t)) inc('tarado', 30);
+
+        if (/(quanto custa|pix|vou comprar|passa o pix|quanto e|preco|valor|mensal|vitalicio)/i.test(t)) inc('financeiro', 20);
+        if (/(tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t)) inc('financeiro', 20);
+        if (/(ta caro|caro|sem dinheiro|liso|desempregado)/i.test(t)) inc('financeiro', -20);
+
+        if (/(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ninguem me quer|queria uma namorada|carente|me chama|sdds|saudade)/i.test(t)) inc('carente', 15);
+        if (t.trim().split(/\s+/).length <= 2) inc('carente', -10);
+
+        if (/(saudade|solidao|sentindo falta|carinho|afeto)/i.test(t)) inc('sentimental', 15);
+
+        return s;
+    };
+
+    const fetchLatestFunnelSteps = async (sessionIds: string[]) => {
+        if (!sessionIds.length) return {};
+        const { data, error } = await supabase
+            .from('funnel_events')
+            .select('session_id, step, created_at')
+            .in('session_id', sessionIds)
+            .order('created_at', { ascending: false });
+        if (error || !data) return {};
+
+        const map: Record<string, string> = {};
+        for (const row of data as any[]) {
+            if (!map[row.session_id]) map[row.session_id] = row.step;
+        }
+        return map;
+    };
+
+    const fetchLatestUserMessages = async (sessionIds: string[]) => {
+        if (!sessionIds.length) return {};
+        const { data, error } = await supabase
+            .from('messages')
+            .select('session_id, sender, content, created_at')
+            .in('session_id', sessionIds)
+            .eq('sender', 'user')
+            .order('created_at', { ascending: false });
+        if (error || !data) return {};
+
+        const map: Record<string, string> = {};
+        for (const row of data as any[]) {
+            if (!map[row.session_id] && row.content) {
+                map[row.session_id] = row.content;
+            }
+        }
+        return map;
+    };
+
     const fetchSessions = async () => {
         const { data } = await supabase
             .from('sessions')
             .select('*')
             .order('last_message_at', { ascending: false });
 
-        if (data) setSessions(data as Session[]);
+        if (!data) return;
+
+        const sessionsData = data as Session[];
+        const idsNeedingSteps = sessionsData.filter(s => !s.funnel_step).map(s => s.id);
+        const idsNeedingStats = sessionsData.filter(s => {
+            const parsed = parseLeadScore(s.lead_score);
+            return !parsed || isAllZero(parsed);
+        }).map(s => s.id);
+
+        const [stepMap, lastUserMap] = await Promise.all([
+            idsNeedingSteps.length ? fetchLatestFunnelSteps(idsNeedingSteps) : Promise.resolve({}),
+            idsNeedingStats.length ? fetchLatestUserMessages(idsNeedingStats) : Promise.resolve({})
+        ]);
+
+        setLatestFunnelBySession(stepMap);
+        setLastUserBySession(lastUserMap);
+        setSessions(sessionsData);
     };
 
     const getSafeStats = (session: Session) => {
-        let stats = session.lead_score as any;
-        if (typeof stats === 'string') {
-            try { stats = JSON.parse(stats); } catch { stats = null; }
-        }
-
+        let stats = parseLeadScore(session.lead_score);
         const base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
         if (!stats) stats = base;
+        if (isAllZero(stats)) {
+            const lastUserText = lastUserBySession[session.id] || '';
+            stats = lastUserText ? applyHeuristicStats(lastUserText, base) : base;
+        }
 
-        const isAllZero = (s: any) =>
-            (Number(s.tarado) || 0) === 0 &&
-            (Number(s.financeiro) || 0) === 0 &&
-            (Number(s.carente) || 0) === 0 &&
-            (Number(s.sentimental) || 0) === 0;
-
-        if (isAllZero(stats)) stats = base;
-
-        const clamp = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
         return {
-            tarado: clamp(stats.tarado ?? base.tarado),
-            financeiro: clamp(stats.financeiro ?? base.financeiro),
-            carente: clamp(stats.carente ?? base.carente),
-            sentimental: clamp(stats.sentimental ?? base.sentimental)
+            tarado: clampStat(stats.tarado ?? base.tarado),
+            financeiro: clampStat(stats.financeiro ?? base.financeiro),
+            carente: clampStat(stats.carente ?? base.carente),
+            sentimental: clampStat(stats.sentimental ?? base.sentimental)
         };
+    };
+
+    const getEffectiveFunnelStep = (session: Session) => {
+        return session.funnel_step || latestFunnelBySession[session.id] || '';
     };
 
     const filteredSessions = useMemo(() => {
@@ -82,8 +175,8 @@ export default function AdminDashboard() {
 
         if (filter === 'active') filtered = filtered.filter(s => s.status === 'active');
         if (filter === 'paused') filtered = filtered.filter(s => s.status === 'paused');
-        if (filter === 'hot') filtered = filtered.filter(s => (s.lead_score?.tarado || 0) > 70);
-        if (phaseFilter !== 'all') filtered = filtered.filter(s => (s.funnel_step || '').toUpperCase() === phaseFilter);
+        if (filter === 'hot') filtered = filtered.filter(s => getSafeStats(s).tarado > 70);
+        if (phaseFilter !== 'all') filtered = filtered.filter(s => (getEffectiveFunnelStep(s) || '').toUpperCase() === phaseFilter);
 
         if (search) {
             const lower = search.toLowerCase();
@@ -95,16 +188,16 @@ export default function AdminDashboard() {
         }
 
         return filtered;
-    }, [sessions, filter, search, phaseFilter]);
+    }, [sessions, filter, search, phaseFilter, latestFunnelBySession, lastUserBySession]);
 
     const stats = useMemo(() => {
         return {
             total: sessions.length,
             active: sessions.filter(s => s.status === 'active').length,
             paused: sessions.filter(s => s.status === 'paused').length,
-            hot: sessions.filter(s => (s.lead_score?.tarado || 0) > 70).length
+            hot: sessions.filter(s => getSafeStats(s).tarado > 70).length
         };
-    }, [sessions]);
+    }, [sessions, lastUserBySession]);
 
     const formatTimeAgo = (dateString: string) => {
         if (!dateString) return 'Nunca';
@@ -230,6 +323,7 @@ export default function AdminDashboard() {
                         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
                             {filteredSessions.map(session => {
                                 const safeStats = getSafeStats(session);
+                                const funnelStep = getEffectiveFunnelStep(session);
 
                                 return (
                                     <Link key={session.id} href={`/admin/chat/${session.telegram_chat_id}`}
@@ -288,7 +382,7 @@ export default function AdminDashboard() {
                                         <div className="mt-4 flex items-center justify-between text-xs text-gray-500">
                                             <span>{formatTimeAgo(session.last_message_at)}</span>
                                             <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase text-gray-300">
-                                                {session.funnel_step?.replace(/_/g, ' ') || 'INICIO'}
+                                                {funnelStep ? funnelStep.replace(/_/g, ' ') : 'INICIO'}
                                             </span>
                                             <span className="font-mono opacity-60">#{session.telegram_chat_id}</span>
                                         </div>
