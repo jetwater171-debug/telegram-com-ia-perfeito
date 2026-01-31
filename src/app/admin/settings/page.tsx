@@ -63,6 +63,7 @@ export default function AdminSettingsPage() {
                     <div className="flex items-center gap-3 text-sm">
                         <Link href="/admin/insights" className="text-blue-400 hover:underline">Insights</Link>
                         <Link href="/admin/scripts" className="text-blue-400 hover:underline">Scripts</Link>
+                        <Link href="/admin/variants" className="text-blue-400 hover:underline">Variacoes</Link>
                         <Link href="/admin" className="text-blue-400 hover:underline">Voltar</Link>
                     </div>
                 </div>

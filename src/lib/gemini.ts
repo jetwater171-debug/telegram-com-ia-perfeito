@@ -484,16 +484,18 @@ const buildDynamicPromptBlock = async () => {
 };
 
 
-export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, neighborCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null, minutesSinceOffer?: number }, media?: { mimeType: string, data: string }) => {
+export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, neighborCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null, minutesSinceOffer?: number, extraScript?: string }, media?: { mimeType: string, data: string }) => {
     initializeGenAI();
     if (!genAI) throw new Error("API Key not configured");
 
     const currentStats = parseLeadStats(context?.currentStats);
     const dynamicScript = await buildDynamicPromptBlock();
+    const extraScript = (context?.extraScript || '').trim();
+    const mergedScript = extraScript ? `${dynamicScript}\n\n${extraScript}` : dynamicScript;
 
     const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash",
-        systemInstruction: getSystemInstruction(context?.userCity, context?.neighborCity, context?.isHighTicket, context?.totalPaid || 0, currentStats, context?.minutesSinceOffer || 999, dynamicScript) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
+        systemInstruction: getSystemInstruction(context?.userCity, context?.neighborCity, context?.isHighTicket, context?.totalPaid || 0, currentStats, context?.minutesSinceOffer || 999, mergedScript) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
         safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },

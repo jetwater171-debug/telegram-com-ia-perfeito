@@ -78,6 +78,79 @@ const applyHeuristicStats = (text: string, current: any) => {
     return s;
 };
 
+const FUNNEL_STEPS = [
+    "WELCOME",
+    "CONNECTION",
+    "TRIGGER_PHASE",
+    "HOT_TALK",
+    "PREVIEW",
+    "SALES_PITCH",
+    "NEGOTIATION",
+    "CLOSING",
+    "PAYMENT_CHECK",
+    "PAYMENT_CONFIRMED"
+];
+
+const stageIndex = (stage?: string | null) => {
+    if (!stage) return -1;
+    return FUNNEL_STEPS.indexOf(stage.toUpperCase());
+};
+
+const randNormal = () => {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+};
+
+const sampleGamma = (alpha: number) => {
+    if (alpha < 1) {
+        const u = Math.random();
+        return sampleGamma(1 + alpha) * Math.pow(u, 1 / alpha);
+    }
+    const d = alpha - 1 / 3;
+    const c = 1 / Math.sqrt(9 * d);
+    while (true) {
+        let x = randNormal();
+        let v = 1 + c * x;
+        if (v <= 0) continue;
+        v = v * v * v;
+        const u = Math.random();
+        if (u < 1 - 0.0331 * (x * x) * (x * x)) return d * v;
+        if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
+    }
+};
+
+const sampleBeta = (alpha: number, beta: number) => {
+    const x = sampleGamma(alpha);
+    const y = sampleGamma(beta);
+    return x / (x + y);
+};
+
+const pickPromptVariant = async (stage: string) => {
+    const { data, error } = await supabase
+        .from('prompt_variants')
+        .select('id, stage, label, content, successes, failures, weight, enabled')
+        .eq('enabled', true)
+        .eq('stage', stage)
+        .limit(50);
+
+    if (error || !data || data.length === 0) return null;
+
+    let best = null as any;
+    let bestScore = -1;
+    for (const variant of data) {
+        const successes = Number(variant.successes || 0);
+        const failures = Number(variant.failures || 0);
+        const weight = Number(variant.weight || 1);
+        const score = sampleBeta(successes + 1, failures + 1) * weight;
+        if (score > bestScore) {
+            bestScore = score;
+            best = variant;
+        }
+    }
+    return best;
+};
 const normalizeLoopText = (text: string) => {
     return (text || '')
         .toLowerCase()
@@ -223,11 +296,28 @@ export async function POST(req: NextRequest) {
     const minutesSinceOffer = lastOfferAt ? Math.floor((Date.now() - lastOfferAt) / 60000) : 999;
 
     // 4. Preparar Contexto e Mídia (Se hover)
+    const currentStage = (session.funnel_step || "WELCOME").toUpperCase();
+    let selectedVariant: any = null;
+    let variantAssignment: { id: string, variant_id: string, stage: string } | null = null;
+
+    selectedVariant = await pickPromptVariant(currentStage);
+    let extraScript = "";
+    if (selectedVariant?.content) {
+        extraScript = `# VARIACAO AUTOMATICA (${currentStage})\n- use este bloco como prioridade nesta resposta.\n${selectedVariant.content}`;
+        const { data: assignment } = await supabase.from('variant_assignments').insert({
+            session_id: session.id,
+            variant_id: selectedVariant.id,
+            stage: currentStage
+        }).select('id, variant_id, stage').single();
+        if (assignment) variantAssignment = assignment;
+    }
+
     const context = {
         userCity: session.user_city || "São Paulo",
         isHighTicket: session.device_type === 'iPhone',
         totalPaid: session.total_paid || 0,
-        currentStats: session.lead_score
+        currentStats: session.lead_score,
+        extraScript
     };
 
     const extractFileAndCaption = (input: string) => {
@@ -429,6 +519,31 @@ export async function POST(req: NextRequest) {
         }
     }
 
+    if (variantAssignment) {
+        try {
+            const prevIdx = stageIndex(previousStep);
+            const nextIdx = stageIndex(nextStep);
+            const outcome = prevIdx >= 0 && nextIdx >= 0 ? (nextIdx > prevIdx) : null;
+            if (outcome !== null) {
+                await supabase.from('variant_assignments').update({ success: outcome }).eq('id', variantAssignment.id);
+                const { data: variantRow } = await supabase
+                    .from('prompt_variants')
+                    .select('successes, failures')
+                    .eq('id', variantAssignment.variant_id)
+                    .single();
+                const successes = Number(variantRow?.successes || 0) + (outcome ? 1 : 0);
+                const failures = Number(variantRow?.failures || 0) + (outcome ? 0 : 1);
+                await supabase.from('prompt_variants').update({
+                    successes,
+                    failures,
+                    updated_at: new Date().toISOString()
+                }).eq('id', variantAssignment.variant_id);
+            }
+        } catch (e: any) {
+            console.warn("Falha ao registrar resultado da variacao:", e?.message || e);
+        }
+    }
+
     if (aiResponse.internal_thought) {
         await supabase.from('messages').insert({
             session_id: session.id,
@@ -611,6 +726,32 @@ export async function POST(req: NextRequest) {
                                 });
                             } catch (e: any) {
                                 console.warn("Falha ao registrar pagamento no funil:", e?.message || e);
+                            }
+
+                            try {
+                                const { data: lastAssign } = await supabase
+                                    .from('variant_assignments')
+                                    .select('id, variant_id')
+                                    .eq('session_id', session.id)
+                                    .is('success', null)
+                                    .order('created_at', { ascending: false })
+                                    .limit(1)
+                                    .single();
+                                if (lastAssign) {
+                                    await supabase.from('variant_assignments').update({ success: true }).eq('id', lastAssign.id);
+                                    const { data: variantRow } = await supabase
+                                        .from('prompt_variants')
+                                        .select('successes')
+                                        .eq('id', lastAssign.variant_id)
+                                        .single();
+                                    const successes = Number(variantRow?.successes || 0) + 1;
+                                    await supabase.from('prompt_variants').update({
+                                        successes,
+                                        updated_at: new Date().toISOString()
+                                    }).eq('id', lastAssign.variant_id);
+                                }
+                            } catch (e: any) {
+                                console.warn("Falha ao registrar sucesso da variacao no pagamento:", e?.message || e);
                             }
                         } else {
                             await sendTelegramMessage(botToken, chatId, "amor ainda não caiu aqui... tem certeza? (Status: " + status + ")");

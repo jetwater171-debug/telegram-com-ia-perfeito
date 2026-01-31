@@ -42,6 +42,29 @@ CREATE TABLE IF NOT EXISTS prompt_blocks (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- Prompt variants for automatic learning (bandit)
+CREATE TABLE IF NOT EXISTS prompt_variants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    stage TEXT NOT NULL,
+    label TEXT,
+    content TEXT NOT NULL,
+    enabled BOOLEAN DEFAULT true,
+    weight NUMERIC DEFAULT 1,
+    successes INTEGER DEFAULT 0,
+    failures INTEGER DEFAULT 0,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS variant_assignments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+    variant_id UUID REFERENCES prompt_variants(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL,
+    success BOOLEAN,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- Funnel events for analytics
 CREATE TABLE IF NOT EXISTS funnel_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -55,6 +78,8 @@ CREATE TABLE IF NOT EXISTS funnel_events (
 alter publication supabase_realtime add table messages;
 alter publication supabase_realtime add table sessions;
 alter publication supabase_realtime add table prompt_blocks;
+alter publication supabase_realtime add table prompt_variants;
+alter publication supabase_realtime add table variant_assignments;
 alter publication supabase_realtime add table funnel_events;
 
 -- Policy (optional: currently public for anon, but in prod should be restricted)
@@ -63,10 +88,14 @@ ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE prompt_blocks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE prompt_variants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE variant_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE funnel_events ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Enable read/write for all" ON sessions FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON messages FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON bot_settings FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON prompt_blocks FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Enable read/write for all" ON prompt_variants FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Enable read/write for all" ON variant_assignments FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON funnel_events FOR ALL USING (true) WITH CHECK (true);
