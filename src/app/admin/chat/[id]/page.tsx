@@ -21,17 +21,24 @@ export default function AdminChatPage() {
     const [showMenu, setShowMenu] = useState(false);
 
     useEffect(() => {
-        if (telegramChatId) loadSession();
-    }, [telegramChatId]);
+        let active = true;
+        let cleanup = () => {};
 
-    const loadSession = async () => {
-        let { data } = await supabase.from('sessions').select('*').eq('telegram_chat_id', telegramChatId).single();
-        if (data) {
+        (async () => {
+            if (!telegramChatId) return;
+            const { data } = await supabase.from('sessions').select('*').eq('telegram_chat_id', telegramChatId).single();
+            if (!active || !data) return;
+
             setSession(data);
-            loadMessages(data.id);
-            subscribe(data.id);
-        }
-    };
+            await loadMessages(data.id);
+            cleanup = subscribe(data.id);
+        })();
+
+        return () => {
+            active = false;
+            cleanup();
+        };
+    }, [telegramChatId]);
 
     const loadMessages = async (sessionId: string) => {
         const { data } = await supabase.from('messages').select('*').eq('session_id', sessionId).order('created_at', { ascending: true });
@@ -71,6 +78,24 @@ export default function AdminChatPage() {
     };
 
     const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+
+    const getSafeLeadScore = (raw: any) => {
+        let stats = raw;
+        if (typeof stats === 'string') {
+            try {
+                stats = JSON.parse(stats);
+            } catch {
+                return { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
+            }
+        }
+        if (!stats) return { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 };
+        return {
+            tarado: Number(stats.tarado) || 0,
+            financeiro: Number(stats.financeiro) || 0,
+            carente: Number(stats.carente) || 0,
+            sentimental: Number(stats.sentimental) || 0
+        };
+    };
 
     const sendManualMessage = async () => {
         if (!input.trim() || !session) return;
@@ -115,6 +140,8 @@ export default function AdminChatPage() {
         return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
 
+    const safeLeadScore = getSafeLeadScore(session?.lead_score);
+
     return (
         <div className="flex h-screen bg-[#0e1621] text-white font-sans overflow-hidden">
             <div className="flex-1 flex flex-col w-full h-full relative shadow-none">
@@ -129,7 +156,7 @@ export default function AdminChatPage() {
                         <div className="flex items-center gap-3">
                             {/* Avatar Placeholder */}
                             <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white
-                                ${session?.lead_score?.tarado > 70 ? 'bg-gradient-to-br from-pink-500 to-purple-500' : 'bg-gradient-to-br from-blue-400 to-blue-600'}
+                                ${safeLeadScore.tarado > 70 ? 'bg-gradient-to-br from-pink-500 to-purple-500' : 'bg-gradient-to-br from-blue-400 to-blue-600'}
                             `}>
                                 {session?.user_name?.substring(0, 2).toUpperCase() || "??"}
                             </div>
@@ -177,56 +204,54 @@ export default function AdminChatPage() {
                     <div className="absolute inset-0 bg-[#0e1621]/80 pointer-events-none fixed" />
 
                     <div className="relative z-0 flex flex-col gap-1 pb-4">
-                        {messages.map((msg) => {
-                            const isMe = msg.sender === 'bot' || msg.sender === 'admin';
-                            const isSystem = msg.sender === 'system';
-                            const isThought = msg.sender === 'thought';
+                    {messages.map((msg) => {
+                        const isMe = msg.sender === 'bot' || msg.sender === 'admin';
+                        const isSystem = msg.sender === 'system';
+                        const isThought = msg.sender === 'thought';
 
-                            if (isSystem) {
-                                return (
-                                    <div key={msg.id} className="flex justify-center my-2">
-                                        <span className="bg-[#17212b]/80 text-gray-400 text-xs px-3 py-1 rounded-full">{msg.content}</span>
-                                    </div>
-                                );
-                            }
-
-                            if (isThought) {
-                                return (
-                                    <div key={msg.id} className="flex w-full justify-center my-1 animate-pulse">
-                                        <div className="bg-yellow-900/30 border border-yellow-700/50 text-yellow-500 text-xs px-4 py-2 rounded-lg max-w-[80%] italic flex items-start gap-2">
-                                            <span className="not-italic">💭</span>
-                                            <span>{msg.content}</span>
-                                        </div>
-                                    </div>
-                                );
-                            }
-
+                        if (isSystem) {
                             return (
-                                <div key={msg.id} className={`flex w-full ${isMe ? 'justify-end' : 'justify-start'}`}>
-                                    <div
-                                        className={`relative max-w-[85%] sm:max-w-[70%] px-3 py-2 rounded-lg text-[15px] shadow-sm leading-snug break-words
-                                            ${isMe
-                                                ? 'bg-[#2b5278] text-white rounded-tr-none'
-                                                : 'bg-[#2b2d31] text-white rounded-tl-none'}
-                                        `}
-                                    >
-                                        {/* Sender Name (Only for Admin to distinguish) */}
-                                        {isMe && msg.sender === 'admin' && (
-                                            <p className="text-[10px] text-pink-400 font-bold mb-0.5">Você (Manual)</p>
-                                        )}
+                                <div key={msg.id} className="flex justify-center my-2">
+                                    <span className="bg-[#17212b]/80 text-gray-400 text-xs px-3 py-1 rounded-full">{msg.content}</span>
+                                </div>
+                            );
+                        }
 
-                                        <p className="whitespace-pre-wrap">{msg.content}</p>
-
-                                        <div className={`text-[11px] mt-1 flex justify-end gap-1 ${isMe ? 'text-[#7c9cb6]' : 'text-[#a0aeb9]'}`}>
-                                            {formatTime(msg.created_at)}
-                                            {isMe && <span>✓✓</span>}
-                                        </div>
+                        if (isThought) {
+                            return (
+                                <div key={msg.id} className="flex w-full justify-center my-1 animate-pulse">
+                                    <div className="bg-yellow-900/30 border border-yellow-700/50 text-yellow-500 text-xs px-4 py-2 rounded-lg max-w-[80%] italic flex items-start gap-2">
+                                        <span className="not-italic">IDEIA</span>
+                                        <span>{msg.content}</span>
                                     </div>
                                 </div>
                             );
-                        })}
-                        <div ref={messagesEndRef} />
-                    </div>
+                        }
+
+                        return (
+                            <div key={msg.id} className={`flex w-full ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                <div
+                                    className={`relative max-w-[85%] sm:max-w-[70%] px-3 py-2 rounded-lg text-[15px] shadow-sm leading-snug break-words
+                                        ${isMe
+                                            ? 'bg-[#2b5278] text-white rounded-tr-none'
+                                            : 'bg-[#2b2d31] text-white rounded-tl-none'}`}
+                                >
+                                    {isMe && msg.sender === 'admin' && (
+                                        <p className="text-[10px] text-pink-400 font-bold mb-0.5">Voce (Manual)</p>
+                                    )}
+
+                                    <p className="whitespace-pre-wrap">{msg.content}</p>
+
+                                    <div className={`text-[11px] mt-1 flex justify-end gap-1 ${isMe ? 'text-[#7c9cb6]' : 'text-[#a0aeb9]'}`}>
+                                        {formatTime(msg.created_at)}
+                                        {isMe && <span>OK</span>}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                    <div ref={messagesEndRef} />
+                </div>
                 </main>
 
                 {/* 3. INPUT AREA (Telegram Style) */}
@@ -266,7 +291,7 @@ export default function AdminChatPage() {
             <div className="w-80 bg-[#17212b] border-l border-white/10 hidden lg:flex flex-col shrink-0 overflow-y-auto">
                 <div className="p-6 flex flex-col items-center border-b border-white/10 bg-[#17212b]">
                     <div className={`w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold text-white mb-4 shadow-lg ring-4 ring-white/10
-                        ${session?.lead_score?.tarado > 70 ? 'bg-gradient-to-br from-pink-500 to-purple-600' : 'bg-gradient-to-br from-blue-400 to-blue-600'}
+                        ${safeLeadScore.tarado > 70 ? 'bg-gradient-to-br from-pink-500 to-purple-600' : 'bg-gradient-to-br from-blue-400 to-blue-600'}
                     `}>
                         {session?.user_name?.substring(0, 2).toUpperCase() || "??"}
                     </div>
@@ -323,12 +348,12 @@ export default function AdminChatPage() {
                     <div className="bg-[#1e2c3a] p-3 rounded-lg border border-pink-500/30 hover:border-pink-500/60 transition shadow-sm">
                         <div className="flex justify-between text-sm mb-2">
                             <span className="text-pink-400 font-bold flex items-center gap-2 drop-shadow-sm">🔥 Tarado</span>
-                            <span className="font-bold text-white text-lg">{session?.lead_score?.tarado || 0}%</span>
+                            <span className="font-bold text-white text-lg">{safeLeadScore.tarado || 0}%</span>
                         </div>
                         <div className="w-full bg-gray-800 h-3 rounded-full overflow-hidden border border-white/5">
                             <div
                                 className="h-full bg-gradient-to-r from-pink-500 via-fuchsia-500 to-purple-500 transition-all duration-700 ease-out shadow-[0_0_15px_rgba(236,72,153,0.8)]"
-                                style={{ width: `${session?.lead_score?.tarado || 0}%` }}
+                                style={{ width: `${safeLeadScore.tarado || 0}%` }}
                             />
                         </div>
                         <p className="text-[11px] text-gray-300 mt-2 leading-tight">Nível de excitação e abertura para conteúdo adulto.</p>
@@ -338,12 +363,12 @@ export default function AdminChatPage() {
                     <div className="bg-[#1e2c3a] p-3 rounded-lg border border-lime-500/30 hover:border-lime-500/60 transition shadow-sm">
                         <div className="flex justify-between text-sm mb-2">
                             <span className="text-lime-400 font-bold flex items-center gap-2 drop-shadow-sm">💰 Financeiro</span>
-                            <span className="font-bold text-white text-lg">{session?.lead_score?.financeiro || 0}%</span>
+                            <span className="font-bold text-white text-lg">{safeLeadScore.financeiro || 0}%</span>
                         </div>
                         <div className="w-full bg-gray-800 h-3 rounded-full overflow-hidden border border-white/5">
                             <div
                                 className="h-full bg-gradient-to-r from-green-500 via-lime-500 to-emerald-400 transition-all duration-700 ease-out shadow-[0_0_15px_rgba(132,204,22,0.8)]"
-                                style={{ width: `${session?.lead_score?.financeiro || 0}%` }}
+                                style={{ width: `${safeLeadScore.financeiro || 0}%` }}
                             />
                         </div>
                         <p className="text-[11px] text-gray-300 mt-2 leading-tight">Capacidade de pagamento estimada.</p>
@@ -353,12 +378,12 @@ export default function AdminChatPage() {
                     <div className="bg-[#1e2c3a] p-3 rounded-lg border border-cyan-500/30 hover:border-cyan-500/60 transition shadow-sm">
                         <div className="flex justify-between text-sm mb-2">
                             <span className="text-cyan-400 font-bold flex items-center gap-2 drop-shadow-sm">❤️ Carente</span>
-                            <span className="font-bold text-white text-lg">{session?.lead_score?.carente || 0}%</span>
+                            <span className="font-bold text-white text-lg">{safeLeadScore.carente || 0}%</span>
                         </div>
                         <div className="w-full bg-gray-800 h-3 rounded-full overflow-hidden border border-white/5">
                             <div
                                 className="h-full bg-gradient-to-r from-blue-500 via-cyan-500 to-indigo-400 transition-all duration-700 ease-out shadow-[0_0_15px_rgba(6,182,212,0.8)]"
-                                style={{ width: `${session?.lead_score?.carente || 0}%` }}
+                                style={{ width: `${safeLeadScore.carente || 0}%` }}
                             />
                         </div>
                         <p className="text-[11px] text-gray-300 mt-2 leading-tight">Nível de conexão emocional e carência.</p>

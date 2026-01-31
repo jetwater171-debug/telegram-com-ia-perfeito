@@ -21,7 +21,8 @@ export async function GET(req: NextRequest) {
             .select('*')
             .lt('last_bot_activity_at', fiveMinutesAgo)
             .eq('reengagement_sent', false)
-            .neq('status', 'blocked') // Evitar mandar pra bloqueados
+            .eq('status', 'active')
+            .eq('status', 'active') // Evitar mandar pra pausados/fechados
             .limit(10); // Processar em lotes para evitar overload
 
         if (error) {

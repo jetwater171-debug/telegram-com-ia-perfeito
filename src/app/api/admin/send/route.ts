@@ -33,6 +33,12 @@ export async function POST(req: NextRequest) {
         content: text
     });
 
+    const nowIso = new Date().toISOString();
+    await supabase.from('sessions').update({
+        last_message_at: nowIso,
+        last_bot_activity_at: nowIso
+    }).eq('id', session.id);
+
     // 4. Ensure bot is paused
     if (session.status !== 'paused') {
         await supabase.from('sessions').update({ status: 'paused' }).eq('id', session.id);

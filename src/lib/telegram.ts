@@ -50,10 +50,11 @@ export const sendTelegramCopyableCode = async (token: string, chatId: string, co
     if (!token) return;
     try {
         const bot = new Telegraf(token);
-        // MarkdownV2 requires escaping, but code blocks `...` handle most things?
-        // Actually, easiest is `{ parse_mode: 'Markdown' }` and using backticks.
-        // Or `HTML` and <code>.
-        await bot.telegram.sendMessage(chatId, `\`${code}\``, { parse_mode: 'MarkdownV2' });
+        const escaped = code
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        await bot.telegram.sendMessage(chatId, `<code>${escaped}</code>`, { parse_mode: 'HTML' });
     } catch (e) {
         console.error("Failed to send copyable code to Telegram:", e);
     }

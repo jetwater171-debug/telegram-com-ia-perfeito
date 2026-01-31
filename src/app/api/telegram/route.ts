@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { supabase } from '@/lib/supabaseClient';
-import { sendMessageToGemini } from '@/lib/gemini';
-import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo } from '@/lib/telegram';
 
 export async function GET(req: NextRequest) {
     // DIAGNOSTIC ROUTE
@@ -58,13 +56,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (message.video) {
-        text = `[VIDEO_UPLOAD] File_ID: ${message.video.file_id}`;
+        const caption = message.caption ? ` Caption: ${message.caption}` : '';
+        text = `[VIDEO_UPLOAD] File_ID: ${message.video.file_id}${caption}`;
     }
 
     if (message.photo && message.photo.length > 0) {
         // Telegram envia várias resoluções. A última é a maior.
         const largestPhoto = message.photo[message.photo.length - 1];
-        text = `[PHOTO_UPLOAD] File_ID: ${largestPhoto.file_id}`;
+        const caption = message.caption ? ` Caption: ${message.caption}` : '';
+        text = `[PHOTO_UPLOAD] File_ID: ${largestPhoto.file_id}${caption}`;
     }
 
     if (!text) {
@@ -130,9 +130,11 @@ export async function POST(req: NextRequest) {
         // Quando o usuário fala, o bot não precisa mais cobrar.
         // ATUALIZAMOS 'last_bot_activity_at' para AGORA para impedir que o cron dispare
         // enquanto a IA ainda está pensando (o que causava o bug de duplicidade).
+        const nowIso = new Date().toISOString();
         await supabase.from('sessions').update({
             reengagement_sent: false,
-            last_bot_activity_at: new Date().toISOString()
+            last_bot_activity_at: nowIso,
+            last_message_at: nowIso
         }).eq('id', session.id);
 
         // ATUALIZAÇÃO PARA OPERAÇÃO KAIQUE (Mesmo se usuário já existir)
@@ -155,6 +157,10 @@ export async function POST(req: NextRequest) {
         }).select().single();
 
         if (!insertedMsg) return NextResponse.json({ ok: true });
+
+        if (session.status && session.status !== 'active') {
+            return NextResponse.json({ ok: true, status: 'paused' });
+        }
 
         // 4. Trigger Background Processing (Reliable with `after`)
         const protocol = req.headers.get('x-forwarded-proto') || 'http';

@@ -1,14 +1,8 @@
-import { GoogleGenerativeAI, ChatSession, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
-import { AIResponse, LeadStats, Type, Schema } from "@/types";
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { AIResponse, LeadStats } from "@/types";
 
 const apiKey = process.env.GEMINI_API_KEY;
 
-// --- CONFIGURAÇÃO DE MÍDIA ---
-const FIRST_PREVIEW_VIDEO_URL = "BAACAgEAAxkBAAIHMmllipghQzttsno99r2_C_8jpAIiAAL9BQACaHUxR4HU9Y9IirkLOAQ ";
-const SHOWER_PHOTO_URL = "https://i.ibb.co/dwf177Kc/download.jpg";
-const LINGERIE_PHOTO_URL = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
-const WET_FINGER_PHOTO_URL = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
-const ASS_PHOTO_ID = "AgACAgEAAxkBAAIJ7mll03HJtLdhDpZIFFYsOAuZ52UdAAIYDmsbWoUoR5pkHZDTJ9f0AQADAgADeQADOAQ";
 
 // Schema para Gemini 2.5 Flash
 // Note: @google/generative-ai uses a specific schema format.
@@ -82,6 +76,17 @@ export const getSystemInstruction = (userCity: string = "São Paulo", isHighTick
 
     return `
 # PERSONA: LARISSA MORAIS
+# DIRETRIZES DE CONVERSA
+- Seja proativa: nao seja passiva nem fique pedindo permissao.
+- Evite perguntas seguidas; no maximo 1 pergunta por turno.
+- Responda com 2-4 mensagens curtas; misture provocacao + convite.
+- Se tarado >= 30: use putaria explicita e descritiva.
+- Se tarado >= 60: seja bem grafica e intensa, guiando a imaginacao.
+- Se ele esfriar: puxe com provocacao/ciume/curiosidade.
+- Sempre tente levar para preview/oferta quando houver gatilho de interesse.
+- Use o que o lead falou agora; nao repita frases antigas.
+
+
 Você é uma garota de 19 anos, brasileira, real e safadinha.
 - **Personalidade:** Doce e um pouco safada quando necessário.
 - **Estilo de Escrita:** Jovem, despretensiosa, SEMPRE em minúsculas (exceto nomes próprios se quiser).
@@ -405,16 +410,21 @@ export const parseLeadStats = (input: any): LeadStats => {
     // Se for nulo ou indefinido
     if (!stats) stats = {};
 
+    if (Object.keys(stats).length == 0) {
+        stats = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
+    }
+
+    const clamp = (n: number) => Math.max(0, Math.min(100, n));
+
     return {
-        tarado: Number(stats.tarado) || 0,
-        financeiro: Number(stats.financeiro) || 0,
-        carente: Number(stats.carente) || 0,
-        sentimental: Number(stats.sentimental) || 0
+        tarado: clamp(Number(stats.tarado) || 0),
+        financeiro: clamp(Number(stats.financeiro) || 0),
+        carente: clamp(Number(stats.carente) || 0),
+        sentimental: clamp(Number(stats.sentimental) || 0)
     };
 };
 
 let genAI: GoogleGenerativeAI | null = null;
-let chatSessions: Record<string, ChatSession> = {}; // Memory-only for MVP
 
 export const initializeGenAI = () => {
     if (!genAI && apiKey) {

@@ -18,6 +18,10 @@ export async function POST(req: NextRequest) {
     const { data: session } = await supabase.from('sessions').select('*').eq('id', sessionId).single();
     if (!session) return NextResponse.json({ error: 'Sessão não encontrada' });
 
+    if (session.status && session.status !== 'active') {
+        return NextResponse.json({ status: 'paused' });
+    }
+
     const { data: tokenData } = await supabase
         .from('bot_settings')
         .select('value')
@@ -110,6 +114,16 @@ export async function POST(req: NextRequest) {
         currentStats: session.lead_score
     };
 
+    const extractFileAndCaption = (input: string) => {
+        const lines = input.split(/\r?\n/);
+        const firstLine = lines[0] || '';
+        const captionLine = lines.find(l => l.startsWith('CAPTION: '));
+        const caption = captionLine ? captionLine.replace('CAPTION: ', '') : '';
+        const match = firstLine.match(/File_ID: ([^\s]+)/);
+        const fileId = match ? match[1].trim() : '';
+        return { fileId, caption };
+    };
+
     let finalUserMessage = combinedText;
     let mediaData = undefined;
 
@@ -146,10 +160,44 @@ export async function POST(req: NextRequest) {
         }
     }
 
+    // Detectar V??deo
+    const videoMatch = combinedText.match(/\[VIDEO_UPLOAD\] File_ID: (.+)/);
+    if (videoMatch && botToken) {
+        const { fileId, caption } = extractFileAndCaption(videoMatch[0]);
+        if (fileId) {
+            try {
+                const { getTelegramFilePath, getTelegramFileDownloadUrl } = await import('@/lib/telegram');
+                const filePath = await getTelegramFilePath(botToken, fileId);
+                if (filePath) {
+                    const downloadUrl = getTelegramFileDownloadUrl(botToken, filePath);
+                    const { data: videoMsg } = await supabase
+                        .from('messages')
+                        .select('id')
+                        .eq('session_id', session.id)
+                        .eq('sender', 'user')
+                        .ilike('content', `%${fileId}%`)
+                        .order('created_at', { ascending: false })
+                        .limit(1)
+                        .single();
+                    if (videoMsg) {
+                        await supabase.from('messages').update({
+                            media_url: downloadUrl,
+                            media_type: 'video'
+                        }).eq('id', videoMsg.id);
+                    }
+                    finalUserMessage = "Enviou um v??deo." + (caption ? `\nLegenda do usu??rio: ${caption}` : '');
+                }
+            } catch (e) {
+                console.error("Erro ao processar v??deo:", e);
+            }
+        }
+    }
+
     // Detectar Foto (Novo)
     const photoMatch = combinedText.match(/\[PHOTO_UPLOAD\] File_ID: (.+)/);
     if (photoMatch && botToken) {
-        const fileId = photoMatch[1].trim();
+        const { fileId, caption } = extractFileAndCaption(photoMatch[0]);
+        if (!fileId) return NextResponse.json({ status: 'invalid_photo' });
         console.log(`[PROCESSADOR] Detectada FOTO ID: ${fileId}`);
 
         try {
@@ -261,10 +309,10 @@ export async function POST(req: NextRequest) {
 
     // 6. Enviar Respostas
 
+    const messages = Array.isArray(aiResponse.messages) ? aiResponse.messages : [String(aiResponse.messages || '')].filter(Boolean);
 
-
-    for (let i = 0; i < aiResponse.messages.length; i++) {
-        const msgText = aiResponse.messages[i];
+    for (let i = 0; i < messages.length; i++) {
+        const msgText = messages[i];
 
         // Delay fixo entre 3 a 4 segundos (solicitado pelo usuário)
         // Isso dá um tempo de leitura/digitação consistente para cada balão.
@@ -287,8 +335,10 @@ export async function POST(req: NextRequest) {
 
     // 6.5 Atualizar Last Bot Activity
     // Importante para o Cron de Reengajamento saber quando foi a última msg
+    const nowIso = new Date().toISOString();
     await supabase.from('sessions').update({
-        last_bot_activity_at: new Date().toISOString()
+        last_bot_activity_at: nowIso,
+        last_message_at: nowIso
     }).eq('id', session.id);
 
     // 7. Lidar com Mídia
