@@ -70,22 +70,38 @@ const applyHeuristicStats = (text: string, current: any) => {
         s[key] = clampStat(s[key] + val);
     };
 
-    if (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|vídeo|video|pelada|sem roupa|manda mais)/i.test(t)) inc('tarado', 20);
-    if (/(gostosa|delicia|tes[a?]o|safada|linda|d[ei]l?icia)/i.test(t)) inc('tarado', 10);
-    if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t)) inc('tarado', 30);
+    if (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|vídeo|video|pelada|sem roupa|manda mais)/i.test(t)) inc('tarado', 15);
+    if (/(gostosa|delicia|tes[a?]o|safada|linda|d[ei]l?icia)/i.test(t)) inc('tarado', 6);
+    if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t)) inc('tarado', 25);
     if (/(nao sou tarado|nao to tarado|nao curto|nao gosto disso|nao quero isso|para com isso|respeita|pare|sem putaria|sem nude|nao manda|nao gostei|voce e feia|vc e feia)/i.test(t)) inc('tarado', -30);
     if (/(so quero conversar|nao quero nada sexual|so amizade)/i.test(t)) inc('tarado', -20);
+    if (/(sou casado|sou comprometido|tenho esposa|minha esposa|minha mulher|minha namorada|to de boa|so conversando|nao to afim|nao quero nada agora)/i.test(t)) inc('tarado', -15);
 
     if (/(quanto custa|pix|vou comprar|passa o pix|quanto e|pre[cç]o|valor|mensal|vital[ií]cio)/i.test(t)) inc('financeiro', 20);
     if (/(tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t)) inc('financeiro', 20);
     if (/(ta caro|caro|sem dinheiro|liso|desempregado)/i.test(t)) inc('financeiro', -20);
 
+    const isShortReply = t.trim().split(/\s+/).length <= 2;
+    const isRudeOrCold = /(vc e chata|voce e chata|chata|feia|ridicula|ridicula|idiota|burra|vai se foder|vai tomar|toma no cu|vtnc|vsf|se fode|se fuder|cala a boca|fodase|foda-se|nao enche|para de encher|ta chato|ta irritante|não enche|ta irritante|ta chata|nao quero falar|nao quero conversar|me deixa|para de falar|para de mandar|ta me enchendo|to de boa|tô de boa|nao to afim|nao quero)/i.test(t);
+
     if (/(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ningu[e?]m me quer|queria uma namorada|carente|me chama|sdds|saudade)/i.test(t)) inc('carente', 15);
-    if (t.trim().split(/\s+/).length <= 2) inc('carente', -10);
+    if (isShortReply) inc('carente', -10);
 
     if (/(saudade|solid[a?]o|sentindo falta|carinho|afeto)/i.test(t)) inc('sentimental', 15);
+    if (isRudeOrCold) {
+        inc('carente', -15);
+        inc('sentimental', -20);
+        inc('tarado', -15);
+    }
 
     return s;
+};
+
+const hasTaradoPositiveTrigger = (text: string) => {
+    const t = (text || '').toLowerCase();
+    return (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|vÃ­deo|video|pelada|sem roupa|manda mais)/i.test(t)) ||
+        (/(gostosa|delicia|tes[a?]o|safada|linda|d[ei]l?icia)/i.test(t)) ||
+        (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t));
 };
 
 const GLUE_DICT = new Set([
@@ -466,9 +482,11 @@ export async function POST(req: NextRequest) {
 
     // Detectar V??deo
     const videoMatch = combinedText.match(/\[VIDEO_UPLOAD\] File_ID: (.+)/);
-    if (videoMatch && botToken) {
+    if (videoMatch) {
         const { fileId, caption } = extractFileAndCaption(videoMatch[0]);
-        if (fileId) {
+        // Sempre avise a IA que o video foi recebido.
+        finalUserMessage = "Enviou um v??deo. O sistema confirmou o recebimento do v??deo." + (caption ? `\nLegenda do usu??rio: ${caption}` : '');
+        if (fileId && botToken) {
             try {
                 const { getTelegramFilePath, getTelegramFileDownloadUrl } = await import('@/lib/telegram');
                 const filePath = await getTelegramFilePath(botToken, fileId);
@@ -489,7 +507,6 @@ export async function POST(req: NextRequest) {
                             media_type: 'video'
                         }).eq('id', videoMsg.id);
                     }
-                    finalUserMessage = "Enviou um v??deo." + (caption ? `\nLegenda do usu??rio: ${caption}` : '');
                 }
             } catch (e) {
                 console.error("Erro ao processar v??deo:", e);
@@ -577,6 +594,7 @@ export async function POST(req: NextRequest) {
     const heuristicStats = applyHeuristicStats(userOnlyText, currentStats);
 
     const aiUnchanged = JSON.stringify(aiStats) === JSON.stringify(currentStats);
+    const taradoHasTrigger = hasTaradoPositiveTrigger(userOnlyText);
     if (isAllZero(aiStats) || aiUnchanged) {
         aiResponse.lead_stats = heuristicStats;
     } else {
@@ -590,6 +608,14 @@ export async function POST(req: NextRequest) {
             financeiro: pick('financeiro'),
             carente: pick('carente'),
             sentimental: pick('sentimental')
+        };
+    }
+
+    // Se nao houve gatilho positivo, nao deixa o tarado subir "do nada".
+    if (!taradoHasTrigger && aiResponse.lead_stats.tarado > currentStats.tarado) {
+        aiResponse.lead_stats = {
+            ...aiResponse.lead_stats,
+            tarado: currentStats.tarado
         };
     }
 
