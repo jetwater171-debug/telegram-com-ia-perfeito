@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
@@ -289,7 +289,7 @@ export default function AdminPreviewsPage() {
                                     <div className="flex items-start justify-between">
                                         <div>
                                             <p className="text-sm font-semibold text-gray-100">{item.name}</p>
-                                            <p className="text-xs text-gray-400">{item.media_type} � {item.stage || "PREVIEW"}</p>
+                                            <p className="text-xs text-gray-400">{item.media_type} · {item.stage || "PREVIEW"}</p>
                                         </div>
                                         <button
                                             onClick={() => deletePreview(item)}
