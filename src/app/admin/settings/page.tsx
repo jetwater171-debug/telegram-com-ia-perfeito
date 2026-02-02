@@ -81,6 +81,9 @@ export default function AdminSettingsPage() {
                     <Link href="/admin/scripts" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
                         Scripts
                     </Link>
+                    <Link href="/admin/previews" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
+                        Previas
+                    </Link>
                     <Link href="/admin/variants" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
                         Variacoes
                     </Link>

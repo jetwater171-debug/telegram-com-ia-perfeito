@@ -51,6 +51,7 @@ export interface AIResponse {
     | "send_video_preview"
     | "send_hot_video_preview"
     | "send_ass_photo_preview"
+    | "send_custom_preview"
     | "generate_pix_payment"
     | "check_payment_status"
     | "send_shower_photo"
@@ -58,4 +59,5 @@ export interface AIResponse {
     | "send_wet_finger_photo"
     ;
     payment_details?: PaymentDetails | null;
+    preview_id?: string | null;
 }

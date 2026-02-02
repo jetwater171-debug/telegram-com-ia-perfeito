@@ -180,6 +180,7 @@ const ACTION_STAGE_MAP: Record<string, string> = {
     send_ass_photo_preview: 'PREVIEW',
     send_video_preview: 'PREVIEW',
     send_hot_video_preview: 'PREVIEW',
+    send_custom_preview: 'PREVIEW',
     generate_pix_payment: 'PAYMENT_CHECK',
     check_payment_status: 'PAYMENT_CHECK'
 };
@@ -835,14 +836,30 @@ export async function POST(req: NextRequest) {
         let mediaType = null;
         let caption = "";
 
-        switch (aiResponse.action) {
-            case 'send_shower_photo': mediaUrl = SHOWER_PHOTO; mediaType = 'image'; caption = ""; break;
-            case 'send_lingerie_photo': mediaUrl = LINGERIE_PHOTO; mediaType = 'image'; break;
-            case 'send_wet_finger_photo': mediaUrl = WET_PHOTO; mediaType = 'image'; break;
-            case 'send_ass_photo_preview': mediaUrl = ASS_PHOTO_PREVIEW_ID; mediaType = 'image'; break;
-            case 'send_video_preview': mediaUrl = VIDEO_PREVIEW; mediaType = 'video'; break;
-            case 'send_hot_video_preview': mediaUrl = HOT_PREVIEW_VIDEO; mediaType = 'video'; break;
-            case 'check_payment_status':
+        if (aiResponse.action === 'send_custom_preview') {
+            const previewId = (aiResponse as any).preview_id;
+            if (previewId) {
+                const { data: previewRow } = await supabase
+                    .from('preview_assets')
+                    .select('media_url, media_type, name, enabled')
+                    .eq('id', previewId)
+                    .eq('enabled', true)
+                    .single();
+                if (previewRow?.media_url) {
+                    mediaUrl = previewRow.media_url;
+                    mediaType = previewRow.media_type;
+                    caption = "";
+                }
+            }
+        } else {
+            switch (aiResponse.action) {
+                case 'send_shower_photo': mediaUrl = SHOWER_PHOTO; mediaType = 'image'; caption = ""; break;
+                case 'send_lingerie_photo': mediaUrl = LINGERIE_PHOTO; mediaType = 'image'; break;
+                case 'send_wet_finger_photo': mediaUrl = WET_PHOTO; mediaType = 'image'; break;
+                case 'send_ass_photo_preview': mediaUrl = ASS_PHOTO_PREVIEW_ID; mediaType = 'image'; break;
+                case 'send_video_preview': mediaUrl = VIDEO_PREVIEW; mediaType = 'video'; break;
+                case 'send_hot_video_preview': mediaUrl = HOT_PREVIEW_VIDEO; mediaType = 'video'; break;
+                case 'check_payment_status':
                 // Verificar se o último pagamento foi pago
                 try {
                     // Precisamos buscar o ID do último pagamento de algum lugar.
@@ -1067,6 +1084,7 @@ export async function POST(req: NextRequest) {
                     await sendTelegramMessage(botToken, chatId, "amor nao consegui gerar o pix agora... que raiva");
                 }
                 break;
+            }
         }
 
         if (mediaUrl) {
