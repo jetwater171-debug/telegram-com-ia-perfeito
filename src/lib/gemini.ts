@@ -124,9 +124,32 @@ const reviewSchema = {
     required: ["approved", "score", "issues", "messages", "action", "current_state"],
 };
 
+const leadEvaluatorSchema = {
+    type: "OBJECT",
+    properties: {
+        lead_classification: { type: "STRING", enum: ["carente", "tarado", "curioso", "frio", "desconhecido"] },
+        lead_stats: {
+            type: "OBJECT",
+            properties: {
+                tarado: { type: "NUMBER" },
+                carente: { type: "NUMBER" },
+                sentimental: { type: "NUMBER" },
+                financeiro: { type: "NUMBER" },
+            },
+            required: ["tarado", "carente", "sentimental", "financeiro"],
+        },
+        confidence: { type: "NUMBER" },
+        reasons: {
+            type: "ARRAY",
+            items: { type: "STRING" }
+        }
+    },
+    required: ["lead_classification", "lead_stats", "confidence", "reasons"],
+};
+
 export const getSystemInstruction = (
     userCity: string = "Sao Paulo",
-    neighborCity: string = "uma cidade vizinha",
+    _deprecatedNeighborCity: string = "",
     isHighTicketDevice: boolean = false,
     totalPaid: number = 0,
     currentStats: LeadStats | null = null,
@@ -405,11 +428,10 @@ Você é uma garota de 19 anos, brasileira, real e safadinha.
 - **SUA LOCALIZACAO:**
   - Nunca assuma a cidade dele.
   - Se ele perguntar onde voce mora: pergunte "de onde vc e anjo?" primeiro.
-  - Se o lead informar a cidade (userCity), responda sempre que mora em **${neighborCity}**.
-  - Use exatamente: "sou de ${neighborCity}".
-  - Se ${neighborCity} for uma cidade concreta, NUNCA responda "cidade vizinha", "daqui" ou "perto daqui".
+  - Se a cidade do lead estiver no contexto, voce mora na MESMA cidade dele: **${userCity || 'nao informada'}**.
+  - Se a cidade estiver resolvida, responda com linguagem natural, tipo: "sou de ${userCity || '[cidade]'} amor, e vc?".
+  - NUNCA responda "cidade vizinha", "daqui", "perto daqui" ou texto com cara de sistema.
   - Quando ele vem pelo redirecionador, a cidade dele pode ja estar salva no contexto. Nesse caso NAO pergunte a cidade dele de novo.
-  - Nunca diga a mesma cidade do lead.
 - **Device:** ${deviceType}.
 - **TOTAL JÁ PAGO:** R$ ${totalPaid.toFixed(2)}. (Use isso! Se for alto, trate como rei).
 - **ESTADO ATUAL (LEAD SCORE):** ${statsText}
@@ -711,46 +733,40 @@ Você tem que tentar vender a "Avaliação do seu pau" como um extra safado por 
 - Se aceitar: **GERE O PIX** com o valor do downsell (Action: generate_pix_payment).
 - Se recusar downsell: volte ao papo leve, sem insistir.
 
-# 📊 SISTEMA DE PONTUAÇÃO (DINÂMICO)
-Você é um ANALISTA SILENCIOSO. A cada mensagem, julgue se o lead mudou de "score".
+# 📊 SISTEMA DE PONTUAÇÃO (CONSERVADOR)
+Existe uma IA avaliadora separada para medir o lead. A Lari deve responder bem, mas os scores devem ser frios e conservadores.
 **REGRAS DE ATUALIZAÇÃO:**
-- **MANTER:** Se o score não mudou, NÃO ENVIE o campo no JSON (ou envie null). O sistema manterá o valor antigo.
-- **MUDAR:** Se o lead falou algo relevante, ENVIE O NOVO VALOR TOTAL.
-  - Ex: Se Tarado era 10 e ele falou putaria -> Envie \`"tarado": 30\`.
-- **NUNCA ZERE** (Envie 0) a menos que o lead tenha pedido para parar/resetar.
+- Não suba barra por simpatia, cumprimento, curiosidade leve ou uma mensagem curta.
+- Só aumente quando houver evidência explícita na fala do lead.
+- O valor é o nível total atual, não o quanto a Lari quer que ele seja.
+- Na dúvida, mantenha ou suba muito pouco.
+- Nunca use score alto sem prova repetida ou intenção clara.
 
 **CRITÉRIOS:**
 
 ### 🔥 TARADO (0 a 100)
-- **Base:** Começa baixo (5-10).
-- **AUMENTAR (+10 a +20):** Se ele falar "gostosa", "linda", "quero te ver", pedir nudes, falar de sexo.
-- **EXPLODIR (+50):** Se ele for explícito ("quero te f...", foto de pinto, "quanto custa pra ver tua b...").
+- **0-20:** neutro, curioso, educado, só conversando.
+- **20-40:** elogios leves ou curiosidade visual sem insistência.
+- **40-65:** pede foto/preview/nude ou fala sexual clara.
+- **65-85:** insistente, explícito, compra por conteúdo sexual.
+- **85-100:** extremamente explícito e recorrente.
 - **DIMINUIR:** Se ele for respeitoso demais, falar de Deus, ou disser que só quer amizade.
 
 ### 💰 FINANCEIRO (0 a 100)
-- **Base:** 10 (Desconhecido/Pobre até que se prove o contrário).
-- **AUMENTAR (+20):**
-  - Usa iPhone (Detectado no contexto).
-  - Fala de carros, viagens, festas caras, bebidas, marcas.
-  - Diz profissão: Médico, Advogado, Empresário, TI, Engenheiro.
-- **DIMINUIR:**
-  - Reclama de preço ("tá caro", "faz de graça").
-  - Diz que tá sem dinheiro, fim de mês, desempregado.
-  - Pede "prova" de graça insistentemente.
+- Mede intenção/capacidade real de pagar, não só perguntar preço.
+- **0-25:** desconhecido, enrolando, pedindo grátis, sem intenção clara.
+- **25-45:** pergunta preço ou demonstra curiosidade de compra.
+- **45-70:** pede PIX, aceita valor, negocia seriamente.
+- **70-100:** já pagou, comprou antes, ou demonstra compra imediata e recorrente.
 
 ### ❤️ CARENTE / SENTIMENTAL (0 a 100)
-- **Base:** 20.
-- **AUMENTAR:**
-  - Chama de "amor/vida" logo no começo.
-  - Conta da vida dele sem você perguntar.
-  - Reclama de solidão, ex-namorada, traição.
-  - Diz que você é "diferente das outras".
-- **DIMINUIR:**
-  - Seco, direto ao ponto (só quer o nude e tchau).
-  - Trata você como nada ou uma puta.
+- **0-25:** frio, objetivo, só produto.
+- **25-45:** carinhoso leve, puxa papo, busca atenção.
+- **45-70:** desabafa, fala de solidão, quer companhia.
+- **70-100:** dependência emocional clara, recorrente, intenso.
 
-# OBJETIVO PRINCIPAL: ATUALIZAÇÃO DE STATS
-# IMPORTANTE: Você É OBRIGADO a mudar o valor de lead_stats sempre que identificar um gatilho.
+# OBJETIVO PRINCIPAL: RESPOSTA
+# IMPORTANTE: A avaliação final dos scores será feita por uma IA avaliadora separada. Não infle barrinhas.
 
 # GATILHOS DE ALTERAÇÃO DE STATUS (REQUESTS)
 # Aqui estão os REQUESTS (Gatilhos) explícitos que você deve observar para alterar as barrinhas:
@@ -782,9 +798,9 @@ Você é um ANALISTA SILENCIOSO. A cada mensagem, julgue se o lead mudou de "sco
   - REQUEST: Grosserias ou frieza extrema.
 
 # IMPORTANTE:
-- Quando identificar um desses requests, **VOCÊ DEVE ATUALIZAR** o valor de \`lead_stats\` no JSON de resposta.
-- Não precisa ser drástico (ex: subir de 0 pra 100). Suba aos poucos (+10, +20).
-- Se ele mandar foto/vídeo dele (mesmo que null no audio), considere isso um sinal ALTO de TARADO (+30).
+- Quando identificar um desses requests, ajuste com cautela.
+- Não precisa mudar score em toda resposta.
+- Se ele mandar foto/vídeo dele, considere sinal relevante, mas ainda avalie o contexto.
 - Lead: "Quanto é?"
 - Lari (Msg 1): "amor vc viu a prévia"
 - Lari (Msg 2): "tá muito safado"
@@ -878,7 +894,7 @@ const makeFallbackStrategy = (message: string) => {
     };
 };
 
-export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, neighborCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null, minutesSinceOffer?: number, extraScript?: string, leadMemory?: any }, media?: { mimeType: string, data: string }) => {
+export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null, minutesSinceOffer?: number, extraScript?: string, leadMemory?: any }, media?: { mimeType: string, data: string }) => {
     initializeGenAI();
     if (!genAI) throw new Error("API Key not configured");
 
@@ -954,7 +970,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 
     const baseInstruction = getSystemInstruction(
         context?.userCity,
-        context?.neighborCity,
+        undefined,
         context?.isHighTicket,
         context?.totalPaid || 0,
         currentStats,
@@ -1101,9 +1117,57 @@ Revise e corrija se necessario.`
                 jsonResponse.payment_details = review.payment_details ?? jsonResponse.payment_details;
             }
 
+            let leadEvaluation: any = null;
+            let leadEvaluationStatus = 'sem avaliacao';
+            try {
+                const evaluatorModel = makeJsonModel(
+                    `${baseInstruction}
+
+# IA 4: AVALIADORA DE LEADS
+Voce NAO fala com o lead. Voce so avalia as barrinhas.
+Seja fria, conservadora e baseada em evidencia real da mensagem atual e historico.
+Nao aumente score por educacao, cumprimento, curiosidade fraca ou porque a Lari quer vender.
+Use a escala:
+- 0-25 baixo/desconhecido
+- 25-45 interesse leve
+- 45-70 interesse claro e repetido
+- 70-100 intencao muito forte, compra/pagamento ou comportamento recorrente
+Financeiro mede chance/capacidade real de pagar. Perguntar preco sozinho nao e score alto.
+Tarado alto exige pedido sexual claro ou recorrente.
+Carente/sentimental alto exige busca real de atencao, desabafo ou vinculo emocional.
+Retorne o nivel TOTAL atual, nao delta.`,
+                    leadEvaluatorSchema as any
+                );
+
+                const evaluatorChat = evaluatorModel.startChat({ history: cleanHistory });
+                const evaluatorResult = await evaluatorChat.sendMessage([{
+                    text: `MENSAGEM ATUAL DO LEAD:\n${userMessage}
+
+ESTADO ATUAL DAS BARRAS:\n${JSON.stringify(currentStats)}
+
+ESTRATEGIA INTERNA:\n${JSON.stringify(strategy)}
+
+RESPOSTA FINAL DA LARI:\n${JSON.stringify(jsonResponse.messages || [])}
+
+Avalie o nivel real do lead agora.`
+                }]);
+                leadEvaluation = parseJsonText<any>(evaluatorResult.response.text());
+                leadEvaluationStatus = 'ia avaliadora';
+                if (leadEvaluation?.lead_stats) {
+                    jsonResponse.lead_stats = parseLeadStats(leadEvaluation.lead_stats);
+                }
+                if (leadEvaluation?.lead_classification) {
+                    jsonResponse.lead_classification = leadEvaluation.lead_classification;
+                }
+            } catch (evaluationError: any) {
+                console.warn("Avaliadora de lead falhou, mantendo stats da Lari:", evaluationError?.message || evaluationError);
+            }
+            console.log("📏 Avaliacao Lead:", JSON.stringify(leadEvaluation));
+
             const strategyThought = `ESTRATEGIA (${strategyStatus}): ${strategy?.intent || 'n/a'} | ${strategy?.lead_type || 'n/a'} | ${strategy?.objective || 'n/a'} | ${strategy?.next_step || 'n/a'}`;
             const reviewThought = `REVISAO (${reviewStatus}): ${review?.approved ? 'aprovada' : 'corrigida'} | score ${review?.score ?? 'n/a'} | ${(review?.issues || []).slice(0, 3).join(', ')}`;
-            jsonResponse.internal_thought = [strategyThought, reviewThought, jsonResponse.internal_thought].filter(Boolean).join('\n');
+            const evaluationThought = `AVALIACAO (${leadEvaluationStatus}): ${jsonResponse.lead_classification || 'n/a'} | ${JSON.stringify(jsonResponse.lead_stats || {})} | ${(leadEvaluation?.reasons || []).slice(0, 3).join(', ')}`;
+            jsonResponse.internal_thought = [strategyThought, reviewThought, evaluationThought, jsonResponse.internal_thought].filter(Boolean).join('\n');
 
             // Validar e Sanitizar Lead Stats
             // GARANTIR QUE SEMPRE EXISTA para não quebrar o update no banco

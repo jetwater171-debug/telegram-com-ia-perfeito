@@ -26,47 +26,6 @@ const detectCityFromText = (input: string): string | null => {
     return parts.join(' ');
 };
 
-const getNeighborCity = (city: string | null) => {
-    if (!city) return 'uma cidade vizinha';
-    const c = normalizeCityKey(city);
-    if (c.includes('rio') || c === 'rj') return 'niteroi';
-    if (c.includes('sao paulo') || c === 'sp' || c.includes('sampa')) return 'suzano';
-    if (c.includes('campinas')) return 'hortolandia';
-    if (c.includes('santos')) return 'sao vicente';
-    if (c.includes('guarulhos')) return 'aruja';
-    if (c.includes('curitiba')) return 'sao jose dos pinhais';
-    if (c.includes('belo horizonte') || c === 'bh') return 'contagem';
-    if (c.includes('fortaleza')) return 'eusebio';
-    if (c.includes('salvador')) return 'lauro de freitas';
-    if (c.includes('brasilia') || c === 'df') return 'aguas claras';
-    if (c.includes('goiania')) return 'aparecida de goiania';
-    if (c.includes('recife')) return 'olinda';
-    if (c.includes('manaus')) return 'itacoatiara';
-    if (c.includes('belem')) return 'ananindeua';
-    if (c.includes('porto alegre')) return 'canoas';
-    if (c.includes('florianopolis')) return 'sao jose';
-    if (c.includes('vitoria')) return 'vila velha';
-    if (c.includes('maceio')) return 'rio largo';
-    if (c.includes('natal')) return 'parnamirim';
-    if (c.includes('joao pessoa')) return 'cabedelo';
-    if (c.includes('teresina')) return 'timon';
-    if (c.includes('sao luis')) return 'sao jose de ribamar';
-    if (c.includes('campo grande')) return 'sidrolandia';
-    if (c.includes('cuiaba')) return 'varzea grande';
-    if (c.includes('aracaju')) return 'nossa senhora do socorro';
-    if (c.includes('palmas')) return 'porto nacional';
-    if (c.includes('ribeirao preto')) return 'serrana';
-    if (c.includes('sorocaba')) return 'votorantim';
-    if (c.includes('osasco')) return 'carapicuiba';
-    if (c.includes('santo andre')) return 'sao caetano do sul';
-    if (c.includes('sao bernardo')) return 'diadema';
-    return 'uma cidade vizinha';
-};
-
-const isGenericNeighborCity = (city: string | null | undefined) => {
-    return !city || normalizeCityKey(city).includes('cidade vizinha');
-};
-
 const clampStat = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
 
 const normalizeStats = (stats: any, base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 }) => {
@@ -96,24 +55,25 @@ const applyHeuristicStats = (text: string, current: any) => {
         s[key] = clampStat(s[key] + val);
     };
 
-    if (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|vídeo|video|pelada|sem roupa|manda mais)/i.test(t)) inc('tarado', 15);
-    if (/(gostosa|delicia|tes[a?]o|safada|linda|d[ei]l?icia)/i.test(t)) inc('tarado', 6);
-    if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t)) inc('tarado', 25);
+    if (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|vídeo|video|pelada|sem roupa|manda mais)/i.test(t)) inc('tarado', 8);
+    if (/(gostosa|delicia|tes[a?]o|safada|linda|d[ei]l?icia)/i.test(t)) inc('tarado', 4);
+    if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t)) inc('tarado', 14);
     if (/(nao sou tarado|nao to tarado|nao curto|nao gosto disso|nao quero isso|para com isso|respeita|pare|sem putaria|sem nude|nao manda|nao gostei|voce e feia|vc e feia)/i.test(t)) inc('tarado', -30);
     if (/(so quero conversar|nao quero nada sexual|so amizade)/i.test(t)) inc('tarado', -20);
     if (/(sou casado|sou comprometido|tenho esposa|minha esposa|minha mulher|minha namorada|to de boa|so conversando|nao to afim|nao quero nada agora)/i.test(t)) inc('tarado', -15);
 
-    if (/(quanto custa|pix|vou comprar|passa o pix|quanto e|pre[cç]o|valor|mensal|vital[ií]cio)/i.test(t)) inc('financeiro', 20);
-    if (/(tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t)) inc('financeiro', 20);
+    if (/(quanto custa|quanto e|pre[cç]o|valor|mensal|vital[ií]cio)/i.test(t)) inc('financeiro', 6);
+    if (/(pix|vou comprar|passa o pix|fechado|pode gerar|manda o pix)/i.test(t)) inc('financeiro', 14);
+    if (/(tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t)) inc('financeiro', 10);
     if (/(ta caro|caro|sem dinheiro|liso|desempregado)/i.test(t)) inc('financeiro', -20);
 
     const isShortReply = t.trim().split(/\s+/).length <= 2;
     const isRudeOrCold = /(vc e chata|voce e chata|chata|feia|ridicula|ridicula|idiota|burra|vai se foder|vai tomar|toma no cu|vtnc|vsf|se fode|se fuder|cala a boca|fodase|foda-se|nao enche|para de encher|ta chato|ta irritante|não enche|ta irritante|ta chata|nao quero falar|nao quero conversar|me deixa|para de falar|para de mandar|ta me enchendo|to de boa|tô de boa|nao to afim|nao quero)/i.test(t);
 
-    if (/(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ningu[e?]m me quer|queria uma namorada|carente|me chama|sdds|saudade)/i.test(t)) inc('carente', 15);
-    if (isShortReply) inc('carente', -10);
+    if (/(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ningu[e?]m me quer|queria uma namorada|carente|me chama|sdds|saudade)/i.test(t)) inc('carente', 7);
+    if (isShortReply) inc('carente', -5);
 
-    if (/(saudade|solid[a?]o|sentindo falta|carinho|afeto)/i.test(t)) inc('sentimental', 15);
+    if (/(saudade|solid[a?]o|sentindo falta|carinho|afeto)/i.test(t)) inc('sentimental', 7);
     if (isRudeOrCold) {
         inc('carente', -15);
         inc('sentimental', -20);
@@ -235,6 +195,23 @@ const hasTaradoPositiveTrigger = (text: string) => {
     return (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|vÃ­deo|video|pelada|sem roupa|manda mais)/i.test(t)) ||
         (/(gostosa|delicia|tes[a?]o|safada|linda|d[ei]l?icia)/i.test(t)) ||
         (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t));
+};
+
+type StatKey = 'tarado' | 'financeiro' | 'carente' | 'sentimental';
+
+const hasPositiveStatTrigger = (text: string, key: StatKey) => {
+    const t = (text || '').toLowerCase();
+    if (key === 'tarado') return hasTaradoPositiveTrigger(t);
+    if (key === 'financeiro') {
+        return /(quanto custa|quanto e|pre[cç]o|valor|mensal|vital[ií]cio|pix|vou comprar|passa o pix|fechado|pode gerar|manda o pix|tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t);
+    }
+    if (key === 'carente') {
+        return /(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ningu[e?]m me quer|queria uma namorada|carente|me chama|sdds|saudade)/i.test(t);
+    }
+    if (key === 'sentimental') {
+        return /(saudade|solid[a?]o|sentindo falta|carinho|afeto|ex-namorada|trai[cç][aã]o|desabafo)/i.test(t);
+    }
+    return false;
 };
 
 const GLUE_DICT = new Set([
@@ -663,12 +640,10 @@ export async function POST(req: NextRequest) {
         }
     }
     const hasCity = Boolean(userCity);
-    const neighborCity = hasCity ? getNeighborCity(userCity) : '';
     const cityQuestion = /(de onde (voce|vc|você) e|vc e de onde|você é de onde|qual (sua|a) cidade|onde (voce|vc|você) mora)/i.test(userOnlyText);
 
     const context = {
         userCity: hasCity ? userCity : undefined,
-        neighborCity: hasCity ? neighborCity : undefined,
         isHighTicket: session.device_type === 'iPhone',
         totalPaid: session.total_paid || 0,
         currentStats: session.lead_score,
@@ -819,8 +794,8 @@ export async function POST(req: NextRequest) {
     if (repetition.repeats >= 2) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead repetiu a mesma mensagem ${repetition.repeats}x ("${repetition.last}"). Responda diferente, quebre o loop e puxe o assunto com algo novo e humano. Nao repita a mesma frase.]`;
     }
-    if (cityQuestion && hasCity && !isGenericNeighborCity(neighborCity)) {
-        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou onde voce mora. Voce JA sabe que ele e de "${userCity}". Responda no PRIMEIRO BALAO exatamente "sou de ${neighborCity}". NAO diga "cidade vizinha", NAO diga "daqui" e NAO pergunte a cidade dele.]`;
+    if (cityQuestion && hasCity) {
+        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou onde voce mora. Voce mora na MESMA cidade do lead: "${userCity}". Responda no PRIMEIRO BALAO de forma humana, curta e natural: "sou de ${userCity} amor, e vc?". NAO diga "cidade vizinha", NAO diga "daqui" e NAO responda seco.]`;
     }
     if (cityQuestion && !hasCity) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou sua cidade, mas voce AINDA NAO sabe a cidade dele. Pergunte primeiro "de onde vc e anjo?" e NAO diga sua cidade agora.]`;
@@ -840,39 +815,23 @@ export async function POST(req: NextRequest) {
     const heuristicStats = applyHeuristicStats(userOnlyText, currentStats);
 
     const aiUnchanged = JSON.stringify(aiStats) === JSON.stringify(currentStats);
-    const taradoHasTrigger = hasTaradoPositiveTrigger(userOnlyText);
     if (isAllZero(aiStats) || aiUnchanged) {
         aiResponse.lead_stats = heuristicStats;
     } else {
-        const pick = (key: keyof typeof aiStats) => {
+        const pick = (key: StatKey) => {
             const delta = heuristicStats[key] - currentStats[key];
-            if (delta <= -10) return Math.min(aiStats[key], heuristicStats[key]);
-            return Math.max(aiStats[key], heuristicStats[key]);
+            if (delta < 0) return Math.min(aiStats[key], heuristicStats[key]);
+            if (!hasPositiveStatTrigger(userOnlyText, key) && aiStats[key] > currentStats[key]) {
+                return currentStats[key];
+            }
+            if (delta > 0) return Math.min(aiStats[key], heuristicStats[key]);
+            return aiStats[key] > currentStats[key] ? currentStats[key] : aiStats[key];
         };
         aiResponse.lead_stats = {
             tarado: pick('tarado'),
             financeiro: pick('financeiro'),
             carente: pick('carente'),
             sentimental: pick('sentimental')
-        };
-    }
-
-    // Se nao houve gatilho positivo, nao deixa o tarado subir "do nada".
-    if (!taradoHasTrigger && aiResponse.lead_stats.tarado > currentStats.tarado) {
-        aiResponse.lead_stats = {
-            ...aiResponse.lead_stats,
-            tarado: currentStats.tarado
-        };
-    }
-
-    const afterStats = normalizeStats(aiResponse.lead_stats);
-    const stillSame = JSON.stringify(afterStats) === JSON.stringify(currentStats);
-    if (stillSame && userOnlyText.trim().length > 0) {
-        const words = userOnlyText.trim().split(/\s+/).length;
-        const bump = words >= 5 ? 5 : 2;
-        aiResponse.lead_stats = {
-            ...afterStats,
-            carente: clampStat(afterStats.carente + bump)
         };
     }
 
@@ -902,12 +861,13 @@ export async function POST(req: NextRequest) {
         nextStep = 'CONNECTION';
     }
 
-    const updatedLeadMemory = detectLeadMemorySignals(
+    const detectedLeadMemory = detectLeadMemorySignals(
         userOnlyText,
         Array.isArray(aiResponse.messages) ? aiResponse.messages : [],
         aiResponse,
         session.lead_memory
     );
+    const updatedLeadMemory = detectedLeadMemory;
 
     const updatePayload: any = {
         lead_score: aiResponse.lead_stats,
@@ -1030,8 +990,8 @@ export async function POST(req: NextRequest) {
         extractedName: aiResponse.extracted_user_name,
         lastBotContent
     });
-    if (cityQuestion && hasCity && !isGenericNeighborCity(neighborCity)) {
-        const forcedCityAnswer = `sou de ${neighborCity}`;
+    if (cityQuestion && hasCity) {
+        const forcedCityAnswer = `sou de ${userCity} amor, e vc?`;
         const withoutGenericCity = safeMessages.filter((msg: string) => {
             const norm = normalizeLoopText(msg);
             return !/(cidade vizinha|daqui|de onde vc|de onde voce|de onde você)/i.test(norm);

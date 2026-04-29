@@ -436,10 +436,11 @@ function applyHeuristicStats(text: string, current: LeadStats) {
     const inc = (key: keyof LeadStats, val: number) => {
         s[key] = clampStat(s[key] + val);
     };
-    if (/(manda.*foto|quero ver|deixa eu ver|foto|video|manda mais)/i.test(t)) inc("tarado", 20);
-    if (/(quanto custa|pix|vou comprar|passa o pix|preco|valor|mensal|vitalicio)/i.test(t)) inc("financeiro", 20);
-    if (/(bom dia|boa noite|to sozinho|carente|saudade)/i.test(t)) inc("carente", 15);
-    if (/(saudade|solidao|carinho|afeto)/i.test(t)) inc("sentimental", 15);
+    if (/(manda.*foto|quero ver|deixa eu ver|foto|video|manda mais)/i.test(t)) inc("tarado", 8);
+    if (/(pix|vou comprar|passa o pix|fechado|pode gerar|manda o pix)/i.test(t)) inc("financeiro", 14);
+    else if (/(quanto custa|preco|valor|mensal|vitalicio)/i.test(t)) inc("financeiro", 6);
+    if (/(bom dia amor|boa noite vida|to sozinho|carente|saudade)/i.test(t)) inc("carente", 7);
+    if (/(saudade|solidao|carinho|afeto)/i.test(t)) inc("sentimental", 7);
     return s;
 }
 
