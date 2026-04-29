@@ -1,28 +1,36 @@
 "use client";
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-import { useParams, useRouter } from 'next/navigation';
+
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import { useParams, useRouter } from "next/navigation";
 
 interface Message {
     id: string;
-    sender: 'user' | 'bot' | 'system' | 'admin' | 'thought';
+    sender: "user" | "bot" | "system" | "admin" | "thought";
     content: string;
     created_at: string;
+    media_url?: string | null;
+    media_type?: string | null;
 }
 
+const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+
 export default function AdminChatPage() {
-    const { id: telegramChatId } = useParams();
+    const params = useParams();
+    const telegramChatId = Array.isArray(params.id) ? params.id[0] : params.id;
     const router = useRouter();
 
     const [messages, setMessages] = useState<Message[]>([]);
-    const [input, setInput] = useState('');
+    const [input, setInput] = useState("");
     const [session, setSession] = useState<any>(null);
     const [latestFunnelStep, setLatestFunnelStep] = useState<string | null>(null);
     const [leadTyping, setLeadTyping] = useState(false);
     const [showThoughts, setShowThoughts] = useState(false);
-    const [showSystem, setShowSystem] = useState(true);
-    const [actionMsg, setActionMsg] = useState('');
+    const [showSystem, setShowSystem] = useState(false);
+    const [actionMsg, setActionMsg] = useState("");
     const [forceLoading, setForceLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [lastSync, setLastSync] = useState<Date | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const didInitialScroll = useRef(false);
 
@@ -32,27 +40,23 @@ export default function AdminChatPage() {
 
         (async () => {
             if (!telegramChatId) return;
+            setLoading(true);
             const { data } = await supabase
-                .from('sessions')
-                .select('*')
-                .eq('telegram_chat_id', telegramChatId)
+                .from("sessions")
+                .select("*")
+                .eq("telegram_chat_id", telegramChatId)
                 .single();
 
-            if (!active || !data) return;
-            setSession(data);
-            if (!data.funnel_step) {
-                const { data: funnelRows } = await supabase
-                    .from('funnel_events')
-                    .select('step, created_at')
-                    .eq('session_id', data.id)
-                    .order('created_at', { ascending: false })
-                    .limit(1);
-                setLatestFunnelStep(funnelRows?.[0]?.step || null);
-            } else {
-                setLatestFunnelStep(null);
+            if (!active || !data) {
+                setLoading(false);
+                return;
             }
+
+            setSession(data);
+            await loadLatestFunnel(data.id, data.funnel_step);
             await loadMessages(data.id);
             cleanup = subscribe(data.id);
+            setLoading(false);
         })();
 
         return () => {
@@ -62,65 +66,107 @@ export default function AdminChatPage() {
     }, [telegramChatId]);
 
     useEffect(() => {
+        if (!session?.id) return;
+        const timer = window.setInterval(() => loadMessages(session.id, false), 15000);
+        return () => window.clearInterval(timer);
+    }, [session?.id]);
+
+    useEffect(() => {
         if (!messages.length) {
             setLeadTyping(false);
             return;
         }
-
         const lastMsg = messages[messages.length - 1];
-        const lastIsUser = lastMsg.sender === 'user';
-        if (!lastIsUser) {
+        if (lastMsg.sender !== "user") {
             setLeadTyping(false);
             return;
         }
-
-        const lastTime = new Date(lastMsg.created_at).getTime();
-        const isRecent = (Date.now() - lastTime) <= 20000;
+        const isRecent = Date.now() - new Date(lastMsg.created_at).getTime() <= 20000;
         setLeadTyping(isRecent);
-
-        const typingTimeout = setTimeout(() => setLeadTyping(false), 20000);
-        return () => clearTimeout(typingTimeout);
+        const typingTimeout = window.setTimeout(() => setLeadTyping(false), 20000);
+        return () => window.clearTimeout(typingTimeout);
     }, [messages]);
 
-    const loadMessages = async (sessionId: string) => {
+    useEffect(() => {
+        if (!messages.length) return;
+        if (!didInitialScroll.current) {
+            didInitialScroll.current = true;
+            scrollToBottom("auto");
+            return;
+        }
+        scrollToBottom("smooth");
+    }, [messages.length]);
+
+    const loadLatestFunnel = async (sessionId: string, currentStep?: string) => {
+        if (currentStep) {
+            setLatestFunnelStep(null);
+            return;
+        }
         const { data } = await supabase
-            .from('messages')
-            .select('*')
-            .eq('session_id', sessionId)
-            .order('created_at', { ascending: true });
-        if (data) setMessages(data as Message[]);
-        scrollToBottom();
+            .from("funnel_events")
+            .select("step, created_at")
+            .eq("session_id", sessionId)
+            .order("created_at", { ascending: false })
+            .limit(1);
+        setLatestFunnelStep(data?.[0]?.step || null);
+    };
+
+    const loadMessages = async (sessionId: string, shouldScroll = true) => {
+        const { data } = await supabase
+            .from("messages")
+            .select("*")
+            .eq("session_id", sessionId)
+            .order("created_at", { ascending: true });
+        if (data) {
+            setMessages(data as Message[]);
+            setLastSync(new Date());
+            if (shouldScroll) window.setTimeout(() => scrollToBottom("auto"), 0);
+        }
     };
 
     const subscribe = (sessionId: string) => {
         const channel = supabase
-            .channel(`chat_${sessionId}_${Date.now()}`)
-            .on('postgres_changes', {
-                event: 'INSERT',
-                schema: 'public',
-                table: 'messages',
-                filter: `session_id=eq.${sessionId}`
+            .channel(`admin_chat_${sessionId}_${Date.now()}`)
+            .on("postgres_changes", {
+                event: "INSERT",
+                schema: "public",
+                table: "messages",
+                filter: `session_id=eq.${sessionId}`,
             }, (payload) => {
-                setMessages(prev => {
-                    const exists = prev.some(m => m.id === payload.new.id);
+                setMessages((prev) => {
+                    const exists = prev.some((m) => m.id === payload.new.id);
                     if (exists) return prev;
-                    return [...prev, payload.new as Message];
+                    return [...prev, payload.new as Message].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
                 });
-                scrollToBottom();
+                setLastSync(new Date());
             })
-            .on('postgres_changes', {
-                event: 'UPDATE',
-                schema: 'public',
-                table: 'sessions',
-                filter: `id=eq.${sessionId}`
+            .on("postgres_changes", {
+                event: "UPDATE",
+                schema: "public",
+                table: "messages",
+                filter: `session_id=eq.${sessionId}`,
             }, (payload) => {
-                setSession(payload.new);
+                setMessages((prev) => prev.map((m) => (m.id === payload.new.id ? payload.new as Message : m)));
+                setLastSync(new Date());
             })
-            .on('postgres_changes', {
-                event: 'INSERT',
-                schema: 'public',
-                table: 'funnel_events',
-                filter: `session_id=eq.${sessionId}`
+            .on("postgres_changes", {
+                event: "*",
+                schema: "public",
+                table: "sessions",
+                filter: `id=eq.${sessionId}`,
+            }, (payload) => {
+                if (payload.eventType === "DELETE") {
+                    router.push("/admin");
+                    return;
+                }
+                setSession(payload.new);
+                setLastSync(new Date());
+            })
+            .on("postgres_changes", {
+                event: "INSERT",
+                schema: "public",
+                table: "funnel_events",
+                filter: `session_id=eq.${sessionId}`,
             }, (payload) => {
                 const step = (payload.new as any)?.step;
                 if (step) setLatestFunnelStep(step);
@@ -130,232 +176,132 @@ export default function AdminChatPage() {
         return () => { supabase.removeChannel(channel); };
     };
 
-    const scrollToBottom = (behavior: ScrollBehavior = 'smooth') =>
+    const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
         messagesEndRef.current?.scrollIntoView({ behavior });
-
-    useEffect(() => {
-        if (!messages.length) return;
-        if (!didInitialScroll.current) {
-            didInitialScroll.current = true;
-            scrollToBottom('auto');
-            return;
-        }
-        scrollToBottom('smooth');
-    }, [messages.length]);
-
-    const clampStat = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
-
-    const applyHeuristicStats = (text: string, current: any) => {
-        const s = { ...current };
-        const t = (text || '').toLowerCase();
-        const inc = (key: keyof typeof s, val: number) => {
-            s[key] = clampStat(s[key] + val);
-        };
-
-        if (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|video|pelada|sem roupa|manda mais)/i.test(t)) inc('tarado', 20);
-        if (/(gostosa|delicia|tesao|safada|linda|d[ei]l?icia)/i.test(t)) inc('tarado', 10);
-        if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t)) inc('tarado', 30);
-
-        if (/(quanto custa|pix|vou comprar|passa o pix|quanto e|preco|valor|mensal|vitalicio)/i.test(t)) inc('financeiro', 20);
-        if (/(tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t)) inc('financeiro', 20);
-        if (/(ta caro|caro|sem dinheiro|liso|desempregado)/i.test(t)) inc('financeiro', -20);
-
-        if (/(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ninguem me quer|queria uma namorada|carente|me chama|sdds|saudade)/i.test(t)) inc('carente', 15);
-        if (t.trim().split(/\s+/).length <= 2) inc('carente', -10);
-
-        if (/(saudade|solidao|sentindo falta|carinho|afeto)/i.test(t)) inc('sentimental', 15);
-
-        return s;
-    };
-
-    const getSafeLeadScore = (raw: any, fallbackText: string) => {
-        let stats = raw;
-        if (typeof stats === 'string') {
-            try { stats = JSON.parse(stats); } catch { stats = null; }
-        }
-        const base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
-        if (!stats) stats = base;
-
-        const isAllZero = (s: any) =>
-            (Number(s.tarado) || 0) === 0 &&
-            (Number(s.financeiro) || 0) === 0 &&
-            (Number(s.carente) || 0) === 0 &&
-            (Number(s.sentimental) || 0) === 0;
-
-        if (isAllZero(stats)) stats = base;
-
-        if (isAllZero(stats)) {
-            stats = fallbackText ? applyHeuristicStats(fallbackText, base) : base;
-        }
-        return {
-            tarado: clampStat((stats as any).tarado ?? base.tarado),
-            financeiro: clampStat((stats as any).financeiro ?? base.financeiro),
-            carente: clampStat((stats as any).carente ?? base.carente),
-            sentimental: clampStat((stats as any).sentimental ?? base.sentimental)
-        };
     };
 
     const sendManualMessage = async () => {
-        if (!input.trim() || !session) return;
+        const text = input.trim();
+        if (!text || !session || !telegramChatId) return;
 
-        if (session.status !== 'paused') {
-            await supabase.from('sessions').update({ status: 'paused' }).eq('id', session.id);
-            setSession({ ...session, status: 'paused' });
+        if (session.status !== "paused") {
+            await supabase.from("sessions").update({ status: "paused" }).eq("id", session.id);
+            setSession({ ...session, status: "paused" });
         }
 
         try {
-            await fetch('/api/admin/send', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chatId: telegramChatId, text: input })
+            setInput("");
+            await fetch("/api/admin/send", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chatId: telegramChatId, text }),
             });
-            setInput('');
         } catch (error) {
-            alert('Erro ao enviar: ' + error);
+            setActionMsg(`Erro ao enviar: ${String(error)}`);
         }
     };
 
     const forceSale = async () => {
         if (!telegramChatId) return;
         setForceLoading(true);
-        setActionMsg('');
+        setActionMsg("");
         try {
-            const res = await fetch('/api/admin/force-sale', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chatId: telegramChatId })
+            const res = await fetch("/api/admin/force-sale", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chatId: telegramChatId }),
             });
             const data = await res.json();
-            if (data?.ok) {
-                setActionMsg('forcando venda...');
-            } else {
-                setActionMsg(data?.error || 'falha ao forcar venda');
-            }
+            setActionMsg(data?.ok ? "Venda solicitada para a IA." : data?.error || "Falha ao forcar venda");
         } catch (e: any) {
-            setActionMsg(e?.message || 'erro ao forcar venda');
+            setActionMsg(e?.message || "Erro ao forcar venda");
         }
         setForceLoading(false);
     };
 
     const toggleBot = async () => {
         if (!session) return;
-        const newStatus = session.status === 'paused' ? 'active' : 'paused';
-        await supabase.from('sessions').update({ status: newStatus }).eq('id', session.id);
+        const newStatus = session.status === "paused" ? "active" : "paused";
+        await supabase.from("sessions").update({ status: newStatus }).eq("id", session.id);
         setSession({ ...session, status: newStatus });
     };
 
     const deleteChat = async () => {
-        if (!confirm('Tem certeza? Isso apaga todo o historico.')) return;
-        if (session) {
-            await supabase.from('messages').delete().eq('session_id', session.id);
-            await supabase.from('sessions').delete().eq('id', session.id);
-            router.push('/admin');
-        }
-    };
-
-    const formatTime = (isoString: string) => {
-        return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        if (!session || !confirm("Tem certeza? Isso apaga todo o historico.")) return;
+        await supabase.from("messages").delete().eq("session_id", session.id);
+        await supabase.from("sessions").delete().eq("id", session.id);
+        router.push("/admin");
     };
 
     const lastUserMessage = useMemo(() => {
         for (let i = messages.length - 1; i >= 0; i--) {
-            if (messages[i].sender === 'user' && messages[i].content) return messages[i].content;
+            if (messages[i].sender === "user" && messages[i].content) return messages[i].content;
         }
-        return '';
+        return "";
     }, [messages]);
 
-    const safeLeadScore = getSafeLeadScore(session?.lead_score, lastUserMessage);
-    const effectiveFunnelStep = session?.funnel_step || latestFunnelStep || '';
-    const leadMemory = useMemo(() => {
-        const raw = session?.lead_memory;
-        if (!raw) return {};
-        if (typeof raw === 'string') {
-            try { return JSON.parse(raw); } catch { return {}; }
-        }
-        return typeof raw === 'object' ? raw : {};
-    }, [session?.lead_memory]);
-
-    const renderMemoryList = (label: string, value: any) => {
-        const items = Array.isArray(value) ? value.filter(Boolean).slice(0, 4) : [];
-        if (!items.length) return null;
-        return (
-            <div>
-                <p className="text-[10px] uppercase tracking-[0.16em] text-gray-500">{label}</p>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                    {items.map((item: string) => (
-                        <span key={`${label}-${item}`} className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-gray-200">
-                            {item}
-                        </span>
-                    ))}
-                </div>
-            </div>
-        );
-    };
-
-    const filteredMessages = useMemo(() => {
-        return messages.filter(msg => {
-            if (msg.sender === 'thought' && !showThoughts) return false;
-            if (msg.sender === 'system' && !showSystem) return false;
+    const visibleMessages = useMemo(() => {
+        return messages.filter((msg) => {
+            if (msg.sender === "thought" && !showThoughts) return false;
+            if (msg.sender === "system" && !showSystem) return false;
             return true;
         });
     }, [messages, showThoughts, showSystem]);
 
+    const safeLeadScore = getSafeLeadScore(session?.lead_score, lastUserMessage);
+    const effectiveFunnelStep = session?.funnel_step || latestFunnelStep || "";
+    const leadMemory = useMemo(() => parseLeadMemory(session?.lead_memory), [session?.lead_memory]);
+    const lastMessage = messages[messages.length - 1];
+
     return (
-        <div className="flex h-screen bg-[#0b0f17] text-white font-sans">
-            <div className="flex-1 flex flex-col">
-                <header className="sticky top-0 z-20 border-b border-white/10 bg-black/30 backdrop-blur">
-                    <div className="flex items-center justify-between px-5 py-4">
-                        <div className="flex items-center gap-3">
+        <div className="flex h-screen overflow-hidden bg-[#080b10] text-slate-100">
+            <div className="flex min-w-0 flex-1 flex-col">
+                <header className="border-b border-white/10 bg-[#080b10]/95 backdrop-blur">
+                    <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="flex min-w-0 items-center gap-3">
                             <button
-                                onClick={() => router.push('/admin')}
-                                className="rounded-full border border-white/10 p-2 text-gray-300 transition hover:text-white"
+                                onClick={() => router.push("/admin")}
+                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-cyan-300/40 hover:text-white"
+                                title="Voltar"
                             >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>
+                                <span className="text-lg">{"<"}</span>
                             </button>
-
-                            <div className={`flex h-11 w-11 items-center justify-center rounded-2xl text-sm font-bold text-white ${safeLeadScore.tarado > 70 ? 'bg-gradient-to-br from-pink-500 to-purple-500' : 'bg-gradient-to-br from-blue-400 to-cyan-500'}`}>
-                                {session?.user_name?.substring(0, 2).toUpperCase() || '??'}
+                            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-bold text-slate-950 ${safeLeadScore.tarado >= 70 ? "bg-rose-300" : "bg-cyan-300"}`}>
+                                {initials(session?.user_name)}
                             </div>
-
-                            <div>
-                                <h1 className="text-lg font-semibold">{session?.user_name || 'Carregando...'}</h1>
-                                <p className="text-xs text-cyan-200">
-                                    {leadTyping ? 'digitando...' : (session?.status === 'active' ? 'online (IA ativa)' : 'offline (pausado)')}
+                            <div className="min-w-0">
+                                <h1 className="truncate text-base font-semibold">{session?.user_name || "Carregando..."}</h1>
+                                <p className="truncate text-xs text-slate-400">
+                                    {leadTyping ? "lead acabou de mandar mensagem" : session?.status === "active" ? "IA ativa" : "IA pausada"} / {lastSync ? `sync ${formatTimeAgo(lastSync.toISOString())}` : "sync pendente"}
                                 </p>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                            <div className="hidden md:flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs">
-                                <button
-                                    onClick={() => setShowSystem(!showSystem)}
-                                    className={`rounded-full px-2 py-1 ${showSystem ? 'bg-white/10 text-white' : 'text-gray-400'}`}
-                                >
-                                    System
-                                </button>
-                                <button
-                                    onClick={() => setShowThoughts(!showThoughts)}
-                                    className={`rounded-full px-2 py-1 ${showThoughts ? 'bg-white/10 text-white' : 'text-gray-400'}`}
-                                >
-                                    Ideias
-                                </button>
-                            </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <SegmentButton active={showSystem} onClick={() => setShowSystem(!showSystem)}>Sistema</SegmentButton>
+                            <SegmentButton active={showThoughts} onClick={() => setShowThoughts(!showThoughts)}>Ideias IA</SegmentButton>
+                            <button
+                                onClick={() => session?.id && loadMessages(session.id)}
+                                className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-300/40"
+                            >
+                                Sincronizar
+                            </button>
                             <button
                                 onClick={forceSale}
-                                className="rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60"
+                                className="rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-100 transition hover:border-amber-300/60"
                                 disabled={forceLoading}
                             >
-                                {forceLoading ? 'forcando...' : 'forcar venda'}
+                                {forceLoading ? "forcando..." : "forcar venda"}
                             </button>
                             <button
                                 onClick={toggleBot}
-                                className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-gray-100 transition hover:border-white/20"
+                                className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-100 transition hover:border-cyan-300/40"
                             >
-                                {session?.status === 'paused' ? 'Ativar IA' : 'Pausar IA'}
+                                {session?.status === "paused" ? "Ativar IA" : "Pausar IA"}
                             </button>
                             <button
                                 onClick={deleteChat}
-                                className="rounded-full border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60"
+                                className="rounded-lg border border-rose-300/30 bg-rose-300/10 px-3 py-2 text-xs font-semibold text-rose-100 transition hover:border-rose-300/60"
                             >
                                 Apagar
                             </button>
@@ -363,176 +309,324 @@ export default function AdminChatPage() {
                     </div>
                 </header>
 
-                <main className="flex-1 overflow-y-auto px-4 py-6">
-                    <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
-                        {filteredMessages.map((msg) => {
-                            const isMe = msg.sender === 'bot' || msg.sender === 'admin';
-                            const isSystem = msg.sender === 'system';
-                            const isThought = msg.sender === 'thought';
+                <main className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
+                    <div className="mx-auto flex w-full max-w-4xl flex-col gap-3">
+                        {loading && <div className="p-10 text-center text-slate-500">Carregando conversa...</div>}
 
-                            if (isSystem) {
-                                return (
-                                    <div key={msg.id} className="flex justify-center">
-                                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-gray-300">
-                                            {msg.content}
-                                        </span>
-                                    </div>
-                                );
-                            }
-
-                            if (isThought) {
-                                return (
-                                    <div key={msg.id} className="rounded-2xl border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
-                                        <span className="font-semibold">IDEIA:</span> {msg.content}
-                                    </div>
-                                );
-                            }
+                        {visibleMessages.map((msg, index) => {
+                            const previous = visibleMessages[index - 1];
+                            const showDate = !previous || !isSameDay(previous.created_at, msg.created_at);
 
                             return (
-                                <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                                    <div
-                                        className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm shadow ${isMe
-                                            ? 'bg-gradient-to-br from-[#1f3a5a] to-[#1b2b45] text-white'
-                                            : 'bg-[#131a27] text-gray-100'}`}
-                                    >
-                                        {msg.sender === 'admin' && (
-                                            <div className="mb-1 text-[10px] font-semibold text-pink-300">Voce (manual)</div>
-                                        )}
-                                        <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                                        <div className="mt-2 flex justify-end text-[10px] text-gray-400">
-                                            {formatTime(msg.created_at)}
+                                <React.Fragment key={msg.id}>
+                                    {showDate && (
+                                        <div className="flex justify-center py-2">
+                                            <span className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-slate-500">
+                                                {formatDate(msg.created_at)}
+                                            </span>
                                         </div>
-                                    </div>
-                                </div>
+                                    )}
+                                    <MessageBubble message={msg} />
+                                </React.Fragment>
                             );
                         })}
+
+                        {!loading && visibleMessages.length === 0 && (
+                            <div className="p-10 text-center text-slate-500">Nenhuma mensagem visivel nesta conversa.</div>
+                        )}
+
+                        {leadTyping && (
+                            <div className="flex justify-start">
+                                <div className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-cyan-100">IA preparando resposta...</div>
+                            </div>
+                        )}
+
                         <div ref={messagesEndRef} />
                     </div>
                 </main>
 
-                <footer className="border-t border-white/10 bg-black/30 px-4 py-4">
-                    <div className="mx-auto flex w-full max-w-3xl items-end gap-3">
+                <footer className="border-t border-white/10 bg-[#080b10]/95 px-3 py-3 sm:px-5">
+                    <div className="mx-auto flex w-full max-w-4xl items-end gap-2">
                         <textarea
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !e.shiftKey) {
+                                if (e.key === "Enter" && !e.shiftKey) {
                                     e.preventDefault();
                                     sendManualMessage();
                                 }
                             }}
-                            className="min-h-[52px] w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
-                            placeholder="Digite uma mensagem..."
+                            className="max-h-36 min-h-[48px] w-full resize-none rounded-lg border border-white/10 bg-black/35 px-3 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50"
+                            placeholder="Enviar mensagem manual..."
                             rows={2}
                         />
                         <button
                             onClick={sendManualMessage}
-                            className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${input.trim()
-                                ? 'bg-cyan-500/20 text-cyan-100 border border-cyan-500/30'
-                                : 'border border-white/10 text-gray-500'}`}
+                            disabled={!input.trim()}
+                            className={`rounded-lg border px-4 py-3 text-sm font-semibold transition ${input.trim()
+                                ? "border-cyan-300/40 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/20"
+                                : "border-white/10 text-slate-600"}`}
                         >
                             Enviar
                         </button>
                     </div>
-                    {actionMsg && (
-                        <div className="mx-auto mt-3 w-full max-w-3xl text-center text-xs text-amber-200">
-                            {actionMsg}
-                        </div>
-                    )}
+                    {actionMsg && <div className="mx-auto mt-2 w-full max-w-4xl text-xs text-amber-200">{actionMsg}</div>}
                 </footer>
             </div>
 
-            <aside className="hidden w-80 border-l border-white/10 bg-black/30 p-6 lg:block">
-                <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
-                    <div className={`mx-auto flex h-20 w-20 items-center justify-center rounded-3xl text-2xl font-bold text-white ${safeLeadScore.tarado > 70 ? 'bg-gradient-to-br from-pink-500 to-purple-500' : 'bg-gradient-to-br from-blue-400 to-cyan-500'}`}>
-                        {session?.user_name?.substring(0, 2).toUpperCase() || '??'}
-                    </div>
-                    <h2 className="mt-4 text-center text-lg font-semibold">{session?.user_name || 'Desconhecido'}</h2>
-                    <p className="mt-1 text-center text-xs text-gray-400">{session?.user_city || 'Cidade nao informada'}</p>
+            <aside className="hidden w-[360px] shrink-0 overflow-y-auto border-l border-white/10 bg-[#0b0f16] p-4 xl:block">
+                <div className="space-y-4">
+                    <Panel title="Lead">
+                        <div className="flex items-center gap-3">
+                            <div className={`flex h-12 w-12 items-center justify-center rounded-lg text-sm font-bold text-slate-950 ${safeLeadScore.tarado >= 70 ? "bg-rose-300" : "bg-cyan-300"}`}>
+                                {initials(session?.user_name)}
+                            </div>
+                            <div className="min-w-0">
+                                <p className="truncate font-semibold">{session?.user_name || "Desconhecido"}</p>
+                                <p className="truncate text-xs text-slate-500">#{session?.telegram_chat_id}</p>
+                            </div>
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                            <Info label="Status" value={session?.status === "active" ? "Ativo" : "Pausado"} tone={session?.status === "active" ? "text-emerald-200" : "text-rose-200"} />
+                            <Info label="Funil" value={effectiveFunnelStep ? effectiveFunnelStep.replace(/_/g, " ") : "INICIO"} />
+                            <Info label="Cidade" value={session?.user_city || "N/A"} />
+                            <Info label="Device" value={session?.device_type || "N/A"} />
+                        </div>
+                    </Panel>
 
-                    <div className="mt-6 space-y-3 text-xs text-gray-300">
-                        <div className="flex items-center justify-between">
-                            <span>Status</span>
-                            <span className={`rounded-full px-2 py-0.5 ${session?.status === 'active' ? 'bg-emerald-500/20 text-emerald-200' : 'bg-rose-500/20 text-rose-200'}`}>
-                                {session?.status === 'active' ? 'ONLINE' : 'PAUSADO'}
-                            </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span>Fase funil</span>
-                            <span className="text-gray-100">{effectiveFunnelStep ? effectiveFunnelStep.replace(/_/g, ' ') : 'INICIO'}</span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span>ID</span>
-                            <span className="font-mono text-[11px] text-gray-400">{session?.telegram_chat_id}</span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span>Device</span>
-                            <span className="text-gray-100">{session?.device_type || 'N/A'}</span>
-                        </div>
-                        {leadMemory?.dominant_type && (
-                            <div className="flex items-center justify-between">
-                                <span>Perfil</span>
-                                <span className="text-cyan-100">{leadMemory.dominant_type}</span>
-                            </div>
-                        )}
-                        {leadMemory?.best_tone && (
-                            <div className="flex items-center justify-between gap-3">
-                                <span>Tom</span>
-                                <span className="text-right text-cyan-100">{leadMemory.best_tone}</span>
-                            </div>
-                        )}
-                    </div>
+                    <Panel title="Valor">
+                        <p className="text-3xl font-semibold text-emerald-100">{money.format(Number(session?.total_paid || 0))}</p>
+                        <p className="mt-1 text-xs text-slate-500">Total pago por este lead</p>
+                    </Panel>
 
-                    {(leadMemory?.wanted_products || leadMemory?.rejected_products || leadMemory?.desires || leadMemory?.objections) && (
-                        <div className="mt-6 space-y-4 rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4">
-                            <p className="text-xs uppercase tracking-[0.2em] text-cyan-200">Memoria do lead</p>
-                            {renderMemoryList('quer', leadMemory.wanted_products)}
-                            {renderMemoryList('recusou', leadMemory.rejected_products)}
-                            {renderMemoryList('desejos', leadMemory.desires)}
-                            {renderMemoryList('objecoes', leadMemory.objections)}
-                            {leadMemory?.last_offer && (
-                                <div className="text-xs text-gray-300">
-                                    <span className="text-gray-500">Ultima oferta:</span> {leadMemory.last_offer}
-                                </div>
-                            )}
-                        </div>
-                    )}
+                    <Panel title="Score">
+                        <ScoreBar label="Hot" value={safeLeadScore.tarado} color="bg-rose-400" />
+                        <ScoreBar label="Financeiro" value={safeLeadScore.financeiro} color="bg-emerald-400" />
+                        <ScoreBar label="Carente" value={safeLeadScore.carente} color="bg-cyan-400" />
+                        <ScoreBar label="Sentimental" value={safeLeadScore.sentimental} color="bg-violet-400" />
+                    </Panel>
 
-                    <div className="mt-6 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4 text-center">
-                        <p className="text-xs uppercase tracking-[0.2em] text-emerald-200">Total gasto</p>
-                        <p className="mt-2 text-2xl font-semibold text-emerald-100">
-                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(session?.total_paid || 0)}
-                        </p>
-                    </div>
+                    <Panel title="Memoria">
+                        <div className="space-y-3">
+                            <InfoLine label="Perfil" value={leadMemory.dominant_type} />
+                            <InfoLine label="Tom" value={leadMemory.best_tone} />
+                            <TagList label="Quer" items={leadMemory.wanted_products} />
+                            <TagList label="Recusou" items={leadMemory.rejected_products} />
+                            <TagList label="Desejos" items={leadMemory.desires} />
+                            <TagList label="Objecoes" items={leadMemory.objections} />
+                            <InfoLine label="Ultima oferta" value={leadMemory.last_offer} />
+                        </div>
+                    </Panel>
 
-                    <div className="mt-6 space-y-4">
-                        <div>
-                            <div className="mb-1 flex justify-between text-xs text-gray-400"><span>Tarado</span><span>{safeLeadScore.tarado}%</span></div>
-                            <div className="h-1.5 w-full rounded-full bg-black/40">
-                                <div className="h-full rounded-full bg-pink-500" style={{ width: `${safeLeadScore.tarado}%` }} />
-                            </div>
-                        </div>
-                        <div>
-                            <div className="mb-1 flex justify-between text-xs text-gray-400"><span>Financeiro</span><span>{safeLeadScore.financeiro}%</span></div>
-                            <div className="h-1.5 w-full rounded-full bg-black/40">
-                                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${safeLeadScore.financeiro}%` }} />
-                            </div>
-                        </div>
-                        <div>
-                            <div className="mb-1 flex justify-between text-xs text-gray-400"><span>Carente</span><span>{safeLeadScore.carente}%</span></div>
-                            <div className="h-1.5 w-full rounded-full bg-black/40">
-                                <div className="h-full rounded-full bg-cyan-500" style={{ width: `${safeLeadScore.carente}%` }} />
-                            </div>
-                        </div>
-                        <div>
-                            <div className="mb-1 flex justify-between text-xs text-gray-400"><span>Sentimental</span><span>{safeLeadScore.sentimental}%</span></div>
-                            <div className="h-1.5 w-full rounded-full bg-black/40">
-                                <div className="h-full rounded-full bg-purple-500" style={{ width: `${safeLeadScore.sentimental}%` }} />
-                            </div>
-                        </div>
-                    </div>
+                    <Panel title="Ultimo evento">
+                        <p className="text-sm text-slate-200">{lastMessage ? cleanText(lastMessage.content) : "Sem mensagens"}</p>
+                        <p className="mt-2 text-xs text-slate-500">{lastMessage ? `${senderName(lastMessage.sender)} / ${formatTimeAgo(lastMessage.created_at)}` : ""}</p>
+                    </Panel>
                 </div>
             </aside>
         </div>
     );
+}
+
+function MessageBubble({ message }: { message: Message }) {
+    const isMe = message.sender === "bot" || message.sender === "admin";
+    const isSystem = message.sender === "system";
+    const isThought = message.sender === "thought";
+
+    if (isSystem || isThought) {
+        return (
+            <div className="flex justify-center">
+                <div className={`max-w-[92%] rounded-lg border px-3 py-2 text-xs leading-relaxed ${isThought
+                    ? "border-amber-300/20 bg-amber-300/10 text-amber-100"
+                    : "border-white/10 bg-white/[0.04] text-slate-400"}`}>
+                    <span className="font-semibold">{isThought ? "IA" : "Sistema"}: </span>
+                    <span className="whitespace-pre-wrap break-words">{message.content}</span>
+                    <span className="ml-2 text-[10px] opacity-60">{formatTime(message.created_at)}</span>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+            <div className={`max-w-[86%] rounded-lg border px-3 py-2 shadow-sm sm:max-w-[72%] ${isMe
+                ? "border-cyan-300/20 bg-[#123044] text-slate-50"
+                : "border-white/10 bg-[#111822] text-slate-100"}`}>
+                <div className="mb-1 flex items-center justify-between gap-4">
+                    <span className={`text-[11px] font-semibold ${message.sender === "admin" ? "text-amber-200" : isMe ? "text-cyan-100" : "text-slate-400"}`}>
+                        {senderName(message.sender)}
+                    </span>
+                    <span className="text-[10px] text-slate-500">{formatTime(message.created_at)}</span>
+                </div>
+                {message.media_url && (
+                    <div className="mb-2 overflow-hidden rounded-md border border-white/10 bg-black/20">
+                        {message.media_type === "video" ? (
+                            <video src={message.media_url} controls className="max-h-72 w-full object-contain" />
+                        ) : (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={message.media_url} alt="" className="max-h-72 w-full object-contain" />
+                        )}
+                    </div>
+                )}
+                <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{message.content}</p>
+            </div>
+        </div>
+    );
+}
+
+function SegmentButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+    return (
+        <button
+            onClick={onClick}
+            className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${active
+                ? "border-cyan-300/40 bg-cyan-300/15 text-cyan-100"
+                : "border-white/10 bg-white/[0.04] text-slate-400 hover:text-slate-100"}`}
+        >
+            {children}
+        </button>
+    );
+}
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+    return (
+        <section className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{title}</h2>
+            {children}
+        </section>
+    );
+}
+
+function Info({ label, value, tone = "text-slate-100" }: { label: string; value: string; tone?: string }) {
+    return (
+        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+            <p className="text-slate-500">{label}</p>
+            <p className={`mt-1 truncate font-semibold ${tone}`}>{value}</p>
+        </div>
+    );
+}
+
+function InfoLine({ label, value }: { label: string; value: unknown }) {
+    if (!value) return null;
+    return (
+        <div className="text-sm">
+            <span className="text-slate-500">{label}: </span>
+            <span className="text-slate-200">{String(value)}</span>
+        </div>
+    );
+}
+
+function TagList({ label, items }: { label: string; items: unknown }) {
+    const list = Array.isArray(items) ? items.filter(Boolean).slice(0, 5) : [];
+    if (!list.length) return null;
+    return (
+        <div>
+            <p className="mb-2 text-xs text-slate-500">{label}</p>
+            <div className="flex flex-wrap gap-1.5">
+                {list.map((item) => (
+                    <span key={`${label}-${String(item)}`} className="rounded-md border border-white/10 bg-black/20 px-2 py-1 text-xs text-slate-200">
+                        {String(item)}
+                    </span>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function ScoreBar({ label, value, color }: { label: string; value: number; color: string }) {
+    return (
+        <div className="mb-3 last:mb-0">
+            <div className="mb-1 flex justify-between text-xs text-slate-400">
+                <span>{label}</span>
+                <span>{value}%</span>
+            </div>
+            <div className="h-2 rounded-full bg-black/40">
+                <div className={`h-full rounded-full ${color}`} style={{ width: `${value}%` }} />
+            </div>
+        </div>
+    );
+}
+
+function parseLeadMemory(raw: unknown) {
+    if (!raw) return {};
+    if (typeof raw === "string") {
+        try { return JSON.parse(raw); } catch { return {}; }
+    }
+    return typeof raw === "object" ? raw as Record<string, any> : {};
+}
+
+function getSafeLeadScore(raw: unknown, fallbackText: string) {
+    const base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
+    let stats = raw;
+    if (typeof stats === "string") {
+        try { stats = JSON.parse(stats); } catch { stats = null; }
+    }
+    if (!stats || typeof stats !== "object" || isAllZero(stats as any)) {
+        stats = applyHeuristicStats(fallbackText, base);
+    }
+    const data = stats as Record<string, unknown>;
+    return {
+        tarado: clampStat(Number(data.tarado ?? base.tarado)),
+        financeiro: clampStat(Number(data.financeiro ?? base.financeiro)),
+        carente: clampStat(Number(data.carente ?? base.carente)),
+        sentimental: clampStat(Number(data.sentimental ?? base.sentimental)),
+    };
+}
+
+function applyHeuristicStats(text: string, current: any) {
+    const s = { ...current };
+    const t = (text || "").toLowerCase();
+    const inc = (key: keyof typeof s, val: number) => { s[key] = clampStat(s[key] + val); };
+    if (/(manda.*foto|quero ver|deixa eu ver|foto|video|manda mais)/i.test(t)) inc("tarado", 20);
+    if (/(quanto custa|pix|vou comprar|passa o pix|preco|valor|mensal|vitalicio)/i.test(t)) inc("financeiro", 20);
+    if (/(bom dia|boa noite|to sozinho|carente|saudade)/i.test(t)) inc("carente", 15);
+    if (/(saudade|solidao|carinho|afeto)/i.test(t)) inc("sentimental", 15);
+    return s;
+}
+
+function isAllZero(s: Record<string, unknown>) {
+    return ["tarado", "financeiro", "carente", "sentimental"].every((key) => Number(s[key] || 0) === 0);
+}
+
+function clampStat(n: number) {
+    return Math.max(0, Math.min(100, Number(n) || 0));
+}
+
+function initials(name?: string) {
+    if (!name) return "??";
+    return name.trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
+}
+
+function senderName(sender: string) {
+    if (sender === "user") return "Lead";
+    if (sender === "bot") return "Lari";
+    if (sender === "admin") return "Voce";
+    if (sender === "system") return "Sistema";
+    if (sender === "thought") return "IA";
+    return sender;
+}
+
+function formatTime(isoString: string) {
+    return new Date(isoString).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDate(isoString: string) {
+    return new Date(isoString).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function formatTimeAgo(dateString?: string) {
+    if (!dateString) return "nunca";
+    const diffInSeconds = Math.max(0, Math.floor((Date.now() - new Date(dateString).getTime()) / 1000));
+    if (diffInSeconds < 20) return "agora";
+    if (diffInSeconds < 60) return `${diffInSeconds}s atras`;
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m atras`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h atras`;
+    return `${Math.floor(diffInSeconds / 86400)}d atras`;
+}
+
+function isSameDay(a: string, b: string) {
+    return new Date(a).toDateString() === new Date(b).toDateString();
+}
+
+function cleanText(text?: string) {
+    return (text || "").replace(/\s+/g, " ").trim();
 }
