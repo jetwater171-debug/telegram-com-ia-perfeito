@@ -1,6 +1,29 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 
+const parseStartPayload = (text: string | undefined) => {
+    const match = (text || '').trim().match(/^\/?start(?:\s+(.+))?$/i);
+    return match?.[1]?.trim() || '';
+};
+
+const detectDeviceType = (userAgent: string | null | undefined) => {
+    const ua = String(userAgent || '').toLowerCase();
+    if (/iphone|ipad|ios/.test(ua)) return 'iPhone';
+    if (/android/.test(ua)) return 'Android';
+    if (/windows|macintosh|linux/.test(ua)) return 'Desktop';
+    return 'Unknown';
+};
+
+const normalizeLeadMemory = (input: any) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+    return input;
+};
+
+const mergeList = (a: any, b: string[]) => {
+    const base = Array.isArray(a) ? a.map((v: any) => String(v || '').trim()).filter(Boolean) : [];
+    return Array.from(new Set([...base, ...b].map(v => v.toLowerCase()))).slice(0, 12);
+};
+
 export async function GET(req: NextRequest) {
     // DIAGNOSTIC ROUTE
     const checks = {
@@ -71,6 +94,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
     }
     let senderName = message.from.first_name || "Desconhecido";
+    const startPayload = parseStartPayload(text);
+    const leadRedirectCode = startPayload && startPayload.startsWith('l_') ? startPayload : '';
 
     // CHECK FOR OP KAIQUE
     if (text && (
@@ -126,6 +151,69 @@ export async function POST(req: NextRequest) {
             session = newSession;
         }
 
+        if (leadRedirectCode) {
+            const { data: redirectRow } = await supabase
+                .from('lead_redirects')
+                .select('*')
+                .eq('code', leadRedirectCode)
+                .single();
+
+            if (redirectRow) {
+                const city = redirectRow.city ? String(redirectRow.city) : null;
+                const deviceType = detectDeviceType(redirectRow.user_agent);
+                const currentMemory = normalizeLeadMemory(session.lead_memory);
+                const sourceBits = [
+                    redirectRow.utm?.utm_source ? `origem ${redirectRow.utm.utm_source}` : '',
+                    redirectRow.utm?.utm_campaign ? `campanha ${redirectRow.utm.utm_campaign}` : '',
+                    city ? `cidade captada ${city}` : '',
+                    redirectRow.country ? `pais ${redirectRow.country}` : ''
+                ].filter(Boolean);
+
+                const updatedMemory = {
+                    ...currentMemory,
+                    notes: mergeList(currentMemory.notes, [
+                        'entrou pelo redirecionador',
+                        ...sourceBits
+                    ]),
+                    metadata: {
+                        ...(currentMemory.metadata || {}),
+                        redirect_code: leadRedirectCode,
+                        redirect_ip: redirectRow.ip || '',
+                        redirect_utm: redirectRow.utm || {},
+                        redirect_city: city || '',
+                        redirect_country: redirectRow.country || '',
+                        redirect_user_agent: redirectRow.user_agent || ''
+                    },
+                    updated_at: new Date().toISOString()
+                };
+
+                const sessionPatch: any = {
+                    lead_memory: updatedMemory
+                };
+                if (city && !session.user_city) sessionPatch.user_city = city;
+                if (deviceType !== 'Unknown' && (!session.device_type || session.device_type === 'Unknown')) {
+                    sessionPatch.device_type = deviceType;
+                }
+
+                const { error: sessionPatchError } = await supabase
+                    .from('sessions')
+                    .update(sessionPatch)
+                    .eq('id', session.id);
+                if (!sessionPatchError) {
+                    session = { ...session, ...sessionPatch };
+                }
+
+                await supabase
+                    .from('lead_redirects')
+                    .update({
+                        claimed_at: new Date().toISOString(),
+                        telegram_chat_id: chatId,
+                        session_id: session.id
+                    })
+                    .eq('id', redirectRow.id);
+            }
+        }
+
         // 3.5. Reset Reengagement Flag & Update Timestamp
         // Quando o usuário fala, o bot não precisa mais cobrar.
         // ATUALIZAMOS 'last_bot_activity_at' para AGORA para impedir que o cron dispare
@@ -153,7 +241,7 @@ export async function POST(req: NextRequest) {
         const { data: insertedMsg } = await supabase.from('messages').insert({
             session_id: session.id,
             sender: 'user',
-            content: text
+            content: leadRedirectCode ? '/start' : text
         }).select().single();
 
         if (!insertedMsg) return NextResponse.json({ ok: true });

@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     device_type TEXT,
     status TEXT DEFAULT 'active', -- active, paused (admin taking over), closed
     lead_score JSONB,
+    lead_memory JSONB DEFAULT '{}'::jsonb,
     user_name TEXT,
     total_paid NUMERIC DEFAULT 0,
     funnel_step TEXT,
@@ -68,6 +69,26 @@ CREATE TABLE IF NOT EXISTS variant_assignments (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS lead_redirects (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    clicked_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    claimed_at TIMESTAMP WITH TIME ZONE,
+    telegram_chat_id TEXT,
+    session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
+    ip TEXT,
+    user_agent TEXT,
+    referer TEXT,
+    country TEXT,
+    region TEXT,
+    city TEXT,
+    timezone TEXT,
+    source_url TEXT,
+    utm JSONB DEFAULT '{}'::jsonb,
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
 -- Funnel events for analytics
 CREATE TABLE IF NOT EXISTS funnel_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -79,6 +100,8 @@ CREATE TABLE IF NOT EXISTS funnel_events (
 
 -- Index para reengajamento
 CREATE INDEX IF NOT EXISTS idx_sessions_reengagement ON sessions (last_bot_activity_at) WHERE reengagement_sent = FALSE;
+CREATE INDEX IF NOT EXISTS idx_lead_redirects_code ON lead_redirects (code);
+CREATE INDEX IF NOT EXISTS idx_lead_redirects_chat ON lead_redirects (telegram_chat_id);
 
 -- Enable Realtime for messages (crucial for admin chat)
 alter publication supabase_realtime add table messages;
@@ -86,6 +109,7 @@ alter publication supabase_realtime add table sessions;
 alter publication supabase_realtime add table prompt_blocks;
 alter publication supabase_realtime add table prompt_variants;
 alter publication supabase_realtime add table variant_assignments;
+alter publication supabase_realtime add table lead_redirects;
 alter publication supabase_realtime add table funnel_events;
 
 -- Policy (optional: currently public for anon, but in prod should be restricted)
@@ -96,6 +120,7 @@ ALTER TABLE bot_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE prompt_blocks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE prompt_variants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE variant_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lead_redirects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE funnel_events ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Enable read/write for all" ON sessions FOR ALL USING (true) WITH CHECK (true);
@@ -104,6 +129,7 @@ CREATE POLICY "Enable read/write for all" ON messages FOR ALL USING (true) WITH 
 CREATE POLICY "Enable read/write for all" ON prompt_blocks FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON prompt_variants FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON variant_assignments FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Enable read/write for all" ON lead_redirects FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Enable read/write for all" ON funnel_events FOR ALL USING (true) WITH CHECK (true);
 
 -- Preview assets (midias de previa configuraveis pelo admin)

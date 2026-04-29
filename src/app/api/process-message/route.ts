@@ -97,6 +97,112 @@ const applyHeuristicStats = (text: string, current: any) => {
     return s;
 };
 
+const normalizeLeadMemory = (input: any) => {
+    let memory = input;
+    if (typeof memory === 'string') {
+        try {
+            memory = JSON.parse(memory);
+        } catch {
+            memory = {};
+        }
+    }
+    if (!memory || typeof memory !== 'object' || Array.isArray(memory)) memory = {};
+    const list = (value: any) => Array.isArray(value)
+        ? Array.from(new Set(value.map((v: any) => String(v || '').trim()).filter(Boolean))).slice(0, 12)
+        : [];
+    return {
+        dominant_type: String(memory.dominant_type || 'desconhecido'),
+        best_tone: String(memory.best_tone || ''),
+        wanted_products: list(memory.wanted_products),
+        rejected_products: list(memory.rejected_products),
+        desires: list(memory.desires),
+        objections: list(memory.objections),
+        price_sensitivity: String(memory.price_sensitivity || ''),
+        last_offer: String(memory.last_offer || ''),
+        notes: list(memory.notes),
+        updated_at: memory.updated_at || null
+    };
+};
+
+const mergeUnique = (base: string[], additions: string[], limit = 12) => {
+    const normalized = [...base, ...additions]
+        .map(v => String(v || '').toLowerCase().trim())
+        .filter(Boolean);
+    return Array.from(new Set(normalized)).slice(0, limit);
+};
+
+const detectLeadMemorySignals = (userText: string, botTexts: string[], aiResponse: any, currentMemory: any) => {
+    const memory = normalizeLeadMemory(currentMemory);
+    const t = (userText || '').toLowerCase();
+    const bot = (botTexts || []).join(' ').toLowerCase();
+
+    const wanted: string[] = [];
+    const rejected: string[] = [];
+    const desires: string[] = [];
+    const objections: string[] = [];
+    const notes: string[] = [];
+
+    if (/(chamada|call|vídeo chamada|video chamada|ligacao|ligação|facetime)/i.test(t)) wanted.push('chamada de video');
+    if (/(foto|fotinha|nude|nudes|pack)/i.test(t)) wanted.push('foto personalizada');
+    if (/(video|vídeo|gravado|film[a|e]|previa|prévia)/i.test(t)) wanted.push('video personalizado');
+    if (/(zap|whats|whatsapp|numero|número|telefone)/i.test(t)) wanted.push('numero pessoal');
+    if (/(avalia|avaliar|nota pro meu pau|meu pau|pau)/i.test(t)) wanted.push('avaliacao');
+    if (/(vip|vital[ií]cio|mensal|acesso)/i.test(t)) wanted.push('vip');
+    if (/(conversar|aten[cç][aã]o|carinho|companhia|ficar comigo)/i.test(t)) wanted.push('chat privado');
+
+    if (/(nao quero vip|não quero vip|sem vip|so chamada|só chamada|so video|só video|so foto|só foto|so teu numero|só teu numero)/i.test(t)) rejected.push('vip');
+    if (/(nao quero chamada|não quero chamada)/i.test(t)) rejected.push('chamada de video');
+    if (/(nao quero foto|não quero foto)/i.test(t)) rejected.push('foto personalizada');
+
+    if (/(bunda|de quatro|de 4)/i.test(t)) desires.push('bunda/de quatro');
+    if (/(peito|teta|seios)/i.test(t)) desires.push('peitos');
+    if (/(domina|manda em mim|obedece|faz o que eu mandar|mandona)/i.test(t)) desires.push('dominancia');
+    if (/(carinho|fofa|namoradinha|namorada|amorosa)/i.test(t)) desires.push('namoradinha/carinho');
+    if (/(safada|putaria|tesao|tesão|gozar|chupar|sentar)/i.test(t)) desires.push('putaria direta');
+
+    if (/(caro|ta caro|tá caro|sem dinheiro|liso|so tenho|só tenho|desconto|faz por)/i.test(t)) objections.push('preco');
+    if (/(prova|real|fake|golpe|confio|confiar)/i.test(t)) objections.push('confianca');
+    if (/(gratis|grátis|de graça|manda primeiro)/i.test(t)) objections.push('quer gratis');
+
+    const price_sensitivity = objections.includes('preco')
+        ? 'alta'
+        : (memory.price_sensitivity || '');
+
+    const best_tone = (() => {
+        if (/(carinho|sozinho|solidao|solidão|namorada|aten[cç][aã]o)/i.test(t)) return 'namoradinha carinhosa';
+        if (/(manda|faz|agora|obedece|quero que)/i.test(t)) return 'safada provocando e conduzindo';
+        if (/(prova|real|fake|como funciona)/i.test(t)) return 'leve segura e simples';
+        if (/(safada|gostosa|tesao|chupar|sentar|gozar|pau)/i.test(t)) return 'direta e safada';
+        return memory.best_tone || '';
+    })();
+
+    if (aiResponse?.lead_classification && aiResponse.lead_classification !== 'desconhecido') {
+        notes.push(`classificacao atual: ${aiResponse.lead_classification}`);
+    }
+
+    const last_offer = (() => {
+        const prices = extractPrices(bot);
+        if (prices.length === 0) return memory.last_offer || '';
+        const lastPrice = prices[prices.length - 1].toFixed(2);
+        const product = wanted[0] || (bot.includes('vip') ? 'vip' : 'produto');
+        return `${product} R$ ${lastPrice}`;
+    })();
+
+    return {
+        ...memory,
+        dominant_type: aiResponse?.lead_classification || memory.dominant_type || 'desconhecido',
+        best_tone,
+        wanted_products: mergeUnique(memory.wanted_products, wanted),
+        rejected_products: mergeUnique(memory.rejected_products, rejected),
+        desires: mergeUnique(memory.desires, desires),
+        objections: mergeUnique(memory.objections, objections),
+        price_sensitivity,
+        last_offer,
+        notes: mergeUnique(memory.notes, notes, 10),
+        updated_at: new Date().toISOString()
+    };
+};
+
 const hasTaradoPositiveTrigger = (text: string) => {
     const t = (text || '').toLowerCase();
     return (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|vÃ­deo|video|pelada|sem roupa|manda mais)/i.test(t)) ||
@@ -139,6 +245,31 @@ const sanitizeOutgoingMessage = (text: string) => {
     out = out.replace(/\s+/g, ' ');
     out = fixGluedWords(out);
     return out;
+};
+
+const OPENING_VICES = new Set(['amor', 'anjo', 'vida', 'nossa', 'ai', 'eita', 'perfeito']);
+
+const firstWordOf = (text: string) => {
+    const match = normalizeLoopText(text).match(/^\S+/);
+    return match ? match[0] : '';
+};
+
+const removeOpeningVice = (text: string) => {
+    return (text || '').replace(/^(amor|anjo|vida|nossa|ai|eita|perfeito)[,\s]+/i, '').trim();
+};
+
+const reduceOpeningRepetition = (messages: string[], lastBotContent: string) => {
+    let previousOpening = firstWordOf(lastBotContent);
+    return messages.map((msg) => {
+        const opening = firstWordOf(msg);
+        if (opening && opening === previousOpening && OPENING_VICES.has(opening)) {
+            const cleaned = removeOpeningVice(msg);
+            previousOpening = firstWordOf(cleaned || msg);
+            return cleaned || msg;
+        }
+        previousOpening = opening || previousOpening;
+        return msg;
+    });
 };
 
 const extractPrices = (text: string) => {
@@ -432,7 +563,8 @@ export async function POST(req: NextRequest) {
         totalPaid: session.total_paid || 0,
         currentStats: session.lead_score,
         minutesSinceOffer,
-        extraScript
+        extraScript,
+        leadMemory: normalizeLeadMemory(session.lead_memory)
     };
 
     const extractFileAndCaption = (input: string) => {
@@ -657,21 +789,30 @@ export async function POST(req: NextRequest) {
         nextStep = 'CONNECTION';
     }
 
+    const updatedLeadMemory = detectLeadMemorySignals(
+        userOnlyText,
+        Array.isArray(aiResponse.messages) ? aiResponse.messages : [],
+        aiResponse,
+        session.lead_memory
+    );
+
     const updatePayload: any = {
         lead_score: aiResponse.lead_stats,
         funnel_step: nextStep,
+        lead_memory: updatedLeadMemory,
     };
     let updateResult = await supabase.from('sessions').update(updatePayload).eq('id', session.id).select();
 
     if (updateResult.error) {
         const msg = String(updateResult.error?.message || '');
         const code = String((updateResult.error as any)?.code || '');
-        const missingFunnelStep = code === '42703' || msg.toLowerCase().includes('funnel_step');
-        if (missingFunnelStep) {
-            // Banco antigo sem a coluna funnel_step: salva pelo menos as stats.
-            const fallbackResult = await supabase.from('sessions').update({
-                lead_score: aiResponse.lead_stats,
-            }).eq('id', session.id).select();
+        const missingOptionalColumn = code === '42703' || msg.toLowerCase().includes('funnel_step') || msg.toLowerCase().includes('lead_memory');
+        if (missingOptionalColumn) {
+            const fallbackPayload: any = { lead_score: aiResponse.lead_stats };
+            if (!msg.toLowerCase().includes('funnel_step')) {
+                fallbackPayload.funnel_step = nextStep;
+            }
+            const fallbackResult = await supabase.from('sessions').update(fallbackPayload).eq('id', session.id).select();
             if (fallbackResult.error) {
                 console.error("❌ ERRO ao Atualizar Stats (fallback):", fallbackResult.error);
             } else {
@@ -765,11 +906,13 @@ export async function POST(req: NextRequest) {
         ? aiResponse.messages
         : [String(aiResponse.messages || '')].filter(Boolean);
 
-    const safeMessages = (outgoingMessages.length > 0 ? outgoingMessages : ['amor?'])
+    let safeMessages = (outgoingMessages.length > 0 ? outgoingMessages : ['amor?'])
         .map((m: string) => sanitizeOutgoingMessage(m))
         .filter(Boolean);
 
     const lastBotContent = lastBotMsg?.content || '';
+    safeMessages = reduceOpeningRepetition(safeMessages, lastBotContent);
+
     const normLastBot = normalizeLoopText(lastBotContent);
     const normFirstOut = normalizeLoopText(safeMessages[0] || '');
     if (normLastBot && normFirstOut && normLastBot === normFirstOut) {
