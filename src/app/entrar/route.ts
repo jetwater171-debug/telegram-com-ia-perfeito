@@ -1,6 +1,11 @@
 import { randomBytes } from 'crypto';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
+
+let cachedTelegramUsername = (process.env.TELEGRAM_BOT_USERNAME || process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || '')
+    .replace(/^@/, '')
+    .trim();
+let usernamePromise: Promise<string> | null = null;
 
 const getClientIp = (req: NextRequest) => {
     const forwarded = req.headers.get('x-forwarded-for');
@@ -30,7 +35,7 @@ const isPublicIp = (ip: string) => {
 const lookupGeoByIp = async (ip: string) => {
     if (!isPublicIp(ip)) return {};
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 1200);
+    const timeout = setTimeout(() => controller.abort(), 700);
     try {
         const res = await fetch(`https://ipapi.co/${encodeURIComponent(ip)}/json/`, {
             cache: 'no-store',
@@ -52,36 +57,51 @@ const lookupGeoByIp = async (ip: string) => {
 };
 
 const getTelegramUsername = async () => {
-    const { data: usernameSetting } = await supabase
-        .from('bot_settings')
-        .select('value')
-        .eq('key', 'telegram_bot_username')
-        .single();
+    if (cachedTelegramUsername) return cachedTelegramUsername;
+    if (usernamePromise) return usernamePromise;
 
-    if (usernameSetting?.value) return String(usernameSetting.value).replace(/^@/, '').trim();
+    usernamePromise = (async () => {
+        const { data: usernameSetting } = await supabase
+            .from('bot_settings')
+            .select('value')
+            .eq('key', 'telegram_bot_username')
+            .single();
 
-    const { data: tokenSetting } = await supabase
-        .from('bot_settings')
-        .select('value')
-        .eq('key', 'telegram_bot_token')
-        .single();
+        if (usernameSetting?.value) {
+            cachedTelegramUsername = String(usernameSetting.value).replace(/^@/, '').trim();
+            return cachedTelegramUsername;
+        }
 
-    const token = tokenSetting?.value;
-    if (!token) return '';
+        const { data: tokenSetting } = await supabase
+            .from('bot_settings')
+            .select('value')
+            .eq('key', 'telegram_bot_token')
+            .single();
+
+        const token = tokenSetting?.value;
+        if (!token) return '';
+
+        try {
+            const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, { cache: 'no-store' });
+            const json = await res.json();
+            const username = json?.result?.username ? String(json.result.username).trim() : '';
+            if (username) {
+                cachedTelegramUsername = username;
+                await supabase.from('bot_settings').upsert({
+                    key: 'telegram_bot_username',
+                    value: username
+                });
+            }
+            return username;
+        } catch {
+            return '';
+        }
+    })();
 
     try {
-        const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, { cache: 'no-store' });
-        const json = await res.json();
-        const username = json?.result?.username ? String(json.result.username).trim() : '';
-        if (username) {
-            await supabase.from('bot_settings').upsert({
-                key: 'telegram_bot_username',
-                value: username
-            });
-        }
-        return username;
-    } catch {
-        return '';
+        return await usernamePromise;
+    } finally {
+        usernamePromise = null;
     }
 };
 
@@ -95,12 +115,11 @@ export async function GET(req: NextRequest) {
     const code = makeCode();
     const ip = getClientIp(req);
     const headerGeo = getHeaderGeo(req);
-    const ipGeo = headerGeo.city ? {} : await lookupGeoByIp(ip);
     const geo = {
-        country: headerGeo.country || (ipGeo as any).country || '',
-        region: headerGeo.region || (ipGeo as any).region || '',
-        city: headerGeo.city || (ipGeo as any).city || '',
-        timezone: headerGeo.timezone || (ipGeo as any).timezone || ''
+        country: headerGeo.country || '',
+        region: headerGeo.region || '',
+        city: headerGeo.city || '',
+        timezone: headerGeo.timezone || ''
     };
     const utm: Record<string, string> = {};
     for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'ttclid', 'gclid']) {
@@ -128,6 +147,24 @@ export async function GET(req: NextRequest) {
     const { error } = await supabase.from('lead_redirects').insert(payload);
     if (error) {
         console.error('[LEAD REDIRECT] insert failed:', error);
+    }
+
+    if (!geo.city && isPublicIp(ip)) {
+        after(async () => {
+            const ipGeo = await lookupGeoByIp(ip);
+            if (!(ipGeo as any).city && !(ipGeo as any).country) return;
+            const { error: updateError } = await supabase
+                .from('lead_redirects')
+                .update({
+                    country: (ipGeo as any).country || null,
+                    region: (ipGeo as any).region || null,
+                    city: (ipGeo as any).city || null,
+                    timezone: (ipGeo as any).timezone || null
+                })
+                .eq('code', code)
+                .is('claimed_at', null);
+            if (updateError) console.error('[LEAD REDIRECT] geo update failed:', updateError);
+        });
     }
 
     return NextResponse.redirect(`https://t.me/${username}?start=${encodeURIComponent(code)}`, 302);
