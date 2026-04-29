@@ -395,6 +395,25 @@ const extractPrices = (text: string) => {
     return matches.map(m => Number(m.replace(',', '.'))).filter(n => !Number.isNaN(n));
 };
 
+const extractNegotiatedUserValue = (text: string) => {
+    const t = text || '';
+    const negotiationPattern = /(so tenho|s[oó] tenho|tenho|na conta|faz por|por|da pra fazer|d[aá] pra fazer|consigo pagar|pago)/i;
+    if (!negotiationPattern.test(t)) return null;
+
+    const decimalMatches = t.match(/\b\d{1,4}[.,]\d{1,2}\b/g) || [];
+    if (decimalMatches.length > 0) {
+        const values = decimalMatches
+            .map(m => Number(m.replace(',', '.')))
+            .filter(n => !Number.isNaN(n) && n > 0);
+        return values.length > 0 ? values[values.length - 1] : null;
+    }
+
+    const reaisMatches = Array.from(t.matchAll(/\b(?:r\$\s*)?(\d{1,4})\s*(?:reais|real|conto|contos)?\b/gi))
+        .map(match => Number(match[1]))
+        .filter(n => !Number.isNaN(n) && n > 0);
+    return reaisMatches.length > 0 ? reaisMatches[reaisMatches.length - 1] : null;
+};
+
 const inferPixValue = (texts: string[]) => {
     for (let i = texts.length - 1; i >= 0; i--) {
         const prices = extractPrices(texts[i]);
@@ -1335,7 +1354,8 @@ export async function POST(req: NextRequest) {
                         combinedText,
                         lastBotMsg?.content || ''
                     ]);
-                    const value = Number(aiResponse.payment_details?.value ?? inferredValue ?? 19.90);
+                    const negotiatedUserValue = extractNegotiatedUserValue(userOnlyText);
+                    const value = Number(negotiatedUserValue ?? aiResponse.payment_details?.value ?? inferredValue ?? 19.90);
                     const description = aiResponse.payment_details?.description || "Pack Exclusivo";
                     // Se já existe PIX pendente com o mesmo valor, reenviar o mesmo
                     const { data: lastPixMsg } = await supabase
