@@ -266,6 +266,7 @@ const sanitizeOutgoingMessage = (text: string) => {
     out = out.replace(/\bsou\s+eu\b/gi, 'sou lari');
     out = out.replace(/\beu\s+sou\s+eu\b/gi, 'eu sou lari');
     out = out.replace(/\s+/g, ' ');
+    out = out.replace(/\s*(?:\.{3,}|…)\s*$/u, '');
     out = fixGluedWords(out);
     return out;
 };
@@ -356,6 +357,22 @@ const removeDuplicateNormalizedMessages = (messages: string[]) => {
     });
 };
 
+const removeDanglingFinalSuspense = (messages: string[]) => {
+    if (messages.length === 0) return messages;
+    const last = messages[messages.length - 1] || '';
+    const cleaned = last.replace(/\s*(?:\.{3,}|…)\s*$/u, '').trim();
+    if (!cleaned) return messages.slice(0, -1);
+    const dangling = /\b(se eu tivesse ai|se eu estivesse ai|se eu tivesse perto|se eu estivesse perto|agora|pertinho de voce|pertinho de você)$/iu.test(cleaned);
+    if (!dangling) {
+        return cleaned === last ? messages : [...messages.slice(0, -1), cleaned];
+    }
+    return [
+        ...messages.slice(0, -1),
+        cleaned,
+        'me fala uma coisa, vc e mais quietinho ou mais safado?'
+    ];
+};
+
 const applyConversationQualityGuards = (messages: string[], opts: {
     userText: string;
     sessionName: any;
@@ -368,6 +385,7 @@ const applyConversationQualityGuards = (messages: string[], opts: {
     out = removeAnsweredNameQuestions(out, opts.userText, opts.sessionName);
     out = reduceOpeningRepetition(out, opts.lastBotContent);
     out = removeDuplicateNormalizedMessages(out);
+    out = removeDanglingFinalSuspense(out);
     return out.length > 0 ? out : messages;
 };
 
@@ -1091,8 +1109,9 @@ export async function POST(req: NextRequest) {
     const explicitFantasy = hasExplicitSexualFantasyTrigger(userOnlyText);
     const allowLong = explicitFantasy || ['NEGOTIATION', 'SALES_PITCH', 'CLOSING', 'PAYMENT_CHECK'].includes(stage);
     const maxFantasyMessages = explicitFantasy ? 7 : 2;
-    const outgoingToSend = (!allowLong && safeMessages.length > 2)
-        ? safeMessages.slice(0, maxFantasyMessages)
+    const maxNormalMessages = allowLong ? safeMessages.length : 4;
+    const outgoingToSend = (!allowLong && safeMessages.length > maxNormalMessages)
+        ? safeMessages.slice(0, maxNormalMessages)
         : (explicitFantasy ? safeMessages.slice(0, maxFantasyMessages) : safeMessages);
 
     for (let i = 0; i < outgoingToSend.length; i++) {
