@@ -54,6 +54,76 @@ const responseSchema = {
     required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action"],
 };
 
+const strategySchema = {
+    type: "OBJECT",
+    properties: {
+        intent: { type: "STRING" },
+        lead_type: { type: "STRING", enum: ["carente", "tarado", "curioso", "frio", "desconhecido"] },
+        temperature: { type: "NUMBER" },
+        objective: { type: "STRING" },
+        product_to_sell: { type: "STRING", nullable: true },
+        should_sell_now: { type: "BOOLEAN" },
+        response_angle: { type: "STRING" },
+        must_answer: { type: "STRING" },
+        next_step: { type: "STRING" },
+        avoid: {
+            type: "ARRAY",
+            items: { type: "STRING" }
+        },
+        action_hint: {
+            type: "STRING",
+            enum: [
+                "none", "send_video_preview", "send_hot_video_preview", "send_ass_photo_preview", "send_custom_preview",
+                "generate_pix_payment", "check_payment_status", "send_shower_photo", "send_lingerie_photo",
+                "send_wet_finger_photo", "request_app_install"
+            ]
+        },
+        payment_value_hint: { type: "NUMBER", nullable: true },
+        confidence: { type: "NUMBER" }
+    },
+    required: ["intent", "lead_type", "temperature", "objective", "should_sell_now", "response_angle", "must_answer", "next_step", "avoid", "action_hint", "confidence"],
+};
+
+const reviewSchema = {
+    type: "OBJECT",
+    properties: {
+        approved: { type: "BOOLEAN" },
+        score: { type: "NUMBER" },
+        issues: {
+            type: "ARRAY",
+            items: { type: "STRING" }
+        },
+        messages: {
+            type: "ARRAY",
+            items: { type: "STRING" }
+        },
+        action: {
+            type: "STRING",
+            enum: [
+                "none", "send_video_preview", "send_hot_video_preview", "send_ass_photo_preview", "send_custom_preview",
+                "generate_pix_payment", "check_payment_status", "send_shower_photo", "send_lingerie_photo",
+                "send_wet_finger_photo", "request_app_install"
+            ]
+        },
+        current_state: {
+            type: "STRING",
+            enum: [
+                "WELCOME", "CONNECTION", "TRIGGER_PHASE", "HOT_TALK", "PREVIEW", "SALES_PITCH", "NEGOTIATION", "CLOSING", "PAYMENT_CHECK"
+            ]
+        },
+        preview_id: { type: "STRING", nullable: true },
+        payment_details: {
+            type: "OBJECT",
+            nullable: true,
+            properties: {
+                value: { type: "NUMBER" },
+                description: { type: "STRING" }
+            }
+        }
+    },
+    required: ["approved", "score", "issues", "messages", "action", "current_state"],
+};
+
 export const getSystemInstruction = (
     userCity: string = "Sao Paulo",
     neighborCity: string = "uma cidade vizinha",
@@ -763,6 +833,28 @@ export const initializeGenAI = () => {
 
 import { supabase } from '@/lib/supabaseClient';
 
+const safetySettings = [
+    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+];
+
+const makeJsonModel = (systemInstruction: string, responseSchemaConfig: any) => {
+    if (!genAI) throw new Error("API Key not configured");
+    return genAI.getGenerativeModel({
+        model: "gemini-2.5-flash",
+        systemInstruction,
+        safetySettings,
+        generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: responseSchemaConfig
+        }
+    });
+};
+
+const parseJsonText = <T,>(text: string): T => JSON.parse(text) as T;
+
 export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, neighborCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null, minutesSinceOffer?: number, extraScript?: string, leadMemory?: any }, media?: { mimeType: string, data: string }) => {
     initializeGenAI();
     if (!genAI) throw new Error("API Key not configured");
@@ -837,31 +929,18 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         recentWords.length > 0 ? `Evite repetir agora: ${recentWords.join(', ')}` : ''
     ].filter(Boolean).join('\n\n');
 
-    const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
-        systemInstruction: getSystemInstruction(
-            context?.userCity,
-            context?.neighborCity,
-            context?.isHighTicket,
-            context?.totalPaid || 0,
-            currentStats,
-            context?.minutesSinceOffer || 999,
-            previewsCatalog,
-            dynamicScript,
-            context?.leadMemory || null,
-            antiRepeatText
-        ) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.",
-        safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        ],
-        generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: responseSchema as any
-        }
-    });
+    const baseInstruction = getSystemInstruction(
+        context?.userCity,
+        context?.neighborCity,
+        context?.isHighTicket,
+        context?.totalPaid || 0,
+        currentStats,
+        context?.minutesSinceOffer || 999,
+        previewsCatalog,
+        dynamicScript,
+        context?.leadMemory || null,
+        antiRepeatText
+    ) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.";
 
     const history = (dbMessages || [])
         .filter(m => m.sender === 'user' || m.sender === 'bot')
@@ -888,26 +967,91 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         });
     }
 
-    // Se tiver mídia, não usamos o chat session padrão com `errorMessage` simples,
-    // precisamos usar o generateContent passando o histórico manualmente ou usar o sendMessage do chat com array de parts.
-    // O SDK do Gemini suporta sendMessage com parts.
-
-    const chat = model.startChat({
-        history: cleanHistory
-    });
-
     let attempt = 0;
     const maxRetries = 3;
 
     while (attempt < maxRetries) {
         try {
-            const result = await chat.sendMessage(currentMessageParts);
+            const strategyModel = makeJsonModel(
+                `${baseInstruction}
+
+# IA 1: ESTRATEGISTA DE CONVERSA
+Voce NAO fala com o lead. Voce so diagnostica a conversa e entrega a melhor estrategia.
+Seja frio e preciso: entenda intencao, produto ideal, timing, risco e proximo passo.
+Prioridade maxima: responder o que o lead perguntou, usar memoria, evitar script e aumentar chance de conversao.`,
+                strategySchema as any
+            );
+
+            const strategyChat = strategyModel.startChat({ history: cleanHistory });
+            const strategyParts: any[] = [{
+                text: `Analise a mensagem atual e gere a estrategia para a Lari.\n\nMENSAGEM ATUAL:\n${userMessage}`
+            }];
+            if (media) strategyParts.push(currentMessageParts[1]);
+            const strategyResult = await strategyChat.sendMessage(strategyParts);
+            const strategy = parseJsonText<any>(strategyResult.response.text());
+
+            console.log("🧠 Estratégia Lari:", JSON.stringify(strategy));
+
+            const draftModel = makeJsonModel(
+                `${baseInstruction}
+
+# IA 2: LARI
+Voce e a Lari falando com o lead. Use a estrategia recebida como direcao, mas responda natural, humana e contextual.
+Nao copie frases prontas se nao encaixarem. A estrategia manda o objetivo, voce escreve como uma menina real.`,
+                responseSchema as any
+            );
+
+            const draftChat = draftModel.startChat({ history: cleanHistory });
+            const draftParts: any[] = [{
+                text: `${userMessage}
+
+[ESTRATEGIA INTERNA DA IA ANALISTA]
+${JSON.stringify(strategy)}
+
+Use essa estrategia para responder.`
+            }];
+            if (media) draftParts.push(currentMessageParts[1]);
+            const result = await draftChat.sendMessage(draftParts);
             const responseText = result.response.text();
 
             console.log(`🤖 Gemini Clean Response (Attempt ${attempt + 1}):`, responseText);
 
-            // Simpler parsing - Trust the AI + Schema
-            const jsonResponse = JSON.parse(responseText) as AIResponse;
+            const jsonResponse = parseJsonText<AIResponse>(responseText);
+
+            const reviewModel = makeJsonModel(
+                `${baseInstruction}
+
+# IA 3: REVISORA DE QUALIDADE
+Voce revisa a resposta da Lari antes de enviar.
+Reprove/corrija se: parece script, ignora pergunta do lead, vende produto errado, repete frase, pergunta nome sem necessidade, fala cidade generica, nao usa memoria, esta fria demais ou nao aproxima da conversao.
+Se corrigir, devolva mensagens melhores no mesmo estilo da Lari. Nao explique para o lead.`,
+                reviewSchema as any
+            );
+
+            const reviewChat = reviewModel.startChat({ history: cleanHistory });
+            const reviewResult = await reviewChat.sendMessage([{
+                text: `MENSAGEM DO LEAD:\n${userMessage}
+
+ESTRATEGIA:\n${JSON.stringify(strategy)}
+
+RASCUNHO DA LARI:\n${JSON.stringify(jsonResponse)}
+
+Revise e corrija se necessario.`
+            }]);
+            const review = parseJsonText<any>(reviewResult.response.text());
+            console.log("🧪 Revisão Lari:", JSON.stringify(review));
+
+            if (review && review.approved === false && Array.isArray(review.messages) && review.messages.length > 0) {
+                jsonResponse.messages = review.messages;
+                jsonResponse.action = review.action || jsonResponse.action;
+                jsonResponse.current_state = review.current_state || jsonResponse.current_state;
+                jsonResponse.preview_id = review.preview_id ?? jsonResponse.preview_id;
+                jsonResponse.payment_details = review.payment_details ?? jsonResponse.payment_details;
+            }
+
+            const strategyThought = `ESTRATEGIA: ${strategy?.intent || 'n/a'} | ${strategy?.lead_type || 'n/a'} | ${strategy?.objective || 'n/a'} | ${strategy?.next_step || 'n/a'}`;
+            const reviewThought = `REVISAO: ${review?.approved ? 'aprovada' : 'corrigida'} | score ${review?.score ?? 'n/a'} | ${(review?.issues || []).slice(0, 3).join(', ')}`;
+            jsonResponse.internal_thought = [strategyThought, reviewThought, jsonResponse.internal_thought].filter(Boolean).join('\n');
 
             // Validar e Sanitizar Lead Stats
             // GARANTIR QUE SEMPRE EXISTA para não quebrar o update no banco
