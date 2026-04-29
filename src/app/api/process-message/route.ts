@@ -406,6 +406,51 @@ const inferStageFromText = (text: string) => {
     return null;
 };
 
+const MEDIA_ACTIONS = new Set([
+    'send_shower_photo',
+    'send_lingerie_photo',
+    'send_wet_finger_photo',
+    'send_ass_photo_preview',
+    'send_video_preview',
+    'send_hot_video_preview',
+    'send_custom_preview'
+]);
+
+const resolveContextualMediaAction = (userText: string, currentAction?: string) => {
+    const t = (userText || '').toLowerCase();
+    const action = currentAction || 'none';
+    const actionIsMedia = MEDIA_ACTIONS.has(action);
+    const askedForMedia = /(manda|mostra|quero ver|deixa eu ver|tem foto|tem video|tem vídeo|foto|video|vídeo|previa|prévia)/i.test(t);
+    if (!actionIsMedia && !askedForMedia) return null;
+    if (action === 'send_custom_preview') return null;
+
+    if (/(de 4|quatro|costas|bunda|rab[ao]|empinad|por tras|por trás)/i.test(t)) {
+        return {
+            action: 'send_ass_photo_preview',
+            intro: 'entao olha essa que combina com o que vc falou'
+        };
+    }
+    if (/(banho|molhad|chuveiro|toalha)/i.test(t)) {
+        return {
+            action: 'send_shower_photo',
+            intro: 'tava pensando nisso e lembrei dessa do banho'
+        };
+    }
+    if (/(lingerie|calcinha|conjunto|cama|deitada)/i.test(t)) {
+        return {
+            action: 'send_lingerie_photo',
+            intro: 'acho que essa aqui combina mais com vc'
+        };
+    }
+    if (/(video|vídeo|rebol|movimento|dan[cç]ando)/i.test(t)) {
+        return {
+            action: action === 'send_hot_video_preview' ? 'send_hot_video_preview' : 'send_video_preview',
+            intro: 'vou te mandar um videozinho que faz mais sentido com isso'
+        };
+    }
+    return null;
+};
+
 const randNormal = (): number => {
     let u = 0, v = 0;
     while (u === 0) u = Math.random();
@@ -802,6 +847,11 @@ export async function POST(req: NextRequest) {
     }
 
     const aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
+    const contextualMedia = resolveContextualMediaAction(userOnlyText, aiResponse.action);
+    if (contextualMedia) {
+        aiResponse.action = contextualMedia.action;
+        aiResponse.current_state = ACTION_STAGE_MAP[contextualMedia.action] || aiResponse.current_state;
+    }
 
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
 
@@ -997,6 +1047,17 @@ export async function POST(req: NextRequest) {
             return !/(cidade vizinha|daqui|de onde vc|de onde voce|de onde você)/i.test(norm);
         });
         safeMessages = [forcedCityAnswer, ...withoutGenericCity.filter((msg: string) => normalizeLoopText(msg) !== normalizeLoopText(forcedCityAnswer))].slice(0, 3);
+    }
+
+    if (contextualMedia) {
+        const introNorm = normalizeLoopText(contextualMedia.intro);
+        const alreadyPrepared = safeMessages.some((msg: string) => {
+            const norm = normalizeLoopText(msg);
+            return norm.includes('essa') || norm.includes('foto') || norm.includes('video') || norm.includes('olha') || norm.includes(introNorm);
+        });
+        if (!alreadyPrepared) {
+            safeMessages = [contextualMedia.intro, ...safeMessages].slice(0, 3);
+        }
     }
 
     const normLastBot = normalizeLoopText(lastBotContent);
