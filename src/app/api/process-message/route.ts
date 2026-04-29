@@ -93,20 +93,29 @@ const normalizeLeadMemory = (input: any) => {
         }
     }
     if (!memory || typeof memory !== 'object' || Array.isArray(memory)) memory = {};
-    const list = (value: any) => Array.isArray(value)
-        ? Array.from(new Set(value.map((v: any) => String(v || '').trim()).filter(Boolean))).slice(0, 12)
-        : [];
+    const metadata = memory.metadata && typeof memory.metadata === 'object' && !Array.isArray(memory.metadata) ? memory.metadata : {};
+    const list = (value: any, key?: string) => {
+        const items = Array.isArray(value)
+            ? Array.from(new Set(value.map((v: any) => String(v || '').trim()).filter(Boolean)))
+            : [];
+        if (key === 'wanted_products' && metadata.evaluation_requested !== true) {
+            return items.filter((item: string) =>
+                item.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim() !== 'avaliacao'
+            ).slice(0, 12);
+        }
+        return items.slice(0, 12);
+    };
     return {
         dominant_type: String(memory.dominant_type || 'desconhecido'),
         best_tone: String(memory.best_tone || ''),
-        wanted_products: list(memory.wanted_products),
+        wanted_products: list(memory.wanted_products, 'wanted_products'),
         rejected_products: list(memory.rejected_products),
         desires: list(memory.desires),
         objections: list(memory.objections),
         price_sensitivity: String(memory.price_sensitivity || ''),
         last_offer: String(memory.last_offer || ''),
         notes: list(memory.notes),
-        metadata: memory.metadata && typeof memory.metadata === 'object' && !Array.isArray(memory.metadata) ? memory.metadata : {},
+        metadata,
         updated_at: memory.updated_at || null
     };
 };
@@ -128,12 +137,13 @@ const detectLeadMemorySignals = (userText: string, botTexts: string[], aiRespons
     const desires: string[] = [];
     const objections: string[] = [];
     const notes: string[] = [];
+    const explicitEvaluationRequest = /(?:avalia|avaliar|avaliacao|avaliação|nota|dar nota|da nota|dá uma nota).{0,40}(?:pau|pinto|rola|ele)|(?:pau|pinto|rola).{0,40}(?:avalia|avaliar|avaliacao|avaliação|nota|dar nota|da nota|dá uma nota)/i.test(t);
 
     if (/(chamada|call|vídeo chamada|video chamada|ligacao|ligação|facetime)/i.test(t)) wanted.push('chamada de video');
     if (/(foto|fotinha|nude|nudes|pack)/i.test(t)) wanted.push('foto personalizada');
     if (/(video|vídeo|gravado|film[a|e]|previa|prévia)/i.test(t)) wanted.push('video personalizado');
     if (/(zap|whats|whatsapp|numero|número|telefone)/i.test(t)) wanted.push('numero pessoal');
-    if (/(avalia|avaliar|nota pro meu pau|meu pau|pau)/i.test(t)) wanted.push('avaliacao');
+    if (explicitEvaluationRequest) wanted.push('avaliacao');
     if (/(vip|vital[ií]cio|mensal|acesso)/i.test(t)) wanted.push('vip');
     if (/(conversar|aten[cç][aã]o|carinho|companhia|ficar comigo)/i.test(t)) wanted.push('chat privado');
 
@@ -186,6 +196,10 @@ const detectLeadMemorySignals = (userText: string, botTexts: string[], aiRespons
         price_sensitivity,
         last_offer,
         notes: mergeUnique(memory.notes, notes, 10),
+        metadata: {
+            ...(memory.metadata || {}),
+            ...(explicitEvaluationRequest ? { evaluation_requested: true } : {})
+        },
         updated_at: new Date().toISOString()
     };
 };
@@ -212,6 +226,10 @@ const hasPositiveStatTrigger = (text: string, key: StatKey) => {
         return /(saudade|solid[a?]o|sentindo falta|carinho|afeto|ex-namorada|trai[cç][aã]o|desabafo)/i.test(t);
     }
     return false;
+};
+
+const hasExplicitSexualFantasyTrigger = (text: string) => {
+    return /(quero te comer|te comeria|vou te comer|te pegava|quero transar|quero meter|meter em voce|meter em voc[eê]|quero te chupar|me chupa|quero gozar|gozar em voce|gozar em voc[eê]|pau|buceta|de 4|por tras|por trás)/i.test(text || '');
 };
 
 const GLUE_DICT = new Set([
@@ -839,6 +857,9 @@ export async function POST(req: NextRequest) {
     if (repetition.repeats >= 2) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead repetiu a mesma mensagem ${repetition.repeats}x ("${repetition.last}"). Responda diferente, quebre o loop e puxe o assunto com algo novo e humano. Nao repita a mesma frase.]`;
     }
+    if (hasExplicitSexualFantasyTrigger(userOnlyText)) {
+        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead abriu putaria explicita. Antes de vender ou perguntar outra coisa, continue a fantasia no mesmo tema que ele trouxe. Faca ele imaginar a cena em varios baloes curtos, explicitos e naturais. Se a conversa estiver muito quente, pode usar 4-7 baloes; se estiver menos quente, use menos. Depois puxe para uma previa/oferta coerente se couber.]`;
+    }
     if (cityQuestion && hasCity) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou onde voce mora. Voce mora na MESMA cidade do lead: "${userCity}". Responda no PRIMEIRO BALAO de forma humana, curta e natural: "sou de ${userCity} amor, e vc?". NAO diga "cidade vizinha", NAO diga "daqui" e NAO responda seco.]`;
     }
@@ -1067,8 +1088,12 @@ export async function POST(req: NextRequest) {
     }
 
     const stage = String(aiResponse.current_state || '').toUpperCase();
-    const allowLong = ['NEGOTIATION', 'SALES_PITCH', 'CLOSING', 'PAYMENT_CHECK'].includes(stage);
-    const outgoingToSend = (!allowLong && safeMessages.length > 2) ? safeMessages.slice(0, 2) : safeMessages;
+    const explicitFantasy = hasExplicitSexualFantasyTrigger(userOnlyText);
+    const allowLong = explicitFantasy || ['NEGOTIATION', 'SALES_PITCH', 'CLOSING', 'PAYMENT_CHECK'].includes(stage);
+    const maxFantasyMessages = explicitFantasy ? 7 : 2;
+    const outgoingToSend = (!allowLong && safeMessages.length > 2)
+        ? safeMessages.slice(0, maxFantasyMessages)
+        : (explicitFantasy ? safeMessages.slice(0, maxFantasyMessages) : safeMessages);
 
     for (let i = 0; i < outgoingToSend.length; i++) {
         const msgText = outgoingToSend[i];
