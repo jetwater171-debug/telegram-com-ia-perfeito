@@ -235,13 +235,14 @@ const fixGluedWords = (text: string) => {
 
 const sanitizeOutgoingMessage = (text: string) => {
     let out = (text || '').trim();
-    // Evita "eu sou eu" quando a IA se apresenta.
     out = out.replace(/\beu\s+sou\s+a\s+lari\b/gi, 'eu sou lari');
     out = out.replace(/\beu\s+sou\s+a\s+larissa\b/gi, 'eu sou larissa');
+    out = out.replace(/\bsou\s+a\s+lari\b/gi, 'sou lari');
+    out = out.replace(/\bsou\s+a\s+larissa\b/gi, 'sou larissa');
     out = out.replace(/\bme\s+chamo\s+a\s+lari\b/gi, 'me chamo lari');
     out = out.replace(/\bme\s+chamo\s+a\s+larissa\b/gi, 'me chamo larissa');
-    out = out.replace(/\ba\s+lari\b/gi, 'eu');
-    out = out.replace(/\ba\s+larissa\b/gi, 'eu');
+    out = out.replace(/\bsou\s+eu\b/gi, 'sou lari');
+    out = out.replace(/\beu\s+sou\s+eu\b/gi, 'eu sou lari');
     out = out.replace(/\s+/g, ' ');
     out = fixGluedWords(out);
     return out;
@@ -270,6 +271,29 @@ const reduceOpeningRepetition = (messages: string[], lastBotContent: string) => 
         previousOpening = opening || previousOpening;
         return msg;
     });
+};
+
+const userProbablyProvidedName = (text: string, extractedName?: string | null) => {
+    const t = (text || '').trim();
+    if (extractedName && String(extractedName).trim().length >= 2) return true;
+    if (/\b(meu nome [eé]|me chamo|sou o|sou a|pode me chamar de)\s+[\p{L}]{2,}/iu.test(t)) return true;
+    const compact = t.replace(/[^\p{L}\s]/gu, '').trim();
+    const words = compact.split(/\s+/).filter(Boolean);
+    if (words.length === 1 && words[0].length >= 2 && words[0].length <= 18) {
+        return !/^(oi|ola|ol[aá]|sim|nao|não|bom|boa|tudo|bem|vc|voce|você|amor|anjo|vida)$/iu.test(words[0]);
+    }
+    return false;
+};
+
+const removePrematureNameIntro = (messages: string[], userText: string, extractedName?: string | null) => {
+    if (userProbablyProvidedName(userText, extractedName)) return messages;
+    const filtered = messages.filter((msg) => {
+        const norm = normalizeLoopText(msg);
+        const isIntro = /\b(prazer|muito prazer)\b/i.test(norm) &&
+            /\b(sou|chamo|lari|larissa)\b/i.test(norm);
+        return !isIntro;
+    });
+    return filtered.length > 0 ? filtered : messages;
 };
 
 const extractPrices = (text: string) => {
@@ -911,6 +935,7 @@ export async function POST(req: NextRequest) {
         .filter(Boolean);
 
     const lastBotContent = lastBotMsg?.content || '';
+    safeMessages = removePrematureNameIntro(safeMessages, userOnlyText, aiResponse.extracted_user_name);
     safeMessages = reduceOpeningRepetition(safeMessages, lastBotContent);
 
     const normLastBot = normalizeLoopText(lastBotContent);
