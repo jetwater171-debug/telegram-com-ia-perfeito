@@ -38,7 +38,33 @@ const getNeighborCity = (city: string | null) => {
     if (c.includes('belo horizonte') || c === 'bh') return 'contagem';
     if (c.includes('fortaleza')) return 'eusebio';
     if (c.includes('salvador')) return 'lauro de freitas';
+    if (c.includes('brasilia') || c === 'df') return 'aguas claras';
+    if (c.includes('goiania')) return 'aparecida de goiania';
+    if (c.includes('recife')) return 'olinda';
+    if (c.includes('manaus')) return 'itacoatiara';
+    if (c.includes('belem')) return 'ananindeua';
+    if (c.includes('porto alegre')) return 'canoas';
+    if (c.includes('florianopolis')) return 'sao jose';
+    if (c.includes('vitoria')) return 'vila velha';
+    if (c.includes('maceio')) return 'rio largo';
+    if (c.includes('natal')) return 'parnamirim';
+    if (c.includes('joao pessoa')) return 'cabedelo';
+    if (c.includes('teresina')) return 'timon';
+    if (c.includes('sao luis')) return 'sao jose de ribamar';
+    if (c.includes('campo grande')) return 'sidrolandia';
+    if (c.includes('cuiaba')) return 'varzea grande';
+    if (c.includes('aracaju')) return 'nossa senhora do socorro';
+    if (c.includes('palmas')) return 'porto nacional';
+    if (c.includes('ribeirao preto')) return 'serrana';
+    if (c.includes('sorocaba')) return 'votorantim';
+    if (c.includes('osasco')) return 'carapicuiba';
+    if (c.includes('santo andre')) return 'sao caetano do sul';
+    if (c.includes('sao bernardo')) return 'diadema';
     return 'uma cidade vizinha';
+};
+
+const isGenericNeighborCity = (city: string | null | undefined) => {
+    return !city || normalizeCityKey(city).includes('cidade vizinha');
 };
 
 const clampStat = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
@@ -120,6 +146,7 @@ const normalizeLeadMemory = (input: any) => {
         price_sensitivity: String(memory.price_sensitivity || ''),
         last_offer: String(memory.last_offer || ''),
         notes: list(memory.notes),
+        metadata: memory.metadata && typeof memory.metadata === 'object' && !Array.isArray(memory.metadata) ? memory.metadata : {},
         updated_at: memory.updated_at || null
     };
 };
@@ -567,8 +594,13 @@ export async function POST(req: NextRequest) {
     }
 
     const detectedCity = detectCityFromText(userOnlyText);
+    const leadMemory = normalizeLeadMemory(session.lead_memory);
+    const redirectCity = typeof leadMemory.metadata?.redirect_city === 'string' ? leadMemory.metadata.redirect_city.trim() : '';
     const storedCity = typeof session.user_city === 'string' ? session.user_city.trim() : '';
-    let userCity = storedCity;
+    let userCity = storedCity || redirectCity;
+    if (!storedCity && redirectCity) {
+        await supabase.from('sessions').update({ user_city: redirectCity }).eq('id', session.id);
+    }
     if (detectedCity) {
         const detectedKey = normalizeCityKey(detectedCity);
         const storedKey = normalizeCityKey(storedCity);
@@ -579,6 +611,7 @@ export async function POST(req: NextRequest) {
     }
     const hasCity = Boolean(userCity);
     const neighborCity = hasCity ? getNeighborCity(userCity) : '';
+    const cityQuestion = /(de onde (voce|vc|você) e|vc e de onde|você é de onde|qual (sua|a) cidade|onde (voce|vc|você) mora)/i.test(userOnlyText);
 
     const context = {
         userCity: hasCity ? userCity : undefined,
@@ -588,7 +621,7 @@ export async function POST(req: NextRequest) {
         currentStats: session.lead_score,
         minutesSinceOffer,
         extraScript,
-        leadMemory: normalizeLeadMemory(session.lead_memory)
+        leadMemory
     };
 
     const extractFileAndCaption = (input: string) => {
@@ -733,7 +766,10 @@ export async function POST(req: NextRequest) {
     if (repetition.repeats >= 2) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead repetiu a mesma mensagem ${repetition.repeats}x ("${repetition.last}"). Responda diferente, quebre o loop e puxe o assunto com algo novo e humano. Nao repita a mesma frase.]`;
     }
-    if (!hasCity && /(de onde (voce|vc) e|vc e de onde|qual (sua|a) cidade|onde (voce|vc) mora)/i.test(userOnlyText)) {
+    if (cityQuestion && hasCity && !isGenericNeighborCity(neighborCity)) {
+        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou onde voce mora. Voce JA sabe que ele e de "${userCity}". Responda no PRIMEIRO BALAO exatamente "sou de ${neighborCity}". NAO diga "cidade vizinha", NAO diga "daqui" e NAO pergunte a cidade dele.]`;
+    }
+    if (cityQuestion && !hasCity) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou sua cidade, mas voce AINDA NAO sabe a cidade dele. Pergunte primeiro "de onde vc e anjo?" e NAO diga sua cidade agora.]`;
     }
 
@@ -937,6 +973,14 @@ export async function POST(req: NextRequest) {
     const lastBotContent = lastBotMsg?.content || '';
     safeMessages = removePrematureNameIntro(safeMessages, userOnlyText, aiResponse.extracted_user_name);
     safeMessages = reduceOpeningRepetition(safeMessages, lastBotContent);
+    if (cityQuestion && hasCity && !isGenericNeighborCity(neighborCity)) {
+        const forcedCityAnswer = `sou de ${neighborCity}`;
+        const withoutGenericCity = safeMessages.filter((msg: string) => {
+            const norm = normalizeLoopText(msg);
+            return !/(cidade vizinha|daqui|de onde vc|de onde voce|de onde você)/i.test(norm);
+        });
+        safeMessages = [forcedCityAnswer, ...withoutGenericCity.filter((msg: string) => normalizeLoopText(msg) !== normalizeLoopText(forcedCityAnswer))].slice(0, 3);
+    }
 
     const normLastBot = normalizeLoopText(lastBotContent);
     const normFirstOut = normalizeLoopText(safeMessages[0] || '');
