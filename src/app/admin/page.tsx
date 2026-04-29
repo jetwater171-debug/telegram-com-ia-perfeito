@@ -21,6 +21,7 @@ interface Session {
     device_type: string;
     total_paid: number;
     funnel_step?: string;
+    lead_memory?: any;
 }
 
 export default function AdminDashboard() {
@@ -168,6 +169,22 @@ export default function AdminDashboard() {
 
     const getEffectiveFunnelStep = (session: Session) => {
         return session.funnel_step || latestFunnelBySession[session.id] || '';
+    };
+
+    const parseLeadMemory = (raw: any) => {
+        if (!raw) return {};
+        if (typeof raw === 'string') {
+            try { return JSON.parse(raw); } catch { return {}; }
+        }
+        return typeof raw === 'object' ? raw : {};
+    };
+
+    const summarizeMemory = (session: Session) => {
+        const memory = parseLeadMemory(session.lead_memory);
+        const wanted = Array.isArray(memory.wanted_products) ? memory.wanted_products.slice(0, 2).join(', ') : '';
+        const rejected = Array.isArray(memory.rejected_products) ? memory.rejected_products.slice(0, 1).join(', ') : '';
+        const type = memory.dominant_type && memory.dominant_type !== 'desconhecido' ? memory.dominant_type : '';
+        return [type, wanted ? `quer ${wanted}` : '', rejected ? `recusou ${rejected}` : ''].filter(Boolean).join(' · ');
     };
 
     const filteredSessions = useMemo(() => {
@@ -339,6 +356,9 @@ export default function AdminDashboard() {
                                                     <span>?</span>
                                                     <span>{session.device_type || 'N/A'}</span>
                                                 </div>
+                                                {summarizeMemory(session) && (
+                                                    <p className="mt-2 line-clamp-1 text-xs text-cyan-200/80">{summarizeMemory(session)}</p>
+                                                )}
                                             </div>
                                             <span className={`rounded-full border px-2 py-1 text-[10px] font-bold uppercase ${session.status === 'active'
                                                 ? 'border-emerald-300/30 bg-emerald-400/10 text-emerald-200'

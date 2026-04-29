@@ -323,6 +323,59 @@ const removePrematureNameIntro = (messages: string[], userText: string, extracte
     return filtered.length > 0 ? filtered : messages;
 };
 
+const userAskedName = (text: string) => /(nome|chamo|chama)/i.test(text || '');
+
+const sessionHasUsefulName = (name: any) => {
+    const n = String(name || '').trim().toLowerCase();
+    return n.length >= 2 && !['desconhecido', 'anonimo', 'anônimo'].includes(n);
+};
+
+const removeAnsweredNameQuestions = (messages: string[], userText: string, sessionName: any) => {
+    if (!sessionHasUsefulName(sessionName) && !userAskedName(userText)) return messages;
+    const filtered = messages.filter((msg) => !/(qual|como).{0,18}(nome|chamo|chama)/i.test(msg));
+    return filtered.length > 0 ? filtered : messages;
+};
+
+const removeGenericBotPhrases = (messages: string[]) => {
+    const blocked = [
+        /como posso ajudar/i,
+        /em que posso te ajudar/i,
+        /sou uma ia/i,
+        /nao posso/i,
+        /não posso/i,
+        /como assistente/i,
+        /estou aqui para/i
+    ];
+    const filtered = messages.filter((msg) => !blocked.some((pattern) => pattern.test(msg)));
+    return filtered.length > 0 ? filtered : messages;
+};
+
+const removeDuplicateNormalizedMessages = (messages: string[]) => {
+    const seen = new Set<string>();
+    return messages.filter((msg) => {
+        const norm = normalizeLoopText(msg);
+        if (!norm) return false;
+        if (seen.has(norm)) return false;
+        seen.add(norm);
+        return true;
+    });
+};
+
+const applyConversationQualityGuards = (messages: string[], opts: {
+    userText: string;
+    sessionName: any;
+    extractedName?: string | null;
+    lastBotContent: string;
+}) => {
+    let out = [...messages];
+    out = removeGenericBotPhrases(out);
+    out = removePrematureNameIntro(out, opts.userText, opts.extractedName);
+    out = removeAnsweredNameQuestions(out, opts.userText, opts.sessionName);
+    out = reduceOpeningRepetition(out, opts.lastBotContent);
+    out = removeDuplicateNormalizedMessages(out);
+    return out.length > 0 ? out : messages;
+};
+
 const extractPrices = (text: string) => {
     if (!text) return [];
     const matches = text.match(/\b\d{1,3}[.,]\d{2}\b/g) || [];
@@ -971,8 +1024,12 @@ export async function POST(req: NextRequest) {
         .filter(Boolean);
 
     const lastBotContent = lastBotMsg?.content || '';
-    safeMessages = removePrematureNameIntro(safeMessages, userOnlyText, aiResponse.extracted_user_name);
-    safeMessages = reduceOpeningRepetition(safeMessages, lastBotContent);
+    safeMessages = applyConversationQualityGuards(safeMessages, {
+        userText: userOnlyText,
+        sessionName: session.user_name,
+        extractedName: aiResponse.extracted_user_name,
+        lastBotContent
+    });
     if (cityQuestion && hasCity && !isGenericNeighborCity(neighborCity)) {
         const forcedCityAnswer = `sou de ${neighborCity}`;
         const withoutGenericCity = safeMessages.filter((msg: string) => {

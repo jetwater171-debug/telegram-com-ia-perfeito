@@ -266,6 +266,31 @@ export default function AdminChatPage() {
 
     const safeLeadScore = getSafeLeadScore(session?.lead_score, lastUserMessage);
     const effectiveFunnelStep = session?.funnel_step || latestFunnelStep || '';
+    const leadMemory = useMemo(() => {
+        const raw = session?.lead_memory;
+        if (!raw) return {};
+        if (typeof raw === 'string') {
+            try { return JSON.parse(raw); } catch { return {}; }
+        }
+        return typeof raw === 'object' ? raw : {};
+    }, [session?.lead_memory]);
+
+    const renderMemoryList = (label: string, value: any) => {
+        const items = Array.isArray(value) ? value.filter(Boolean).slice(0, 4) : [];
+        if (!items.length) return null;
+        return (
+            <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] text-gray-500">{label}</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                    {items.map((item: string) => (
+                        <span key={`${label}-${item}`} className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-gray-200">
+                            {item}
+                        </span>
+                    ))}
+                </div>
+            </div>
+        );
+    };
 
     const filteredMessages = useMemo(() => {
         return messages.filter(msg => {
@@ -444,7 +469,34 @@ export default function AdminChatPage() {
                             <span>Device</span>
                             <span className="text-gray-100">{session?.device_type || 'N/A'}</span>
                         </div>
+                        {leadMemory?.dominant_type && (
+                            <div className="flex items-center justify-between">
+                                <span>Perfil</span>
+                                <span className="text-cyan-100">{leadMemory.dominant_type}</span>
+                            </div>
+                        )}
+                        {leadMemory?.best_tone && (
+                            <div className="flex items-center justify-between gap-3">
+                                <span>Tom</span>
+                                <span className="text-right text-cyan-100">{leadMemory.best_tone}</span>
+                            </div>
+                        )}
                     </div>
+
+                    {(leadMemory?.wanted_products || leadMemory?.rejected_products || leadMemory?.desires || leadMemory?.objections) && (
+                        <div className="mt-6 space-y-4 rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-cyan-200">Memoria do lead</p>
+                            {renderMemoryList('quer', leadMemory.wanted_products)}
+                            {renderMemoryList('recusou', leadMemory.rejected_products)}
+                            {renderMemoryList('desejos', leadMemory.desires)}
+                            {renderMemoryList('objecoes', leadMemory.objections)}
+                            {leadMemory?.last_offer && (
+                                <div className="text-xs text-gray-300">
+                                    <span className="text-gray-500">Ultima oferta:</span> {leadMemory.last_offer}
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     <div className="mt-6 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4 text-center">
                         <p className="text-xs uppercase tracking-[0.2em] text-emerald-200">Total gasto</p>
