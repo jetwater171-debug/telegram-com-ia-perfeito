@@ -855,6 +855,29 @@ const makeJsonModel = (systemInstruction: string, responseSchemaConfig: any) => 
 
 const parseJsonText = <T,>(text: string): T => JSON.parse(text) as T;
 
+const makeFallbackStrategy = (message: string) => {
+    const text = (message || '').toLowerCase();
+    const wantsPayment = /(pix|valor|pre[cç]o|quanto|comprar|fechado|manda)/i.test(text);
+    const wantsSpecificProduct = /(chamada|call|foto|video|vídeo|numero|número|whats|avaliacao|avaliação|vip)/i.test(text);
+    const isSexual = /(nude|pelada|bunda|peito|pau|buceta|gozar|tes[aã]o|safada|putaria)/i.test(text);
+
+    return {
+        intent: wantsPayment ? 'comprar ou pedir valor' : wantsSpecificProduct ? 'quer produto especifico' : 'conversar',
+        lead_type: isSexual ? 'tarado' : wantsPayment ? 'curioso' : 'desconhecido',
+        temperature: wantsPayment ? 80 : isSexual ? 65 : 30,
+        objective: wantsPayment ? 'fechar pagamento' : wantsSpecificProduct ? 'vender o pedido exato do lead' : 'criar conexao e puxar proximo passo',
+        product_to_sell: wantsSpecificProduct ? 'produto pedido pelo lead' : null,
+        should_sell_now: wantsPayment || wantsSpecificProduct,
+        response_angle: 'responder primeiro o que ele disse e conduzir sem parecer script',
+        must_answer: 'responder diretamente a mensagem atual',
+        next_step: wantsPayment ? 'gerar pix se houver valor claro' : 'avancar uma etapa sem forcar produto errado',
+        avoid: ['repetir frase antiga', 'perguntar nome sem contexto', 'vender vip se ele pediu avulso'],
+        action_hint: wantsPayment ? 'generate_pix_payment' : 'none',
+        payment_value_hint: null,
+        confidence: 0.55
+    };
+};
+
 export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, neighborCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null, minutesSinceOffer?: number, extraScript?: string, leadMemory?: any }, media?: { mimeType: string, data: string }) => {
     initializeGenAI();
     if (!genAI) throw new Error("API Key not configured");
@@ -972,23 +995,31 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 
     while (attempt < maxRetries) {
         try {
-            const strategyModel = makeJsonModel(
-                `${baseInstruction}
+            let strategy = makeFallbackStrategy(userMessage);
+            let strategyStatus = 'fallback local';
+
+            try {
+                const strategyModel = makeJsonModel(
+                    `${baseInstruction}
 
 # IA 1: ESTRATEGISTA DE CONVERSA
 Voce NAO fala com o lead. Voce so diagnostica a conversa e entrega a melhor estrategia.
 Seja frio e preciso: entenda intencao, produto ideal, timing, risco e proximo passo.
 Prioridade maxima: responder o que o lead perguntou, usar memoria, evitar script e aumentar chance de conversao.`,
-                strategySchema as any
-            );
+                    strategySchema as any
+                );
 
-            const strategyChat = strategyModel.startChat({ history: cleanHistory });
-            const strategyParts: any[] = [{
-                text: `Analise a mensagem atual e gere a estrategia para a Lari.\n\nMENSAGEM ATUAL:\n${userMessage}`
-            }];
-            if (media) strategyParts.push(currentMessageParts[1]);
-            const strategyResult = await strategyChat.sendMessage(strategyParts);
-            const strategy = parseJsonText<any>(strategyResult.response.text());
+                const strategyChat = strategyModel.startChat({ history: cleanHistory });
+                const strategyParts: any[] = [{
+                    text: `Analise a mensagem atual e gere a estrategia para a Lari.\n\nMENSAGEM ATUAL:\n${userMessage}`
+                }];
+                if (media) strategyParts.push(currentMessageParts[1]);
+                const strategyResult = await strategyChat.sendMessage(strategyParts);
+                strategy = parseJsonText<any>(strategyResult.response.text());
+                strategyStatus = 'ia estrategista';
+            } catch (strategyError: any) {
+                console.warn("Estrategista falhou, usando fallback local:", strategyError?.message || strategyError);
+            }
 
             console.log("🧠 Estratégia Lari:", JSON.stringify(strategy));
 
@@ -1018,39 +1049,60 @@ Use essa estrategia para responder.`
 
             const jsonResponse = parseJsonText<AIResponse>(responseText);
 
-            const reviewModel = makeJsonModel(
-                `${baseInstruction}
+            let review: any = {
+                approved: true,
+                score: 8,
+                issues: [],
+                messages: [],
+                action: jsonResponse.action,
+                current_state: jsonResponse.current_state,
+                preview_id: jsonResponse.preview_id ?? null,
+                payment_details: jsonResponse.payment_details ?? null
+            };
+            let reviewStatus = 'sem revisao';
+
+            try {
+                const reviewModel = makeJsonModel(
+                    `${baseInstruction}
 
 # IA 3: REVISORA DE QUALIDADE
 Voce revisa a resposta da Lari antes de enviar.
 Reprove/corrija se: parece script, ignora pergunta do lead, vende produto errado, repete frase, pergunta nome sem necessidade, fala cidade generica, nao usa memoria, esta fria demais ou nao aproxima da conversao.
 Se corrigir, devolva mensagens melhores no mesmo estilo da Lari. Nao explique para o lead.`,
-                reviewSchema as any
-            );
+                    reviewSchema as any
+                );
 
-            const reviewChat = reviewModel.startChat({ history: cleanHistory });
-            const reviewResult = await reviewChat.sendMessage([{
-                text: `MENSAGEM DO LEAD:\n${userMessage}
+                const reviewChat = reviewModel.startChat({ history: cleanHistory });
+                const reviewResult = await reviewChat.sendMessage([{
+                    text: `MENSAGEM DO LEAD:\n${userMessage}
 
 ESTRATEGIA:\n${JSON.stringify(strategy)}
 
 RASCUNHO DA LARI:\n${JSON.stringify(jsonResponse)}
 
 Revise e corrija se necessario.`
-            }]);
-            const review = parseJsonText<any>(reviewResult.response.text());
+                }]);
+                review = parseJsonText<any>(reviewResult.response.text());
+                reviewStatus = 'ia revisora';
+            } catch (reviewError: any) {
+                console.warn("Revisora falhou, mantendo rascunho da Lari:", reviewError?.message || reviewError);
+            }
             console.log("🧪 Revisão Lari:", JSON.stringify(review));
 
-            if (review && review.approved === false && Array.isArray(review.messages) && review.messages.length > 0) {
-                jsonResponse.messages = review.messages;
+            const reviewedMessages = Array.isArray(review?.messages)
+                ? review.messages.map((m: any) => String(m || '').trim()).filter(Boolean)
+                : [];
+
+            if (review && review.approved === false && reviewedMessages.length > 0) {
+                jsonResponse.messages = reviewedMessages;
                 jsonResponse.action = review.action || jsonResponse.action;
                 jsonResponse.current_state = review.current_state || jsonResponse.current_state;
                 jsonResponse.preview_id = review.preview_id ?? jsonResponse.preview_id;
                 jsonResponse.payment_details = review.payment_details ?? jsonResponse.payment_details;
             }
 
-            const strategyThought = `ESTRATEGIA: ${strategy?.intent || 'n/a'} | ${strategy?.lead_type || 'n/a'} | ${strategy?.objective || 'n/a'} | ${strategy?.next_step || 'n/a'}`;
-            const reviewThought = `REVISAO: ${review?.approved ? 'aprovada' : 'corrigida'} | score ${review?.score ?? 'n/a'} | ${(review?.issues || []).slice(0, 3).join(', ')}`;
+            const strategyThought = `ESTRATEGIA (${strategyStatus}): ${strategy?.intent || 'n/a'} | ${strategy?.lead_type || 'n/a'} | ${strategy?.objective || 'n/a'} | ${strategy?.next_step || 'n/a'}`;
+            const reviewThought = `REVISAO (${reviewStatus}): ${review?.approved ? 'aprovada' : 'corrigida'} | score ${review?.score ?? 'n/a'} | ${(review?.issues || []).slice(0, 3).join(', ')}`;
             jsonResponse.internal_thought = [strategyThought, reviewThought, jsonResponse.internal_thought].filter(Boolean).join('\n');
 
             // Validar e Sanitizar Lead Stats
