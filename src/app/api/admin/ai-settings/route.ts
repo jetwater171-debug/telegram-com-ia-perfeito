@@ -86,6 +86,8 @@ export async function GET() {
             settings: {
                 openrouterApiKeyMasked: maskSecret(map.openrouter_api_key || process.env.OPENROUTER_API_KEY),
                 geminiApiKeyMasked: maskSecret(map.gemini_api_key || process.env.GEMINI_API_KEY),
+                openrouterApiKeySaved: Boolean(map.openrouter_api_key),
+                geminiApiKeySaved: Boolean(map.gemini_api_key),
                 openrouterBaseUrl: map.openrouter_base_url || DEFAULTS.openrouter_base_url,
                 openrouterReferer: map.openrouter_referer || DEFAULTS.openrouter_referer,
                 openrouterTitle: map.openrouter_title || DEFAULTS.openrouter_title,

@@ -8,6 +8,8 @@ type ProviderKey = "openrouter" | "gemini";
 type AiSettings = {
     openrouterApiKeyMasked: string;
     geminiApiKeyMasked: string;
+    openrouterApiKeySaved: boolean;
+    geminiApiKeySaved: boolean;
     aiDraftModelOrder: string;
     openrouterStrategyModel: string;
     openrouterDraftModel: string;
@@ -40,6 +42,8 @@ type AiStat = {
 const emptySettings: AiSettings = {
     openrouterApiKeyMasked: "",
     geminiApiKeyMasked: "",
+    openrouterApiKeySaved: false,
+    geminiApiKeySaved: false,
     aiDraftModelOrder: "openrouter,gemini",
     openrouterStrategyModel: "z-ai/glm-4.5-air:free",
     openrouterDraftModel: "z-ai/glm-4.5-air:free",
@@ -169,13 +173,15 @@ export default function AdminAiPage() {
         setLoading(true);
         setMsg("");
         const providerOrder = order.join(",");
+        const openrouterKey = openrouterApiKey.trim();
+        const geminiKey = geminiApiKey.trim();
         const res = await fetch("/api/admin/ai-settings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 ...settings,
-                openrouterApiKey,
-                geminiApiKey,
+                openrouterApiKey: openrouterKey,
+                geminiApiKey: geminiKey,
                 aiModelOrder: providerOrder,
                 aiDraftModelOrder: providerOrder,
                 aiStrategyModelOrder: providerOrder,
@@ -187,7 +193,7 @@ export default function AdminAiPage() {
         if (data?.error) {
             setMsg(`Erro: ${data.error}`);
         } else {
-            setMsg("Configuração salva");
+            setMsg("Configuração salva no banco. Se o campo da chave ficar vazio depois de atualizar, é normal: a chave fica oculta.");
             setOpenrouterApiKey("");
             setGeminiApiKey("");
             await load();
@@ -314,13 +320,26 @@ export default function AdminAiPage() {
 
                     <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
                         <h2 className="text-lg font-semibold">Chaves</h2>
+                        <p className="mt-1 text-sm text-slate-400">
+                            A chave nunca volta preenchida no campo por segurança. O que importa é o selo salva no banco.
+                        </p>
                         <div className="mt-4 grid gap-4">
-                            <Field label={`Gemini API Key ${settings.geminiApiKeyMasked ? `(${settings.geminiApiKeyMasked})` : ""}`}>
-                                <input value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} type="password" className={inputClass} placeholder="AIza..." />
-                            </Field>
-                            <Field label={`OpenRouter API Key ${settings.openrouterApiKeyMasked ? `(${settings.openrouterApiKeyMasked})` : ""}`}>
-                                <input value={openrouterApiKey} onChange={(e) => setOpenrouterApiKey(e.target.value)} type="password" className={inputClass} placeholder="sk-or-..." />
-                            </Field>
+                            <KeyField
+                                label="Gemini API Key"
+                                value={geminiApiKey}
+                                onChange={setGeminiApiKey}
+                                placeholder="AIza..."
+                                masked={settings.geminiApiKeyMasked}
+                                saved={settings.geminiApiKeySaved}
+                            />
+                            <KeyField
+                                label="OpenRouter API Key"
+                                value={openrouterApiKey}
+                                onChange={setOpenrouterApiKey}
+                                placeholder="sk-or-..."
+                                masked={settings.openrouterApiKeyMasked}
+                                saved={settings.openrouterApiKeySaved}
+                            />
                         </div>
                     </div>
 
@@ -395,6 +414,36 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
             <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</span>
             {children}
         </label>
+    );
+}
+
+function KeyField({
+    label,
+    value,
+    onChange,
+    placeholder,
+    masked,
+    saved,
+}: {
+    label: string;
+    value: string;
+    onChange: (value: string) => void;
+    placeholder: string;
+    masked: string;
+    saved: boolean;
+}) {
+    return (
+        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</span>
+                <span className={`rounded-md px-2 py-1 text-xs ${saved ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/10 text-amber-200"}`}>
+                    {saved ? "salva no banco" : masked ? "usando env da Vercel" : "não configurada"}
+                </span>
+            </div>
+            {masked && <p className="mt-2 text-xs text-slate-400">Atual: {masked}</p>}
+            <input value={value} onChange={(event) => onChange(event.target.value)} type="password" className={`mt-3 w-full ${inputClass}`} placeholder={placeholder} />
+            <p className="mt-2 text-xs text-slate-500">Cole uma nova chave só se quiser trocar a atual.</p>
+        </div>
     );
 }
 
