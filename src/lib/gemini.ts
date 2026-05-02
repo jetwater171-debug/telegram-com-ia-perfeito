@@ -1,7 +1,18 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { AIResponse, LeadStats } from "@/types";
+import { supabase } from '@/lib/supabaseClient';
 
-const apiKey = process.env.GEMINI_API_KEY;
+const readSecret = (value?: string) => {
+    const secret = String(value || "").trim();
+    if (!secret || secret.startsWith("YOUR_")) return "";
+    return secret;
+};
+
+const apiKey = readSecret(process.env.GEMINI_API_KEY);
+const openRouterApiKey = readSecret(process.env.OPENROUTER_API_KEY);
+const openRouterBaseUrl = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+const openRouterReferer = process.env.OPENROUTER_REFERER || process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+const openRouterTitle = process.env.OPENROUTER_TITLE || "Lari Telegram Bot";
 
 
 // Schema para Gemini 2.5 Flash
@@ -226,6 +237,7 @@ const statsText = currentStats
 - Se ele estiver frio, reduza pressao e crie microcompromisso com uma pergunta simples.
 - Nunca termine com resposta sem caminho. Sempre deixe uma proxima acao facil para ele responder.
 - Nao termine a ultima mensagem com reticencias ou suspense vazio. Feche com gancho concreto: pergunta boa, provocacao, escolha simples, previa ou oferta.
+- Se ele estiver desconfiado, nao fique repetindo "so no vip". Quebre a objecao uma vez, entregue uma prova/isca possivel se couber e puxe decisao.
 
 ## CEREBRO DA LARI (OBRIGATORIO ANTES DE RESPONDER)
 Antes de escrever as mensagens, pense nesta ordem:
@@ -245,6 +257,7 @@ O campo \`internal_thought\` deve mostrar esse raciocinio em 1 linha curta, nest
 - Sempre prove que ouviu o lead: use algo que ele acabou de falar na resposta antes de mudar de assunto.
 - Se ele falou uma preferencia, fantasia, posicao, parte do corpo, tipo de foto/video ou jeito que gosta, essa preferencia vira o centro da resposta.
 - Nao repita uma pergunta que ele ja respondeu.
+- Se ele reclamar "ja te falei" ou "vc nao lembra", peca desculpa curto, use o dado salvo se existir e siga a conversa. Nao pergunte a mesma coisa de novo.
 - Nao se apresente de novo se ja falou que e Lari.
 - Nao diga "prazer" se ele nao informou o nome.
 - Nao ignore pergunta direta dele. Responda curto e depois conduza.
@@ -270,6 +283,8 @@ O campo \`internal_thought\` deve mostrar esse raciocinio em 1 linha curta, nest
 - elogio, putaria, pedido sexual -> papo explicito + direcionar para previa/oferta.
 - "quero te comer", "te comeria", "quero transar", "quero meter", "quero te chupar", fala de pau/buceta/gozar -> entre em imaginacao guiada explicita imediatamente.
 - "quanto", "valor", "pix", "quero comprar" -> proposta curta + gerar PIX se ja escolheu valor/plano.
+- "como paga pix", "nao sei pagar" -> explique em 2 baloes simples: copia o codigo, abre banco, cola em pix copia e cola.
+- "por que aparece wiinpay", "nome diferente no pix" -> diga que e o intermediador seguro do pagamento e que o acesso/liberacao continua sendo com a Lari.
 - "ta caro", "sem dinheiro" -> uma objecao + downsell.
 - "paguei", "confere", "comprovante" -> check_payment_status.
 - grosseria/frio -> resposta curta, provocacao leve e uma pergunta fechada.
@@ -302,6 +317,7 @@ O campo \`internal_thought\` deve mostrar esse raciocinio em 1 linha curta, nest
 - Use esta memoria como prioridade alta. Ela representa o que este lead ja mostrou que quer, rejeita ou compra.
 - Se a memoria disser que ele rejeitou VIP, nao force VIP; venda o produto desejado.
 - Se a memoria disser que ele gosta de chamada, foto, video, numero, avaliacao, carinho ou dominancia, adapte a resposta para isso.
+- Se a memoria ou contexto ja tiver nome/cidade, nao pergunte de novo. Use naturalmente.
 - Atualize seu comportamento pela memoria, mas responda sempre ao que ele falou agora.
 
 ${memoryText}
@@ -341,6 +357,8 @@ ${antiRepeatText || "Sem termos recentes bloqueados."}
 - Se o lead fala pouco, responda pouco. Se ele abre assunto, aprofunde.
 
 ## LEITURA DE CONTEXTO
+- Se ja tem nome salvo ou ele ja deu nome, nunca pergunte nome de novo.
+- Se ja tem cidade salva, nunca pergunte cidade de novo; se ele perguntar onde voce mora, responda a cidade salva.
 - Leia as ultimas mensagens antes de responder. Nao aja como se a conversa tivesse começado do zero.
 - Se voce ja perguntou nome e ele nao deu, nao mude para "prazer"; responda o que ele falou e peça o nome de outro jeito.
 - Se voce ja mandou uma pergunta, espere/absorva a resposta antes de perguntar outra coisa.
@@ -360,6 +378,7 @@ ${antiRepeatText || "Sem termos recentes bloqueados."}
 - Se ele pedir video, movimento ou algo mais intenso, use video apenas se o papo estiver coerente com isso.
 - Nunca mande a midia seca. A mensagem anterior precisa preparar: "entao olha essa", "essa combina com o que vc falou", "acho que vc vai gostar dessa".
 - Nao use legenda generica tipo "olha isso" quando a midia tem contexto. A conversa antes da action ja precisa explicar por que ela esta mandando.
+- Nao repita a mesma previa/foto/video se ela ja foi enviada recentemente, a menos que o lead peca para mandar de novo. Se perceber repeticao, reconheca e escolha outra rota.
 
 ## INTELIGENCIA POR TIPO DE LEAD
 - Antes de responder, identifique o tipo dominante do lead e adapte o tom.
@@ -383,6 +402,8 @@ ${antiRepeatText || "Sem termos recentes bloqueados."}
 - Tom: leve, segura, brincalhona, sem ficar defensiva.
 - Caminho: responda simples -> de uma prova/isca pequena se couber -> explique o produto pedido em 1-2 mensagens -> pergunta fechada.
 - Nao discuta demais. Curiosidade demais vira enrolacao; puxe para decisao.
+- Se ele pedir foto completa/prova e insistir, nao repita a mesma promessa de VIP. Use no maximo 3 baloes: entende o receio -> oferece prova/isca possivel ou explica limite -> pergunta fechada de decisao.
+- Nunca mande 5+ mensagens tentando convencer um desconfiado. Isso aumenta a desconfiança.
 
 ### LEAD FRIO / SECO
 - Sinais: "hm", "ok", "sei", respostas curtas, demora, nao engaja.
@@ -438,6 +459,7 @@ Você é uma garota de 19 anos, brasileira, real e safadinha.
   - 🚫 **NUNCA GRUDE PALAVRAS** (Ex: "anjopara" ❌ -> "anjo para" ✅). Use espaçamento normal.
 - **Regra de Ouro:** Escreva como se estivesse digitando rápido no WhatsApp.
 - **Formatação:** Mande mensagens CURTAS. Mande balões separados. (Máximo 5-10 palavras por balão).
+- **LIMITE PADRAO:** fora de fantasia muito quente ou fechamento, use 1-3 baloes. Negociacao/oferta usa ate 4. Mais que isso so quando for extremamente necessario.
 - **REGRA DE OURO (MÚLTIPLOS BALÕES):**
   - Se você tiver que falar algo longo ou seguir um script com vários passos (como na Fase 6), **ENVIE TODAS AS MENSAGENS JUNTAS** no array \`messages\` da resposta JSON.
   - **NÃO Mande uma e espere.** Mande: \`["msg 1", "msg 2", "msg 3"]\`.
@@ -897,8 +919,6 @@ export const initializeGenAI = () => {
     return genAI;
 }
 
-import { supabase } from '@/lib/supabaseClient';
-
 const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
     { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -906,10 +926,170 @@ const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-const makeJsonModel = (systemInstruction: string, responseSchemaConfig: any) => {
-    if (!genAI) throw new Error("API Key not configured");
-    return genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
+const parseJsonText = <T,>(text: string): T => JSON.parse(text) as T;
+
+type AiRole = "strategy" | "draft" | "review" | "evaluator";
+type AiProvider = "openrouter" | "gemini";
+
+type AiGatewayConfig = {
+    provider: AiProvider;
+    model: string;
+    label: string;
+};
+
+type AiMessage = {
+    role: "user" | "assistant";
+    content: string;
+};
+
+const ROLE_ENV_KEYS: Record<AiRole, string> = {
+    strategy: "AI_STRATEGY_MODEL_ORDER",
+    draft: "AI_DRAFT_MODEL_ORDER",
+    review: "AI_REVIEW_MODEL_ORDER",
+    evaluator: "AI_EVALUATOR_MODEL_ORDER",
+};
+
+const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string[]> = {
+    strategy: [
+        "z-ai/glm-4.5-air:free",
+        "openai/gpt-oss-120b:free",
+        "google/gemma-4-31b-it:free",
+        "openrouter/free",
+    ],
+    draft: [
+        "z-ai/glm-4.5-air:free",
+        "openai/gpt-oss-120b:free",
+        "google/gemma-4-31b-it:free",
+        "openrouter/free",
+    ],
+    review: [
+        "openai/gpt-oss-120b:free",
+        "z-ai/glm-4.5-air:free",
+        "google/gemma-4-31b-it:free",
+        "openrouter/free",
+    ],
+    evaluator: [
+        "openai/gpt-oss-120b:free",
+        "z-ai/glm-4.5-air:free",
+        "google/gemma-4-31b-it:free",
+        "openrouter/free",
+    ],
+};
+
+const getGeminiModelName = () => process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+const parseAiModelEntry = (entry: string): AiGatewayConfig | null => {
+    const trimmed = entry.trim();
+    if (!trimmed) return null;
+
+    const providerMatch = trimmed.match(/^(openrouter|gemini):(.+)$/i);
+    if (!providerMatch) {
+        return { provider: "openrouter", model: trimmed, label: `openrouter:${trimmed}` };
+    }
+
+    const provider = providerMatch[1].toLowerCase() as AiProvider;
+    const model = providerMatch[2].trim();
+    if (!model) return null;
+    return { provider, model, label: `${provider}:${model}` };
+};
+
+const parseAiModelOrder = (value?: string | null): AiGatewayConfig[] => {
+    if (!value) return [];
+    return value
+        .split(",")
+        .map(parseAiModelEntry)
+        .filter((entry): entry is AiGatewayConfig => Boolean(entry));
+};
+
+const getAiGatewayOrder = (role: AiRole): AiGatewayConfig[] => {
+    const roleSpecific = parseAiModelOrder(process.env[ROLE_ENV_KEYS[role]]);
+    const globalOrder = parseAiModelOrder(process.env.AI_MODEL_ORDER);
+    const defaults: AiGatewayConfig[] = DEFAULT_OPENROUTER_MODELS[role].map((model) => ({
+        provider: "openrouter",
+        model,
+        label: `openrouter:${model}`,
+    }));
+
+    if (apiKey) {
+        const geminiModel = getGeminiModelName();
+        defaults.push({ provider: "gemini", model: geminiModel, label: `gemini:${geminiModel}` });
+    }
+
+    const order = [...roleSpecific, ...globalOrder, ...defaults];
+    const seen = new Set<string>();
+    return order.filter((gateway) => {
+        if (gateway.provider === "openrouter" && !openRouterApiKey) return false;
+        if (gateway.provider === "gemini" && !apiKey) return false;
+        const key = `${gateway.provider}:${gateway.model}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+};
+
+const toOpenRouterMessages = (systemInstruction: string, history: AiMessage[], userContent: string) => ([
+    { role: "system", content: systemInstruction },
+    ...history.map((message) => ({
+        role: message.role,
+        content: message.content,
+    })),
+    { role: "user", content: userContent },
+]);
+
+const buildJsonReminder = (schemaName: string) => `
+
+FORMATO OBRIGATORIO:
+- Responda SOMENTE JSON valido.
+- Nao use markdown.
+- Nao escreva texto fora do JSON.
+- O JSON deve seguir o schema interno: ${schemaName}.`;
+
+const callOpenRouterJson = async <T,>(
+    gateway: AiGatewayConfig,
+    role: AiRole,
+    systemInstruction: string,
+    history: AiMessage[],
+    userContent: string,
+): Promise<T> => {
+    if (!openRouterApiKey) throw new Error("OPENROUTER_API_KEY not configured");
+
+    const response = await fetch(`${openRouterBaseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${openRouterApiKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": openRouterReferer,
+            "X-Title": openRouterTitle,
+        },
+        body: JSON.stringify({
+            model: gateway.model,
+            messages: toOpenRouterMessages(systemInstruction, history, userContent),
+            temperature: role === "draft" ? 0.85 : 0.35,
+            response_format: { type: "json_object" },
+        }),
+    });
+
+    const responseBody = await response.text();
+    if (!response.ok) {
+        throw new Error(`OpenRouter ${response.status}: ${responseBody.slice(0, 500)}`);
+    }
+
+    const payload = parseJsonText<any>(responseBody);
+    const content = payload?.choices?.[0]?.message?.content;
+    if (!content) throw new Error(`OpenRouter empty response from ${gateway.model}`);
+    return parseJsonText<T>(String(content));
+};
+
+const callGeminiJson = async <T,>(
+    gateway: AiGatewayConfig,
+    systemInstruction: string,
+    responseSchemaConfig: any,
+    history: any[],
+    parts: any[],
+): Promise<T> => {
+    if (!genAI) throw new Error("GEMINI_API_KEY not configured");
+    const model = genAI.getGenerativeModel({
+        model: gateway.model,
         systemInstruction,
         safetySettings,
         generationConfig: {
@@ -917,9 +1097,63 @@ const makeJsonModel = (systemInstruction: string, responseSchemaConfig: any) => 
             responseSchema: responseSchemaConfig
         }
     });
+    const chat = model.startChat({ history });
+    const result = await chat.sendMessage(parts);
+    return parseJsonText<T>(result.response.text());
 };
 
-const parseJsonText = <T,>(text: string): T => JSON.parse(text) as T;
+const callAiGatewayJson = async <T,>(options: {
+    role: AiRole;
+    schemaName: string;
+    systemInstruction: string;
+    responseSchemaConfig: any;
+    history: any[];
+    text: string;
+    mediaPart?: any;
+}): Promise<{ data: T; gateway: AiGatewayConfig; attempts: string[] }> => {
+    const gateways = getAiGatewayOrder(options.role);
+    const attempts: string[] = [];
+    const openRouterHistory: AiMessage[] = options.history.map((message: any) => ({
+        role: (message.role === "model" ? "assistant" : "user") as AiMessage["role"],
+        content: String(message.parts?.[0]?.text || ""),
+    })).filter((message: AiMessage) => Boolean(message.content.trim()));
+
+    for (const gateway of gateways) {
+        try {
+            if (gateway.provider === "openrouter") {
+                if (options.mediaPart) {
+                    attempts.push(`${gateway.label} pulado: midia nao suportada neste provider`);
+                    continue;
+                }
+                const data = await callOpenRouterJson<T>(
+                    gateway,
+                    options.role,
+                    `${options.systemInstruction}${buildJsonReminder(options.schemaName)}`,
+                    openRouterHistory,
+                    options.text,
+                );
+                return { data, gateway, attempts };
+            }
+
+            const parts: any[] = [{ text: options.text }];
+            if (options.mediaPart) parts.push(options.mediaPart);
+            const data = await callGeminiJson<T>(
+                gateway,
+                options.systemInstruction,
+                options.responseSchemaConfig,
+                options.history,
+                parts,
+            );
+            return { data, gateway, attempts };
+        } catch (error: any) {
+            const message = `${gateway.label} falhou: ${error?.message || error}`;
+            attempts.push(message);
+            console.warn(`[AI Gateway] ${message}`);
+        }
+    }
+
+    throw new Error(`Todos os gateways de IA falharam (${options.role}): ${attempts.join(" | ")}`);
+};
 
 const makeFallbackStrategy = (message: string) => {
     const text = (message || '').toLowerCase();
@@ -946,7 +1180,7 @@ const makeFallbackStrategy = (message: string) => {
 
 export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null, minutesSinceOffer?: number, extraScript?: string, leadMemory?: any }, media?: { mimeType: string, data: string }) => {
     initializeGenAI();
-    if (!genAI) throw new Error("API Key not configured");
+    if (!openRouterApiKey && !genAI) throw new Error("No AI provider configured");
 
     const currentStats = parseLeadStats(context?.currentStats);
     const { data: previewRows, error: previewError } = await supabase
@@ -1065,8 +1299,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             let strategyStatus = 'fallback local';
 
             try {
-                const strategyModel = makeJsonModel(
-                    `${baseInstruction}
+                const strategyPrompt = `${baseInstruction}
 
 # IA 1: ESTRATEGISTA DE CONVERSA
 Voce NAO fala com o lead. Voce so diagnostica a conversa e entrega a melhor estrategia.
@@ -1074,37 +1307,34 @@ Seja frio e preciso: entenda intencao, produto ideal, timing, risco e proximo pa
 Prioridade maxima: responder o que o lead perguntou, usar memoria, evitar script e aumentar chance de conversao.
 Se o lead veio com putaria explicita, a estrategia deve mandar a Lari continuar a fantasia no mesmo tema antes de ofertar.
 Se houver midia, diagnostique qual tema visual combina com as palavras do lead e se e cedo ou certo mandar agora.
-Se o lead estiver negociando com valor real na conta, a estrategia deve aceitar ofertas proximas, fazer poucos degraus se for baixo e evitar contradicao.`,
-                    strategySchema as any
-                );
+Se o lead estiver negociando com valor real na conta, a estrategia deve aceitar ofertas proximas, fazer poucos degraus se for baixo e evitar contradicao.`;
 
-                const strategyChat = strategyModel.startChat({ history: cleanHistory });
-                const strategyParts: any[] = [{
-                    text: `Analise a mensagem atual e gere a estrategia para a Lari.\n\nMENSAGEM ATUAL:\n${userMessage}`
-                }];
-                if (media) strategyParts.push(currentMessageParts[1]);
-                const strategyResult = await strategyChat.sendMessage(strategyParts);
-                strategy = parseJsonText<any>(strategyResult.response.text());
-                strategyStatus = 'ia estrategista';
+                const strategyResult = await callAiGatewayJson<any>({
+                    role: "strategy",
+                    schemaName: "strategySchema",
+                    systemInstruction: strategyPrompt,
+                    responseSchemaConfig: strategySchema as any,
+                    history: cleanHistory,
+                    text: `Analise a mensagem atual e gere a estrategia para a Lari.\n\nMENSAGEM ATUAL:\n${userMessage}`,
+                    mediaPart: media ? currentMessageParts[1] : undefined,
+                });
+                strategy = strategyResult.data;
+                strategyStatus = `ia estrategista via ${strategyResult.gateway.label}`;
             } catch (strategyError: any) {
                 console.warn("Estrategista falhou, usando fallback local:", strategyError?.message || strategyError);
             }
 
             console.log("🧠 Estratégia Lari:", JSON.stringify(strategy));
 
-            const draftModel = makeJsonModel(
-                `${baseInstruction}
+            const draftPrompt = `${baseInstruction}
 
 # IA 2: LARI
 Voce e a Lari falando com o lead. Use a estrategia recebida como direcao, mas responda natural, humana e contextual.
 Nao copie frases prontas se nao encaixarem. A estrategia manda o objetivo, voce escreve como uma menina real.
 Voce deve guiar a conversa: toda resposta precisa terminar com um caminho claro para o lead continuar, sem reticencias no ultimo balao.
 Se o lead disser que quer comer/transar/meter/chupar/gozar, responda fazendo ele imaginar a cena no mesmo tema, em varios baloes curtos antes de qualquer venda. A quantidade depende do calor da conversa.
-Se for usar action de foto/video, escreva antes uma mensagem curta conectando a midia ao que o lead acabou de falar.`,
-                responseSchema as any
-            );
+Se for usar action de foto/video, escreva antes uma mensagem curta conectando a midia ao que o lead acabou de falar.`;
 
-            const draftChat = draftModel.startChat({ history: cleanHistory });
             const draftParts: any[] = [{
                 text: `${userMessage}
 
@@ -1114,12 +1344,20 @@ ${JSON.stringify(strategy)}
 Use essa estrategia para responder.`
             }];
             if (media) draftParts.push(currentMessageParts[1]);
-            const result = await draftChat.sendMessage(draftParts);
-            const responseText = result.response.text();
+            const draftResult = await callAiGatewayJson<AIResponse>({
+                role: "draft",
+                schemaName: "responseSchema",
+                systemInstruction: draftPrompt,
+                responseSchemaConfig: responseSchema as any,
+                history: cleanHistory,
+                text: draftParts[0].text,
+                mediaPart: media ? currentMessageParts[1] : undefined,
+            });
+            const responseText = JSON.stringify(draftResult.data);
 
-            console.log(`🤖 Gemini Clean Response (Attempt ${attempt + 1}):`, responseText);
+            console.log(`AI Gateway Draft (${draftResult.gateway.label}) Attempt ${attempt + 1}:`, responseText);
 
-            const jsonResponse = parseJsonText<AIResponse>(responseText);
+            const jsonResponse = draftResult.data;
 
             let review: any = {
                 approved: true,
@@ -1134,8 +1372,7 @@ Use essa estrategia para responder.`
             let reviewStatus = 'sem revisao';
 
             try {
-                const reviewModel = makeJsonModel(
-                    `${baseInstruction}
+                const reviewPrompt = `${baseInstruction}
 
 # IA 3: REVISORA DE QUALIDADE
 Voce revisa a resposta da Lari antes de enviar.
@@ -1143,12 +1380,15 @@ Reprove/corrija se: parece script, ignora pergunta do lead, vende produto errado
 Reprove/corrija tambem se a action de midia nao combina com o que o lead falou, se manda foto/video sem preparar com uma mensagem congruente, ou se escolhe previa aleatoria.
 Reprove/corrija se o lead falou putaria explicita e a Lari respondeu fofa, fria, desviando assunto ou perguntando algo generico em vez de continuar a fantasia.
 Reprove/corrija se a ultima mensagem termina com reticencias, suspense vazio ou frase pendurada sem conduzir o lead.
-Se corrigir, devolva mensagens melhores no mesmo estilo da Lari. Nao explique para o lead.`,
-                    reviewSchema as any
-                );
+Reprove/corrija se ela repete promessa de VIP para lead desconfiado, pergunta nome/cidade ja conhecida, manda mais de 4 baloes fora de fantasia quente, ou contradiz preco/desconto.
+Se corrigir, devolva mensagens melhores no mesmo estilo da Lari. Nao explique para o lead.`;
 
-                const reviewChat = reviewModel.startChat({ history: cleanHistory });
-                const reviewResult = await reviewChat.sendMessage([{
+                const reviewResult = await callAiGatewayJson<any>({
+                    role: "review",
+                    schemaName: "reviewSchema",
+                    systemInstruction: reviewPrompt,
+                    responseSchemaConfig: reviewSchema as any,
+                    history: cleanHistory,
                     text: `MENSAGEM DO LEAD:\n${userMessage}
 
 ESTRATEGIA:\n${JSON.stringify(strategy)}
@@ -1156,9 +1396,9 @@ ESTRATEGIA:\n${JSON.stringify(strategy)}
 RASCUNHO DA LARI:\n${JSON.stringify(jsonResponse)}
 
 Revise e corrija se necessario.`
-                }]);
-                review = parseJsonText<any>(reviewResult.response.text());
-                reviewStatus = 'ia revisora';
+                });
+                review = reviewResult.data;
+                reviewStatus = `ia revisora via ${reviewResult.gateway.label}`;
             } catch (reviewError: any) {
                 console.warn("Revisora falhou, mantendo rascunho da Lari:", reviewError?.message || reviewError);
             }
@@ -1179,8 +1419,7 @@ Revise e corrija se necessario.`
             let leadEvaluation: any = null;
             let leadEvaluationStatus = 'sem avaliacao';
             try {
-                const evaluatorModel = makeJsonModel(
-                    `${baseInstruction}
+                const evaluatorPrompt = `${baseInstruction}
 
 # IA 4: AVALIADORA DE LEADS
 Voce NAO fala com o lead. Voce so avalia as barrinhas.
@@ -1194,12 +1433,14 @@ Use a escala:
 Financeiro mede chance/capacidade real de pagar. Perguntar preco sozinho nao e score alto.
 Tarado alto exige pedido sexual claro ou recorrente.
 Carente/sentimental alto exige busca real de atencao, desabafo ou vinculo emocional.
-Retorne o nivel TOTAL atual, nao delta.`,
-                    leadEvaluatorSchema as any
-                );
+Retorne o nivel TOTAL atual, nao delta.`;
 
-                const evaluatorChat = evaluatorModel.startChat({ history: cleanHistory });
-                const evaluatorResult = await evaluatorChat.sendMessage([{
+                const evaluatorResult = await callAiGatewayJson<any>({
+                    role: "evaluator",
+                    schemaName: "leadEvaluatorSchema",
+                    systemInstruction: evaluatorPrompt,
+                    responseSchemaConfig: leadEvaluatorSchema as any,
+                    history: cleanHistory,
                     text: `MENSAGEM ATUAL DO LEAD:\n${userMessage}
 
 ESTADO ATUAL DAS BARRAS:\n${JSON.stringify(currentStats)}
@@ -1209,9 +1450,9 @@ ESTRATEGIA INTERNA:\n${JSON.stringify(strategy)}
 RESPOSTA FINAL DA LARI:\n${JSON.stringify(jsonResponse.messages || [])}
 
 Avalie o nivel real do lead agora.`
-                }]);
-                leadEvaluation = parseJsonText<any>(evaluatorResult.response.text());
-                leadEvaluationStatus = 'ia avaliadora';
+                });
+                leadEvaluation = evaluatorResult.data;
+                leadEvaluationStatus = `ia avaliadora via ${evaluatorResult.gateway.label}`;
                 if (leadEvaluation?.lead_stats) {
                     jsonResponse.lead_stats = parseLeadStats(leadEvaluation.lead_stats);
                 }
@@ -1239,7 +1480,7 @@ Avalie o nivel real do lead agora.`
                 jsonResponse.lead_stats = currentStats;
             }
 
-            console.log("📊 [GEMINI FINAL RETURN] Stats Calculados:", JSON.stringify(jsonResponse.lead_stats));
+            console.log("[AI Gateway Final Return] Stats Calculados:", JSON.stringify(jsonResponse.lead_stats));
 
             return jsonResponse;
 
