@@ -183,6 +183,10 @@ export async function POST(req: NextRequest) {
                         redirect_code: leadRedirectCode,
                         redirect_ip: redirectRow.ip || '',
                         redirect_utm: redirectRow.utm || {},
+                        redirect_query_params: redirectRow.metadata?.query_params || redirectRow.utm || {},
+                        redirect_source_url: redirectRow.source_url || '',
+                        redirect_referer: redirectRow.referer || '',
+                        redirect_clicked_at: redirectRow.clicked_at || redirectRow.created_at || '',
                         redirect_city: city || '',
                         redirect_country: redirectRow.country || '',
                         redirect_user_agent: redirectRow.user_agent || ''

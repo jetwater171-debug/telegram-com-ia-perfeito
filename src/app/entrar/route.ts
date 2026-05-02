@@ -126,6 +126,11 @@ export async function GET(req: NextRequest) {
         const value = url.searchParams.get(key);
         if (value) utm[key] = value.slice(0, 500);
     }
+    const queryParams: Record<string, string> = {};
+    url.searchParams.forEach((value, key) => {
+        if (!key) return;
+        queryParams[key.slice(0, 120)] = value.slice(0, 500);
+    });
 
     const payload = {
         code,
@@ -140,7 +145,8 @@ export async function GET(req: NextRequest) {
         utm,
         metadata: {
             accept_language: req.headers.get('accept-language') || '',
-            host: req.headers.get('host') || ''
+            host: req.headers.get('host') || '',
+            query_params: queryParams
         }
     };
 

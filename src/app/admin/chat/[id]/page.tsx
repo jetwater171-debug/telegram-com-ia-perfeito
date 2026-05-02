@@ -29,6 +29,7 @@ export default function AdminChatPage() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState("");
     const [session, setSession] = useState<any>(null);
+    const [leadOrigin, setLeadOrigin] = useState<any>(null);
     const [latestFunnelStep, setLatestFunnelStep] = useState<string | null>(null);
     const [leadTyping, setLeadTyping] = useState(false);
     const [showThoughts, setShowThoughts] = useState(false);
@@ -60,6 +61,7 @@ export default function AdminChatPage() {
             }
 
             setSession(data);
+            await loadLeadOrigin(data);
             await loadLatestFunnel(data.id, data.funnel_step);
             await loadMessages(data.id);
             cleanup = subscribe(data.id);
@@ -129,6 +131,35 @@ export default function AdminChatPage() {
             setLastSync(new Date());
             if (shouldScroll) window.setTimeout(() => scrollToBottom("auto"), 0);
         }
+    };
+
+    const loadLeadOrigin = async (currentSession: any) => {
+        if (!currentSession?.id && !currentSession?.telegram_chat_id) return;
+
+        let row: any = null;
+        if (currentSession.telegram_chat_id) {
+            const { data } = await supabase
+                .from("lead_redirects")
+                .select("*")
+                .eq("telegram_chat_id", currentSession.telegram_chat_id)
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            row = data;
+        }
+
+        if (!row && currentSession.id) {
+            const { data } = await supabase
+                .from("lead_redirects")
+                .select("*")
+                .eq("session_id", currentSession.id)
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            row = data;
+        }
+
+        setLeadOrigin(row);
     };
 
     const subscribe = (sessionId: string) => {
@@ -258,6 +289,7 @@ export default function AdminChatPage() {
     const safeLeadScore = getSafeLeadScore(session?.lead_score, lastUserMessage);
     const effectiveFunnelStep = session?.funnel_step || latestFunnelStep || "";
     const leadMemory = useMemo(() => parseLeadMemory(session?.lead_memory), [session?.lead_memory]);
+    const originInfo = useMemo(() => buildOriginInfo(session, leadMemory, leadOrigin), [session, leadMemory, leadOrigin]);
     const lastMessage = messages[messages.length - 1];
 
     return (
@@ -399,6 +431,10 @@ export default function AdminChatPage() {
                             <Info label="Cidade" value={session?.user_city || "N/A"} />
                             <Info label="Device" value={session?.device_type || "N/A"} />
                         </div>
+                    </Panel>
+
+                    <Panel title="Origem">
+                        <OriginDetails origin={originInfo} />
                     </Panel>
 
                     <Panel title="Valor">
@@ -580,6 +616,68 @@ function TagList({ label, items }: { label: string; items: unknown }) {
     );
 }
 
+function OriginDetails({ origin }: { origin: ReturnType<typeof buildOriginInfo> }) {
+    const params = objectEntries(origin.queryParams);
+    const utms = objectEntries(origin.utm);
+    const hasData = origin.code || origin.sourceUrl || origin.referer || params.length || utms.length || origin.ip;
+
+    if (!hasData) {
+        return <p className="text-sm text-slate-500">Sem origem capturada. Use o link /entrar com UTMs para rastrear os proximos leads.</p>;
+    }
+
+    return (
+        <div className="space-y-3 text-sm">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+                <Info label="Origem" value={origin.utm.utm_source || "N/A"} />
+                <Info label="Campanha" value={origin.utm.utm_campaign || "N/A"} />
+                <Info label="Meio" value={origin.utm.utm_medium || "N/A"} />
+                <Info label="Click ID" value={origin.utm.fbclid ? "Meta" : origin.utm.ttclid ? "TikTok" : origin.utm.gclid ? "Google" : "N/A"} />
+            </div>
+
+            {utms.length > 0 && <KeyValueList title="UTMs e IDs" items={utms} />}
+            {params.length > 0 && <KeyValueList title="Parametros" items={params} />}
+
+            <InfoLine label="Codigo" value={origin.code} />
+            <InfoLine label="Cidade" value={[origin.city, origin.region, origin.country].filter(Boolean).join(" / ")} />
+            <InfoLine label="IP" value={origin.ip} />
+            <InfoLine label="Dispositivo" value={origin.device} />
+            <InfoLine label="Clique" value={origin.clickedAt ? formatDateTime(origin.clickedAt) : ""} />
+
+            {origin.sourceUrl && (
+                <div>
+                    <p className="mb-1 text-xs text-slate-500">Link de entrada</p>
+                    <a className="block break-words rounded-lg border border-white/10 bg-black/20 p-2 text-xs text-cyan-200 hover:border-cyan-300/40" href={origin.sourceUrl} target="_blank" rel="noreferrer">
+                        {shortUrl(origin.sourceUrl)}
+                    </a>
+                </div>
+            )}
+
+            {origin.referer && (
+                <div>
+                    <p className="mb-1 text-xs text-slate-500">Referer</p>
+                    <p className="break-words rounded-lg border border-white/10 bg-black/20 p-2 text-xs text-slate-300">{shortUrl(origin.referer)}</p>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function KeyValueList({ title, items }: { title: string; items: Array<[string, string]> }) {
+    return (
+        <div>
+            <p className="mb-2 text-xs text-slate-500">{title}</p>
+            <div className="space-y-1.5">
+                {items.map(([key, value]) => (
+                    <div key={`${title}-${key}`} className="rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 text-xs">
+                        <p className="text-slate-500">{key}</p>
+                        <p className="mt-0.5 break-words text-slate-200">{value}</p>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function ScoreBar({ label, value, color }: { label: string; value: number; color: string }) {
     return (
         <div className="mb-3 last:mb-0">
@@ -600,6 +698,49 @@ function parseLeadMemory(raw: unknown) {
         try { return JSON.parse(raw); } catch { return {}; }
     }
     return typeof raw === "object" ? raw as Record<string, any> : {};
+}
+
+function buildOriginInfo(session: any, leadMemory: Record<string, any>, redirect: any) {
+    const metadata = leadMemory?.metadata && typeof leadMemory.metadata === "object" ? leadMemory.metadata : {};
+    const redirectMetadata = redirect?.metadata && typeof redirect.metadata === "object" ? redirect.metadata : {};
+    const memoryUtm = metadata.redirect_utm && typeof metadata.redirect_utm === "object" ? metadata.redirect_utm : {};
+    const rowUtm = redirect?.utm && typeof redirect.utm === "object" ? redirect.utm : {};
+    const memoryParams = metadata.redirect_query_params && typeof metadata.redirect_query_params === "object" ? metadata.redirect_query_params : {};
+    const rowParams = redirectMetadata.query_params && typeof redirectMetadata.query_params === "object" ? redirectMetadata.query_params : {};
+
+    return {
+        code: String(redirect?.code || metadata.redirect_code || ""),
+        utm: normalizeObject({ ...memoryUtm, ...rowUtm }),
+        queryParams: normalizeObject({ ...memoryParams, ...rowUtm, ...rowParams }),
+        sourceUrl: String(redirect?.source_url || metadata.redirect_source_url || ""),
+        referer: String(redirect?.referer || metadata.redirect_referer || ""),
+        ip: String(redirect?.ip || metadata.redirect_ip || ""),
+        city: String(redirect?.city || metadata.redirect_city || session?.user_city || ""),
+        region: String(redirect?.region || ""),
+        country: String(redirect?.country || metadata.redirect_country || ""),
+        device: detectDeviceLabel(String(redirect?.user_agent || metadata.redirect_user_agent || ""), session?.device_type),
+        clickedAt: String(redirect?.clicked_at || metadata.redirect_clicked_at || redirect?.created_at || "")
+    };
+}
+
+function normalizeObject(input: Record<string, unknown>) {
+    return Object.fromEntries(
+        Object.entries(input || {})
+            .map(([key, value]) => [key, value == null ? "" : String(value)])
+            .filter(([key, value]) => Boolean(key) && Boolean(value))
+    ) as Record<string, string>;
+}
+
+function objectEntries(input: Record<string, string>) {
+    return Object.entries(input || {}).sort(([a], [b]) => a.localeCompare(b));
+}
+
+function detectDeviceLabel(userAgent: string, fallback?: string) {
+    const ua = userAgent.toLowerCase();
+    if (/iphone|ipad|ios/.test(ua)) return "iPhone";
+    if (/android/.test(ua)) return "Android";
+    if (/windows|macintosh|linux/.test(ua)) return "Desktop";
+    return fallback || "";
 }
 
 function getSafeLeadScore(raw: unknown, fallbackText: string) {
@@ -662,6 +803,10 @@ function formatDate(isoString: string) {
     return new Date(isoString).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+function formatDateTime(isoString: string) {
+    return new Date(isoString).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function formatTimeAgo(dateString?: string) {
     if (!dateString) return "nunca";
     const diffInSeconds = Math.max(0, Math.floor((Date.now() - new Date(dateString).getTime()) / 1000));
@@ -689,4 +834,9 @@ function cleanTextForBubble(text?: string) {
         return upload[1].toUpperCase() === "VIDEO_UPLOAD" ? "Video recebido" : "Foto recebida";
     }
     return raw;
+}
+
+function shortUrl(value: string) {
+    if (value.length <= 180) return value;
+    return `${value.slice(0, 150)}...${value.slice(-20)}`;
 }
