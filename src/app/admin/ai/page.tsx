@@ -402,18 +402,9 @@ export default function AdminAiPage() {
                                 onToggle={() => setOpenCard(openCard === "openrouter" ? "gemini" : "openrouter")}
                                 enabled={!!settings.openrouterApiKeyMasked || !!openrouterApiKey}
                             >
-                                <div className="grid gap-4 md:grid-cols-2">
+                                <div className="grid gap-4">
                                     <Field label={`API Key ${settings.openrouterApiKeyMasked ? `(${settings.openrouterApiKeyMasked})` : "(nao salva)"}`}>
                                         <input value={openrouterApiKey} onChange={(e) => setOpenrouterApiKey(e.target.value)} type="password" className={inputClass} placeholder="sk-or-..." />
-                                    </Field>
-                                    <Field label="Title">
-                                        <input value={settings.openrouterTitle} onChange={(e) => update("openrouterTitle", e.target.value)} className={inputClass} />
-                                    </Field>
-                                    <Field label="Referer">
-                                        <input value={settings.openrouterReferer} onChange={(e) => update("openrouterReferer", e.target.value)} className={inputClass} />
-                                    </Field>
-                                    <Field label="Base URL">
-                                        <input value={settings.openrouterBaseUrl} onChange={(e) => update("openrouterBaseUrl", e.target.value)} className={inputClass} />
                                     </Field>
                                 </div>
                                 <ModelGrid
