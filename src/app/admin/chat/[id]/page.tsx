@@ -419,7 +419,7 @@ export default function AdminChatPage() {
                     </Panel>
 
                     <Panel title="Ultimo evento">
-                        <p className="text-sm text-slate-200">{lastMessage ? cleanText(lastMessage.content) : "Sem mensagens"}</p>
+                        <p className="text-sm text-slate-200">{lastMessage ? cleanText(cleanTextForBubble(lastMessage.content)) : "Sem mensagens"}</p>
                         <p className="mt-2 text-xs text-slate-500">{lastMessage ? `${senderName(lastMessage.sender)} / ${formatTimeAgo(lastMessage.created_at)}` : ""}</p>
                     </Panel>
                 </div>
@@ -432,6 +432,8 @@ function MessageBubble({ message }: { message: Message }) {
     const isMe = message.sender === "bot" || message.sender === "admin";
     const isSystem = message.sender === "system";
     const isThought = message.sender === "thought";
+    const mediaSrc = getMessageMediaSrc(message);
+    const displayText = cleanTextForBubble(message.content);
 
     if (isSystem || isThought) {
         return (
@@ -440,7 +442,7 @@ function MessageBubble({ message }: { message: Message }) {
                     ? "border-amber-300/20 bg-amber-300/10 text-amber-100"
                     : "border-white/10 bg-white/[0.04] text-slate-400"}`}>
                     <span className="font-semibold">{isThought ? "IA" : "Sistema"}: </span>
-                    <span className="whitespace-pre-wrap break-words">{message.content}</span>
+                    <span className="whitespace-pre-wrap break-words">{displayText}</span>
                     <span className="ml-2 text-[10px] opacity-60">{formatTime(message.created_at)}</span>
                 </div>
             </div>
@@ -458,20 +460,32 @@ function MessageBubble({ message }: { message: Message }) {
                     </span>
                     <span className="text-[10px] text-slate-500">{formatTime(message.created_at)}</span>
                 </div>
-                {message.media_url && (
+                {mediaSrc && (
                     <div className="mb-2 overflow-hidden rounded-md border border-white/10 bg-black/20">
-                        {message.media_type === "video" ? (
-                            <video src={message.media_url} controls className="max-h-72 w-full object-contain" />
+                        {getMessageMediaType(message) === "video" ? (
+                            <video src={mediaSrc} controls preload="metadata" className="max-h-72 w-full object-contain" />
                         ) : (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={message.media_url} alt="" className="max-h-72 w-full object-contain" />
+                            <img src={mediaSrc} alt="" className="max-h-72 w-full object-contain" />
                         )}
                     </div>
                 )}
-                <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{message.content}</p>
+                {displayText && <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{displayText}</p>}
             </div>
         </div>
     );
+}
+
+function getMessageMediaSrc(message: Message) {
+    if (!getMessageMediaType(message)) return "";
+    return `/api/admin/media/${encodeURIComponent(message.id)}`;
+}
+
+function getMessageMediaType(message: Message) {
+    if (message.media_type === "image" || message.media_type === "video") return message.media_type;
+    if (/\[PHOTO_UPLOAD\]/i.test(message.content || "")) return "image";
+    if (/\[VIDEO_UPLOAD\]/i.test(message.content || "")) return "video";
+    return "";
 }
 
 function SegmentButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -630,4 +644,15 @@ function isSameDay(a: string, b: string) {
 
 function cleanText(text?: string) {
     return (text || "").replace(/\s+/g, " ").trim();
+}
+
+function cleanTextForBubble(text?: string) {
+    const raw = text || "";
+    const upload = raw.match(/^\[(PHOTO_UPLOAD|VIDEO_UPLOAD)\]\s+File_ID:\s*[^\s]+(?:\s+CAPTION:\s*([\s\S]*))?$/i);
+    if (upload) {
+        const caption = upload[2]?.trim();
+        if (caption) return caption;
+        return upload[1].toUpperCase() === "VIDEO_UPLOAD" ? "Video recebido" : "Foto recebida";
+    }
+    return raw;
 }

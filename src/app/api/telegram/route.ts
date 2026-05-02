@@ -70,6 +70,7 @@ export async function POST(req: NextRequest) {
 
     // Extract Text OR Video File ID
     let text = message.text;
+    let mediaType: 'image' | 'video' | null = null;
 
     // 0. Detect Audio/Voice
     if (message.voice) {
@@ -81,6 +82,7 @@ export async function POST(req: NextRequest) {
     if (message.video) {
         const caption = message.caption ? ` CAPTION: ${message.caption}` : '';
         text = `[VIDEO_UPLOAD] File_ID: ${message.video.file_id}${caption}`;
+        mediaType = 'video';
     }
 
     if (message.photo && message.photo.length > 0) {
@@ -88,6 +90,7 @@ export async function POST(req: NextRequest) {
         const largestPhoto = message.photo[message.photo.length - 1];
         const caption = message.caption ? ` CAPTION: ${message.caption}` : '';
         text = `[PHOTO_UPLOAD] File_ID: ${largestPhoto.file_id}${caption}`;
+        mediaType = 'image';
     }
 
     if (!text) {
@@ -241,7 +244,8 @@ export async function POST(req: NextRequest) {
         const { data: insertedMsg } = await supabase.from('messages').insert({
             session_id: session.id,
             sender: 'user',
-            content: leadRedirectCode ? '/start' : text
+            content: leadRedirectCode ? '/start' : text,
+            media_type: mediaType
         }).select().single();
 
         if (!insertedMsg) return NextResponse.json({ ok: true });
