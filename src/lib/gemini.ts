@@ -8,11 +8,11 @@ const readSecret = (value?: string) => {
     return secret;
 };
 
-const apiKey = readSecret(process.env.GEMINI_API_KEY);
-const openRouterApiKey = readSecret(process.env.OPENROUTER_API_KEY);
-const openRouterBaseUrl = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
-const openRouterReferer = process.env.OPENROUTER_REFERER || process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-const openRouterTitle = process.env.OPENROUTER_TITLE || "Lari Telegram Bot";
+const envGeminiApiKey = readSecret(process.env.GEMINI_API_KEY);
+const envOpenRouterApiKey = readSecret(process.env.OPENROUTER_API_KEY);
+const defaultOpenRouterBaseUrl = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+const defaultOpenRouterReferer = process.env.OPENROUTER_REFERER || process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+const defaultOpenRouterTitle = process.env.OPENROUTER_TITLE || "Lari Telegram Bot";
 
 
 // Schema para Gemini 2.5 Flash
@@ -911,10 +911,13 @@ export const parseLeadStats = (input: any): LeadStats => {
 };
 
 let genAI: GoogleGenerativeAI | null = null;
+let genAIKey = "";
 
-export const initializeGenAI = () => {
-    if (!genAI && apiKey) {
-        genAI = new GoogleGenerativeAI(apiKey);
+export const initializeGenAI = (runtimeGeminiApiKey: string = envGeminiApiKey) => {
+    const key = readSecret(runtimeGeminiApiKey);
+    if (key && (!genAI || genAIKey !== key)) {
+        genAI = new GoogleGenerativeAI(key);
+        genAIKey = key;
     }
     return genAI;
 }
@@ -941,6 +944,32 @@ type AiMessage = {
     role: "user" | "assistant";
     content: string;
 };
+
+type AiRuntimeSettings = {
+    openRouterApiKey: string;
+    geminiApiKey: string;
+    openRouterBaseUrl: string;
+    openRouterReferer: string;
+    openRouterTitle: string;
+    aiModelOrder: string;
+    aiStrategyModelOrder: string;
+    aiDraftModelOrder: string;
+    aiReviewModelOrder: string;
+    aiEvaluatorModelOrder: string;
+};
+
+const AI_SETTING_KEYS = [
+    "openrouter_api_key",
+    "gemini_api_key",
+    "openrouter_base_url",
+    "openrouter_referer",
+    "openrouter_title",
+    "ai_model_order",
+    "ai_strategy_model_order",
+    "ai_draft_model_order",
+    "ai_review_model_order",
+    "ai_evaluator_model_order",
+];
 
 const ROLE_ENV_KEYS: Record<AiRole, string> = {
     strategy: "AI_STRATEGY_MODEL_ORDER",
@@ -978,6 +1007,36 @@ const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string[]> = {
 
 const getGeminiModelName = () => process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
+const getBotSettingsMap = async (keys: string[]) => {
+    const { data, error } = await supabase
+        .from("bot_settings")
+        .select("key,value")
+        .in("key", keys);
+
+    if (error) {
+        console.warn("[AI Gateway] falha ao carregar settings:", error.message);
+        return {} as Record<string, string>;
+    }
+
+    return Object.fromEntries((data || []).map((item: any) => [item.key, item.value || ""])) as Record<string, string>;
+};
+
+const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
+    const settings = await getBotSettingsMap(AI_SETTING_KEYS);
+    return {
+        openRouterApiKey: readSecret(settings.openrouter_api_key) || envOpenRouterApiKey,
+        geminiApiKey: readSecret(settings.gemini_api_key) || envGeminiApiKey,
+        openRouterBaseUrl: settings.openrouter_base_url || defaultOpenRouterBaseUrl,
+        openRouterReferer: settings.openrouter_referer || defaultOpenRouterReferer,
+        openRouterTitle: settings.openrouter_title || defaultOpenRouterTitle,
+        aiModelOrder: settings.ai_model_order || process.env.AI_MODEL_ORDER || "",
+        aiStrategyModelOrder: settings.ai_strategy_model_order || process.env.AI_STRATEGY_MODEL_ORDER || "",
+        aiDraftModelOrder: settings.ai_draft_model_order || process.env.AI_DRAFT_MODEL_ORDER || "",
+        aiReviewModelOrder: settings.ai_review_model_order || process.env.AI_REVIEW_MODEL_ORDER || "",
+        aiEvaluatorModelOrder: settings.ai_evaluator_model_order || process.env.AI_EVALUATOR_MODEL_ORDER || "",
+    };
+};
+
 const parseAiModelEntry = (entry: string): AiGatewayConfig | null => {
     const trimmed = entry.trim();
     if (!trimmed) return null;
@@ -1001,16 +1060,22 @@ const parseAiModelOrder = (value?: string | null): AiGatewayConfig[] => {
         .filter((entry): entry is AiGatewayConfig => Boolean(entry));
 };
 
-const getAiGatewayOrder = (role: AiRole): AiGatewayConfig[] => {
-    const roleSpecific = parseAiModelOrder(process.env[ROLE_ENV_KEYS[role]]);
-    const globalOrder = parseAiModelOrder(process.env.AI_MODEL_ORDER);
+const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings): AiGatewayConfig[] => {
+    const roleSettingMap: Record<AiRole, string> = {
+        strategy: settings.aiStrategyModelOrder,
+        draft: settings.aiDraftModelOrder,
+        review: settings.aiReviewModelOrder,
+        evaluator: settings.aiEvaluatorModelOrder,
+    };
+    const roleSpecific = parseAiModelOrder(roleSettingMap[role]);
+    const globalOrder = parseAiModelOrder(settings.aiModelOrder);
     const defaults: AiGatewayConfig[] = DEFAULT_OPENROUTER_MODELS[role].map((model) => ({
         provider: "openrouter",
         model,
         label: `openrouter:${model}`,
     }));
 
-    if (apiKey) {
+    if (settings.geminiApiKey) {
         const geminiModel = getGeminiModelName();
         defaults.push({ provider: "gemini", model: geminiModel, label: `gemini:${geminiModel}` });
     }
@@ -1018,8 +1083,8 @@ const getAiGatewayOrder = (role: AiRole): AiGatewayConfig[] => {
     const order = [...roleSpecific, ...globalOrder, ...defaults];
     const seen = new Set<string>();
     return order.filter((gateway) => {
-        if (gateway.provider === "openrouter" && !openRouterApiKey) return false;
-        if (gateway.provider === "gemini" && !apiKey) return false;
+        if (gateway.provider === "openrouter" && !settings.openRouterApiKey) return false;
+        if (gateway.provider === "gemini" && !settings.geminiApiKey) return false;
         const key = `${gateway.provider}:${gateway.model}`;
         if (seen.has(key)) return false;
         seen.add(key);
@@ -1044,22 +1109,72 @@ FORMATO OBRIGATORIO:
 - Nao escreva texto fora do JSON.
 - O JSON deve seguir o schema interno: ${schemaName}.`;
 
+const appendAiGatewayEvent = async (event: {
+    role: AiRole;
+    provider: AiProvider;
+    model: string;
+    status: "success" | "error" | "skipped";
+    message?: string;
+    durationMs?: number;
+}) => {
+    try {
+        const { data } = await supabase
+            .from("bot_settings")
+            .select("key,value")
+            .in("key", ["ai_gateway_recent_events", "ai_gateway_stats"]);
+
+        const map = Object.fromEntries((data || []).map((item: any) => [item.key, item.value || ""]));
+        const recent = (() => {
+            try { return JSON.parse(map.ai_gateway_recent_events || "[]"); } catch { return []; }
+        })();
+        const stats = (() => {
+            try { return JSON.parse(map.ai_gateway_stats || "{}"); } catch { return {}; }
+        })();
+
+        const label = `${event.provider}:${event.model}`;
+        const statKey = `${event.role}|${label}`;
+        const current = stats[statKey] || { role: event.role, provider: event.provider, model: event.model, success: 0, error: 0, skipped: 0 };
+        current[event.status] = Number(current[event.status] || 0) + 1;
+        current.last_at = new Date().toISOString();
+        current.last_message = String(event.message || "").slice(0, 500);
+        stats[statKey] = current;
+
+        const nextRecent = [{
+            at: new Date().toISOString(),
+            role: event.role,
+            provider: event.provider,
+            model: event.model,
+            status: event.status,
+            message: String(event.message || "").slice(0, 700),
+            durationMs: event.durationMs || 0,
+        }, ...recent].slice(0, 80);
+
+        await supabase.from("bot_settings").upsert([
+            { key: "ai_gateway_recent_events", value: JSON.stringify(nextRecent) },
+            { key: "ai_gateway_stats", value: JSON.stringify(stats) },
+        ]);
+    } catch (error: any) {
+        console.warn("[AI Gateway] falha ao registrar evento:", error?.message || error);
+    }
+};
+
 const callOpenRouterJson = async <T,>(
+    settings: AiRuntimeSettings,
     gateway: AiGatewayConfig,
     role: AiRole,
     systemInstruction: string,
     history: AiMessage[],
     userContent: string,
 ): Promise<T> => {
-    if (!openRouterApiKey) throw new Error("OPENROUTER_API_KEY not configured");
+    if (!settings.openRouterApiKey) throw new Error("OPENROUTER_API_KEY not configured");
 
-    const response = await fetch(`${openRouterBaseUrl}/chat/completions`, {
+    const response = await fetch(`${settings.openRouterBaseUrl}/chat/completions`, {
         method: "POST",
         headers: {
-            "Authorization": `Bearer ${openRouterApiKey}`,
+            "Authorization": `Bearer ${settings.openRouterApiKey}`,
             "Content-Type": "application/json",
-            "HTTP-Referer": openRouterReferer,
-            "X-Title": openRouterTitle,
+            "HTTP-Referer": settings.openRouterReferer,
+            "X-Title": settings.openRouterTitle,
         },
         body: JSON.stringify({
             model: gateway.model,
@@ -1081,12 +1196,14 @@ const callOpenRouterJson = async <T,>(
 };
 
 const callGeminiJson = async <T,>(
+    settings: AiRuntimeSettings,
     gateway: AiGatewayConfig,
     systemInstruction: string,
     responseSchemaConfig: any,
     history: any[],
     parts: any[],
 ): Promise<T> => {
+    initializeGenAI(settings.geminiApiKey);
     if (!genAI) throw new Error("GEMINI_API_KEY not configured");
     const model = genAI.getGenerativeModel({
         model: gateway.model,
@@ -1103,6 +1220,7 @@ const callGeminiJson = async <T,>(
 };
 
 const callAiGatewayJson = async <T,>(options: {
+    settings: AiRuntimeSettings;
     role: AiRole;
     schemaName: string;
     systemInstruction: string;
@@ -1111,7 +1229,7 @@ const callAiGatewayJson = async <T,>(options: {
     text: string;
     mediaPart?: any;
 }): Promise<{ data: T; gateway: AiGatewayConfig; attempts: string[] }> => {
-    const gateways = getAiGatewayOrder(options.role);
+    const gateways = getAiGatewayOrder(options.role, options.settings);
     const attempts: string[] = [];
     const openRouterHistory: AiMessage[] = options.history.map((message: any) => ({
         role: (message.role === "model" ? "assistant" : "user") as AiMessage["role"],
@@ -1119,36 +1237,44 @@ const callAiGatewayJson = async <T,>(options: {
     })).filter((message: AiMessage) => Boolean(message.content.trim()));
 
     for (const gateway of gateways) {
+        const startedAt = Date.now();
         try {
             if (gateway.provider === "openrouter") {
                 if (options.mediaPart) {
-                    attempts.push(`${gateway.label} pulado: midia nao suportada neste provider`);
+                    const message = `${gateway.label} pulado: midia nao suportada neste provider`;
+                    attempts.push(message);
+                    await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "skipped", message });
                     continue;
                 }
                 const data = await callOpenRouterJson<T>(
+                    options.settings,
                     gateway,
                     options.role,
                     `${options.systemInstruction}${buildJsonReminder(options.schemaName)}`,
                     openRouterHistory,
                     options.text,
                 );
+                await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "success", durationMs: Date.now() - startedAt });
                 return { data, gateway, attempts };
             }
 
             const parts: any[] = [{ text: options.text }];
             if (options.mediaPart) parts.push(options.mediaPart);
             const data = await callGeminiJson<T>(
+                options.settings,
                 gateway,
                 options.systemInstruction,
                 options.responseSchemaConfig,
                 options.history,
                 parts,
             );
+            await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "success", durationMs: Date.now() - startedAt });
             return { data, gateway, attempts };
         } catch (error: any) {
             const message = `${gateway.label} falhou: ${error?.message || error}`;
             attempts.push(message);
             console.warn(`[AI Gateway] ${message}`);
+            await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "error", message, durationMs: Date.now() - startedAt });
         }
     }
 
@@ -1179,8 +1305,9 @@ const makeFallbackStrategy = (message: string) => {
 };
 
 export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null, minutesSinceOffer?: number, extraScript?: string, leadMemory?: any }, media?: { mimeType: string, data: string }) => {
-    initializeGenAI();
-    if (!openRouterApiKey && !genAI) throw new Error("No AI provider configured");
+    const aiSettings = await getAiRuntimeSettings();
+    initializeGenAI(aiSettings.geminiApiKey);
+    if (!aiSettings.openRouterApiKey && !aiSettings.geminiApiKey) throw new Error("No AI provider configured");
 
     const currentStats = parseLeadStats(context?.currentStats);
     const { data: previewRows, error: previewError } = await supabase
@@ -1310,6 +1437,7 @@ Se houver midia, diagnostique qual tema visual combina com as palavras do lead e
 Se o lead estiver negociando com valor real na conta, a estrategia deve aceitar ofertas proximas, fazer poucos degraus se for baixo e evitar contradicao.`;
 
                 const strategyResult = await callAiGatewayJson<any>({
+                    settings: aiSettings,
                     role: "strategy",
                     schemaName: "strategySchema",
                     systemInstruction: strategyPrompt,
@@ -1345,6 +1473,7 @@ Use essa estrategia para responder.`
             }];
             if (media) draftParts.push(currentMessageParts[1]);
             const draftResult = await callAiGatewayJson<AIResponse>({
+                settings: aiSettings,
                 role: "draft",
                 schemaName: "responseSchema",
                 systemInstruction: draftPrompt,
@@ -1384,6 +1513,7 @@ Reprove/corrija se ela repete promessa de VIP para lead desconfiado, pergunta no
 Se corrigir, devolva mensagens melhores no mesmo estilo da Lari. Nao explique para o lead.`;
 
                 const reviewResult = await callAiGatewayJson<any>({
+                    settings: aiSettings,
                     role: "review",
                     schemaName: "reviewSchema",
                     systemInstruction: reviewPrompt,
@@ -1436,6 +1566,7 @@ Carente/sentimental alto exige busca real de atencao, desabafo ou vinculo emocio
 Retorne o nivel TOTAL atual, nao delta.`;
 
                 const evaluatorResult = await callAiGatewayJson<any>({
+                    settings: aiSettings,
                     role: "evaluator",
                     schemaName: "leadEvaluatorSchema",
                     systemInstruction: evaluatorPrompt,

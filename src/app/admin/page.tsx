@@ -225,6 +225,7 @@ export default function AdminDashboard() {
                             ["/admin/scripts", "Scripts"],
                             ["/admin/previews", "Previas"],
                             ["/admin/variants", "Variacoes"],
+                            ["/admin/ai", "Multi-IAs"],
                             ["/admin/optimizer", "IA"],
                             ["/admin/settings", "Config"],
                         ].map(([href, label]) => (
