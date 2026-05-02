@@ -956,6 +956,9 @@ type AiRuntimeSettings = {
     aiDraftModelOrder: string;
     aiReviewModelOrder: string;
     aiEvaluatorModelOrder: string;
+    aiStrategyEnabled: boolean;
+    aiReviewEnabled: boolean;
+    aiEvaluatorEnabled: boolean;
     openRouterStrategyModel: string;
     openRouterDraftModel: string;
     openRouterReviewModel: string;
@@ -977,6 +980,9 @@ const AI_SETTING_KEYS = [
     "ai_draft_model_order",
     "ai_review_model_order",
     "ai_evaluator_model_order",
+    "ai_strategy_enabled",
+    "ai_review_enabled",
+    "ai_evaluator_enabled",
     "openrouter_strategy_model",
     "openrouter_draft_model",
     "openrouter_review_model",
@@ -1031,6 +1037,9 @@ const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
         aiDraftModelOrder: settings.ai_draft_model_order || process.env.AI_DRAFT_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
         aiReviewModelOrder: settings.ai_review_model_order || process.env.AI_REVIEW_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
         aiEvaluatorModelOrder: settings.ai_evaluator_model_order || process.env.AI_EVALUATOR_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
+        aiStrategyEnabled: settings.ai_strategy_enabled !== "false",
+        aiReviewEnabled: settings.ai_review_enabled !== "false",
+        aiEvaluatorEnabled: settings.ai_evaluator_enabled !== "false",
         openRouterStrategyModel: settings.openrouter_strategy_model || process.env.OPENROUTER_STRATEGY_MODEL || DEFAULT_OPENROUTER_MODELS.strategy,
         openRouterDraftModel: settings.openrouter_draft_model || process.env.OPENROUTER_DRAFT_MODEL || DEFAULT_OPENROUTER_MODELS.draft,
         openRouterReviewModel: settings.openrouter_review_model || process.env.OPENROUTER_REVIEW_MODEL || DEFAULT_OPENROUTER_MODELS.review,
@@ -1448,6 +1457,9 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             let strategy = makeFallbackStrategy(userMessage);
             let strategyStatus = 'fallback local';
 
+            if (!aiSettings.aiStrategyEnabled) {
+                strategyStatus = 'desativada, fallback local';
+            } else {
             try {
                 const strategyPrompt = `${baseInstruction}
 
@@ -1476,6 +1488,8 @@ Se o lead estiver negociando com valor real na conta, a estrategia deve aceitar 
             }
 
             console.log("🧠 Estratégia Lari:", JSON.stringify(strategy));
+
+            }
 
             const draftPrompt = `${baseInstruction}
 
@@ -1523,6 +1537,9 @@ Use essa estrategia para responder.`
             };
             let reviewStatus = 'sem revisao';
 
+            if (!aiSettings.aiReviewEnabled) {
+                reviewStatus = 'desativada';
+            } else {
             try {
                 const reviewPrompt = `${baseInstruction}
 
@@ -1557,6 +1574,8 @@ Revise e corrija se necessario.`
             }
             console.log("🧪 Revisão Lari:", JSON.stringify(review));
 
+            }
+
             const reviewedMessages = Array.isArray(review?.messages)
                 ? review.messages.map((m: any) => String(m || '').trim()).filter(Boolean)
                 : [];
@@ -1571,6 +1590,9 @@ Revise e corrija se necessario.`
 
             let leadEvaluation: any = null;
             let leadEvaluationStatus = 'sem avaliacao';
+            if (!aiSettings.aiEvaluatorEnabled) {
+                leadEvaluationStatus = 'desativada';
+            } else {
             try {
                 const evaluatorPrompt = `${baseInstruction}
 
@@ -1617,6 +1639,8 @@ Avalie o nivel real do lead agora.`
                 console.warn("Avaliadora de lead falhou, mantendo stats da Lari:", evaluationError?.message || evaluationError);
             }
             console.log("📏 Avaliacao Lead:", JSON.stringify(leadEvaluation));
+
+            }
 
             const strategyThought = `ESTRATEGIA (${strategyStatus}): ${strategy?.intent || 'n/a'} | ${strategy?.lead_type || 'n/a'} | ${strategy?.objective || 'n/a'} | ${strategy?.next_step || 'n/a'}`;
             const reviewThought = `REVISAO (${reviewStatus}): ${review?.approved ? 'aprovada' : 'corrigida'} | score ${review?.score ?? 'n/a'} | ${(review?.issues || []).slice(0, 3).join(', ')}`;

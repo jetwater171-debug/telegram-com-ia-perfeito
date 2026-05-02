@@ -11,6 +11,9 @@ type AiSettings = {
     openrouterApiKeySaved: boolean;
     geminiApiKeySaved: boolean;
     aiDraftModelOrder: string;
+    aiStrategyEnabled: boolean;
+    aiReviewEnabled: boolean;
+    aiEvaluatorEnabled: boolean;
     openrouterStrategyModel: string;
     openrouterDraftModel: string;
     openrouterReviewModel: string;
@@ -45,6 +48,9 @@ const emptySettings: AiSettings = {
     openrouterApiKeySaved: false,
     geminiApiKeySaved: false,
     aiDraftModelOrder: "openrouter,gemini",
+    aiStrategyEnabled: true,
+    aiReviewEnabled: true,
+    aiEvaluatorEnabled: true,
     openrouterStrategyModel: "z-ai/glm-4.5-air:free",
     openrouterDraftModel: "z-ai/glm-4.5-air:free",
     openrouterReviewModel: "openai/gpt-oss-120b:free",
@@ -319,6 +325,38 @@ export default function AdminAiPage() {
                     </div>
 
                     <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
+                        <h2 className="text-lg font-semibold">Camadas da Lari</h2>
+                        <p className="mt-1 text-sm text-slate-400">Desligue o que nao precisar para economizar chamadas. A Lari responde sempre fica ligada.</p>
+                        <div className="mt-4 grid gap-3">
+                            <LayerToggle
+                                title="Lari responde"
+                                description="Camada principal que escreve a resposta final."
+                                checked
+                                locked
+                                onChange={() => undefined}
+                            />
+                            <LayerToggle
+                                title="Estrategista"
+                                description="Pensa antes da Lari responder. Desligada, usa estrategia local simples."
+                                checked={settings.aiStrategyEnabled}
+                                onChange={(checked) => setSettings((prev) => ({ ...prev, aiStrategyEnabled: checked }))}
+                            />
+                            <LayerToggle
+                                title="Revisora"
+                                description="Revisa e corrige a resposta antes de enviar."
+                                checked={settings.aiReviewEnabled}
+                                onChange={(checked) => setSettings((prev) => ({ ...prev, aiReviewEnabled: checked }))}
+                            />
+                            <LayerToggle
+                                title="Avaliadora"
+                                description="Atualiza as barrinhas e classificacao do lead."
+                                checked={settings.aiEvaluatorEnabled}
+                                onChange={(checked) => setSettings((prev) => ({ ...prev, aiEvaluatorEnabled: checked }))}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
                         <h2 className="text-lg font-semibold">Chaves</h2>
                         <p className="mt-1 text-sm text-slate-400">
                             A chave nunca volta preenchida no campo por segurança. O que importa é o selo salva no banco.
@@ -444,6 +482,41 @@ function KeyField({
             <input value={value} onChange={(event) => onChange(event.target.value)} type="password" className={`mt-3 w-full ${inputClass}`} placeholder={placeholder} />
             <p className="mt-2 text-xs text-slate-500">Cole uma nova chave só se quiser trocar a atual.</p>
         </div>
+    );
+}
+
+function LayerToggle({
+    title,
+    description,
+    checked,
+    locked = false,
+    onChange,
+}: {
+    title: string;
+    description: string;
+    checked: boolean;
+    locked?: boolean;
+    onChange: (checked: boolean) => void;
+}) {
+    return (
+        <label className={`flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/25 p-4 ${locked ? "opacity-80" : ""}`}>
+            <div>
+                <strong className="text-sm text-slate-100">{title}</strong>
+                <p className="mt-1 text-xs leading-5 text-slate-400">{description}</p>
+            </div>
+            <span className="flex items-center gap-2">
+                <span className={`text-xs font-semibold ${checked ? "text-emerald-200" : "text-slate-500"}`}>
+                    {locked ? "Sempre ligada" : checked ? "Ligada" : "Desligada"}
+                </span>
+                <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={locked}
+                    onChange={(event) => onChange(event.target.checked)}
+                    className="h-5 w-5 accent-cyan-400 disabled:cursor-not-allowed"
+                />
+            </span>
+        </label>
     );
 }
 
