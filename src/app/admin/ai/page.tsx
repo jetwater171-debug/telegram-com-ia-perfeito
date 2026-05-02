@@ -96,6 +96,63 @@ const geminiPresets = [
     "gemini-2.0-flash-lite",
 ];
 
+const setupPresets = [
+    {
+        id: "free-lari",
+        label: "Free recomendado",
+        note: "Comeca no OpenRouter gratis e usa Gemini como backup.",
+        order: ["openrouter", "gemini"] as ProviderKey[],
+        openrouter: {
+            draft: "z-ai/glm-4.5-air:free",
+            strategy: "z-ai/glm-4.5-air:free",
+            review: "openai/gpt-oss-120b:free",
+            evaluator: "openai/gpt-oss-120b:free",
+        },
+        gemini: {
+            draft: "gemini-2.5-flash",
+            strategy: "gemini-2.5-flash-lite",
+            review: "gemini-2.5-flash",
+            evaluator: "gemini-2.5-flash-lite",
+        },
+    },
+    {
+        id: "quality-lari",
+        label: "Mais qualidade",
+        note: "Usa modelos pagos/baratos melhores no OpenRouter e Gemini de backup.",
+        order: ["openrouter", "gemini"] as ProviderKey[],
+        openrouter: {
+            draft: "deepseek/deepseek-v3.2",
+            strategy: "openai/gpt-oss-120b:free",
+            review: "anthropic/claude-sonnet-4.5",
+            evaluator: "openai/gpt-oss-120b:free",
+        },
+        gemini: {
+            draft: "gemini-2.5-flash",
+            strategy: "gemini-2.5-flash",
+            review: "gemini-2.5-flash",
+            evaluator: "gemini-2.5-flash-lite",
+        },
+    },
+    {
+        id: "gemini-first",
+        label: "Gemini primeiro",
+        note: "Deixa Gemini responder e OpenRouter fica como reserva.",
+        order: ["gemini", "openrouter"] as ProviderKey[],
+        openrouter: {
+            draft: "z-ai/glm-4.5-air:free",
+            strategy: "z-ai/glm-4.5-air:free",
+            review: "openai/gpt-oss-120b:free",
+            evaluator: "openai/gpt-oss-120b:free",
+        },
+        gemini: {
+            draft: "gemini-2.5-flash",
+            strategy: "gemini-2.5-flash",
+            review: "gemini-2.5-flash",
+            evaluator: "gemini-2.5-flash-lite",
+        },
+    },
+];
+
 const inputClass = "rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-300/60";
 
 const parseProviderOrder = (value?: string): ProviderKey[] => {
@@ -207,6 +264,28 @@ export default function AdminAiPage() {
         };
     };
 
+    const applySetupPreset = (preset: (typeof setupPresets)[number]) => {
+        setProviderOrder(preset.order);
+        setSettings((prev) => ({
+            ...prev,
+            aiModelOrder: preset.order.join(","),
+            aiDraftModelOrder: preset.order.join(","),
+            aiStrategyModelOrder: preset.order.join(","),
+            aiReviewModelOrder: preset.order.join(","),
+            aiEvaluatorModelOrder: preset.order.join(","),
+            openrouterDraftModel: preset.openrouter.draft,
+            openrouterStrategyModel: preset.openrouter.strategy,
+            openrouterReviewModel: preset.openrouter.review,
+            openrouterEvaluatorModel: preset.openrouter.evaluator,
+            geminiDraftModel: preset.gemini.draft,
+            geminiStrategyModel: preset.gemini.strategy,
+            geminiReviewModel: preset.gemini.review,
+            geminiEvaluatorModel: preset.gemini.evaluator,
+        }));
+        setOpenCard(preset.order[0]);
+        setMsg(`Preset aplicado: ${preset.label}. Clique em Salvar tudo para gravar.`);
+    };
+
     const worstModel = useMemo(() => {
         return [...stats].sort((a, b) => Number(b.error || 0) - Number(a.error || 0))[0];
     }, [stats]);
@@ -233,8 +312,34 @@ export default function AdminAiPage() {
                     <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
                         <div className="flex items-start justify-between gap-3">
                             <div>
+                                <h2 className="text-lg font-semibold">Configuracao rapida</h2>
+                                <p className="text-sm text-slate-400">Escolha um modo pronto e depois ajuste se quiser.</p>
+                            </div>
+                            <button onClick={save} disabled={loading} className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60">
+                                {loading ? "Salvando..." : "Salvar tudo"}
+                            </button>
+                        </div>
+                        <div className="mt-4 grid gap-3 md:grid-cols-3">
+                            {setupPresets.map((preset) => (
+                                <button
+                                    key={preset.id}
+                                    type="button"
+                                    onClick={() => applySetupPreset(preset)}
+                                    className="rounded-lg border border-white/10 bg-black/25 p-4 text-left transition hover:border-cyan-300/50 hover:bg-cyan-300/10"
+                                >
+                                    <strong className="text-sm text-slate-100">{preset.label}</strong>
+                                    <p className="mt-1 text-xs leading-5 text-slate-400">{preset.note}</p>
+                                    <p className="mt-3 text-xs text-cyan-200">Ordem: {preset.order.map((item) => providerLabels[item]).join(" -> ")}</p>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
                                 <h2 className="text-lg font-semibold">Prioridade de tentativa</h2>
-                                <p className="text-sm text-slate-400">Arraste ou use as setas. O primeiro responde; se falhar, cai para o proximo.</p>
+                                <p className="text-sm text-slate-400">Arraste ou use Subir/Descer. O primeiro responde; se falhar, cai para o proximo.</p>
                             </div>
                             <span className="rounded-md border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-xs text-cyan-200">
                                 {providerLabels[providerOrder[0]]} primeiro
@@ -257,14 +362,16 @@ export default function AdminAiPage() {
                                         <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-400 text-sm font-black text-slate-950">{index + 1}</span>
                                         <div>
                                             <div className="flex flex-wrap items-center gap-2">
-                                                <strong>{providerLabels[provider]}</strong>
+                                                <strong className="text-base uppercase tracking-[0.08em]">{providerLabels[provider]}</strong>
                                                 <span className={`rounded-md px-2 py-0.5 text-xs ${enabled ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/10 text-amber-200"}`}>
                                                     {enabled ? "Ligado" : "Sem chave"}
                                                 </span>
                                             </div>
-                                            <p className="mt-1 text-xs text-slate-400">
-                                                ok {health.success} | erros {health.error} | skip {health.skipped}
-                                            </p>
+                                            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                                <span className="rounded-md border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-emerald-200">ok {health.success}</span>
+                                                <span className="rounded-md border border-red-400/20 bg-red-400/10 px-2 py-1 text-red-200">erro {health.error}</span>
+                                                <span className="rounded-md border border-slate-400/20 bg-slate-400/10 px-2 py-1 text-slate-300">skip {health.skipped}</span>
+                                            </div>
                                         </div>
                                         <button type="button" onClick={() => setOpenCard(provider)} className="rounded-md border border-white/10 px-3 py-2 text-xs text-slate-200">Configurar</button>
                                         <div className="flex gap-2">
@@ -281,11 +388,9 @@ export default function AdminAiPage() {
                         <div className="flex items-start justify-between gap-3">
                             <div>
                                 <h2 className="text-lg font-semibold">Configuracao das IAs</h2>
-                                <p className="text-sm text-slate-400">Cards no mesmo estilo dos gateways: liga, configura e salva sem deploy.</p>
+                                <p className="text-sm text-slate-400">Configure chave e modelos de cada provedor. O bot usa a mesma Lari em todos.</p>
                             </div>
-                            <button onClick={save} disabled={loading} className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60">
-                                {loading ? "Salvando..." : "Salvar tudo"}
-                            </button>
+                            <span className="rounded-md border border-white/10 bg-black/25 px-3 py-2 text-xs text-slate-300">Salvar no bot_settings</span>
                         </div>
 
                         <div className="mt-4 space-y-3">
@@ -313,18 +418,28 @@ export default function AdminAiPage() {
                                 </div>
                                 <ModelGrid
                                     provider="openrouter"
+                                    onApplyPreset={(preset) => {
+                                        setSettings((prev) => ({
+                                            ...prev,
+                                            openrouterDraftModel: preset.openrouter.draft,
+                                            openrouterStrategyModel: preset.openrouter.strategy,
+                                            openrouterReviewModel: preset.openrouter.review,
+                                            openrouterEvaluatorModel: preset.openrouter.evaluator,
+                                        }));
+                                    }}
                                     values={{
                                         draft: settings.openrouterDraftModel,
                                         strategy: settings.openrouterStrategyModel,
                                         review: settings.openrouterReviewModel,
                                         evaluator: settings.openrouterEvaluatorModel,
                                     }}
-                                    onChange={{
-                                        draft: (value) => update("openrouterDraftModel", value),
-                                        strategy: (value) => update("openrouterStrategyModel", value),
-                                        review: (value) => update("openrouterReviewModel", value),
-                                        evaluator: (value) => update("openrouterEvaluatorModel", value),
-                                    }}
+                                onChange={{
+                                    draft: (value) => update("openrouterDraftModel", value),
+                                    strategy: (value) => update("openrouterStrategyModel", value),
+                                    review: (value) => update("openrouterReviewModel", value),
+                                    evaluator: (value) => update("openrouterEvaluatorModel", value),
+                                }}
+                                    stats={stats.filter((item) => item.provider === "openrouter")}
                                 />
                             </ProviderCard>
 
@@ -343,18 +458,28 @@ export default function AdminAiPage() {
                                 </div>
                                 <ModelGrid
                                     provider="gemini"
+                                    onApplyPreset={(preset) => {
+                                        setSettings((prev) => ({
+                                            ...prev,
+                                            geminiDraftModel: preset.gemini.draft,
+                                            geminiStrategyModel: preset.gemini.strategy,
+                                            geminiReviewModel: preset.gemini.review,
+                                            geminiEvaluatorModel: preset.gemini.evaluator,
+                                        }));
+                                    }}
                                     values={{
                                         draft: settings.geminiDraftModel,
                                         strategy: settings.geminiStrategyModel,
                                         review: settings.geminiReviewModel,
                                         evaluator: settings.geminiEvaluatorModel,
                                     }}
-                                    onChange={{
-                                        draft: (value) => update("geminiDraftModel", value),
-                                        strategy: (value) => update("geminiStrategyModel", value),
-                                        review: (value) => update("geminiReviewModel", value),
-                                        evaluator: (value) => update("geminiEvaluatorModel", value),
-                                    }}
+                                onChange={{
+                                    draft: (value) => update("geminiDraftModel", value),
+                                    strategy: (value) => update("geminiStrategyModel", value),
+                                    review: (value) => update("geminiReviewModel", value),
+                                    evaluator: (value) => update("geminiEvaluatorModel", value),
+                                }}
+                                    stats={stats.filter((item) => item.provider === "gemini")}
                                 />
                             </ProviderCard>
                         </div>
@@ -467,15 +592,31 @@ function ModelGrid({
     provider,
     values,
     onChange,
+    onApplyPreset,
+    stats,
 }: {
     provider: ProviderKey;
     values: Record<RoleKey, string>;
     onChange: Record<RoleKey, (value: string) => void>;
+    onApplyPreset: (preset: (typeof setupPresets)[number]) => void;
+    stats: AiStat[];
 }) {
     const presets = provider === "openrouter" ? openRouterPresets.map((item) => item.id) : geminiPresets;
     return (
         <div className="mt-5">
-            <h4 className="text-sm font-semibold text-slate-200">Modelos por funcao</h4>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h4 className="text-sm font-semibold text-slate-200">Modelos por funcao</h4>
+                    <p className="text-xs text-slate-500">Pode usar o preset pronto ou trocar campo por campo.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {setupPresets.map((preset) => (
+                        <button key={preset.id} type="button" onClick={() => onApplyPreset(preset)} className="rounded-md border border-white/10 px-2 py-1 text-xs text-slate-200">
+                            {preset.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
                 {(Object.keys(roleLabels).filter((key) => ["draft", "strategy", "review", "evaluator"].includes(key)) as RoleKey[]).map((role) => (
                     <Field key={role} label={roleLabels[role]}>
@@ -491,20 +632,29 @@ function ModelGrid({
 
             {provider === "openrouter" && (
                 <div className="mt-4 grid gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Opcoes prontas OpenRouter</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Biblioteca OpenRouter pronta</p>
                     {openRouterPresets.map((preset) => (
                         <div key={preset.id} className="rounded-lg border border-white/10 bg-black/25 p-3">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div>
                                     <p className="text-sm font-semibold text-slate-100">{preset.label}</p>
                                     <p className="text-xs text-slate-400">{preset.id} - {preset.note}</p>
+                                    <ModelCounter stats={stats} model={preset.id} />
                                 </div>
-                                <button type="button" onClick={() => onChange.draft(preset.id)} className="rounded-md border border-white/10 px-2 py-1 text-xs text-slate-200">
-                                    usar na Lari
-                                </button>
+                                <div className="flex flex-wrap gap-2">
+                                    <button type="button" onClick={() => onChange.draft(preset.id)} className="rounded-md border border-white/10 px-2 py-1 text-xs text-slate-200">Lari</button>
+                                    <button type="button" onClick={() => onChange.strategy(preset.id)} className="rounded-md border border-white/10 px-2 py-1 text-xs text-slate-200">Estrategia</button>
+                                    <button type="button" onClick={() => onChange.review(preset.id)} className="rounded-md border border-white/10 px-2 py-1 text-xs text-slate-200">Revisao</button>
+                                </div>
                             </div>
                         </div>
                     ))}
+                </div>
+            )}
+
+            {provider === "gemini" && (
+                <div className="mt-4 rounded-lg border border-white/10 bg-black/25 p-3 text-xs text-slate-400">
+                    Gemini fica melhor como backup estavel. Para custo/velocidade, use Flash Lite em estrategia/avaliacao e Flash na Lari/revisao.
                 </div>
             )}
         </div>
@@ -526,5 +676,23 @@ function Metric({ label, value }: { label: string; value: number }) {
             <p className="text-xs text-slate-500">{label}</p>
             <p className="mt-1 text-lg font-semibold text-slate-100">{value}</p>
         </div>
+    );
+}
+
+function ModelCounter({ stats, model }: { stats: AiStat[]; model: string }) {
+    const totals = stats
+        .filter((item) => item.model === model)
+        .reduce(
+            (acc, item) => ({
+                success: acc.success + Number(item.success || 0),
+                error: acc.error + Number(item.error || 0),
+            }),
+            { success: 0, error: 0 }
+        );
+
+    return (
+        <p className="mt-2 text-xs text-slate-500">
+            ok {totals.success} erro {totals.error}
+        </p>
     );
 }
