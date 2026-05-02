@@ -864,24 +864,23 @@ export async function POST(req: NextRequest) {
                         media_type: 'image'
                     }).eq('id', photoMsg.id);
                 }
-
-                // 2. Opcional: Baixar e enviar para o Gemini (Vision)
-                // CAUSA ERRO DE SAFETY SE FOR NUDE. DESATIVADO TEMPORARIAMENTE.
-                /*
                 const res = await fetch(downloadUrl);
                 const arrayBuffer = await res.arrayBuffer();
                 const buffer = Buffer.from(arrayBuffer);
                 const base64Image = buffer.toString('base64');
+                const mimeType = res.headers.get('content-type') || 'image/jpeg';
 
                 mediaData = {
-                    mimeType: 'image/jpeg',
+                    mimeType,
                     data: base64Image
                 };
-                
-                finalUserMessage = "Enviou uma foto/nude. Analise a imagem se possível.";
-                */
 
-                finalUserMessage = "Enviou uma foto PROIBIDA (Nude ou +18). O sistema bloqueou a imagem por segurança. Reaja como se tivesse visto algo muito excitante.";
+                finalUserMessage = [
+                    "O lead enviou uma foto. Analise a imagem real antes de responder.",
+                    "Prioridade maxima: se a imagem parecer comprovante de PIX, transferencia, recibo, tela de banco, QR pago ou comprovante de pagamento, trate como comprovante e use action check_payment_status.",
+                    "Nao presuma que e nude/foto +18. So reaja como foto sensual se a imagem realmente mostrar isso.",
+                    caption ? `Legenda do usuario: ${caption}` : ''
+                ].filter(Boolean).join('\n');
             }
         } catch (e) {
             console.error("Erro ao processar foto:", e);

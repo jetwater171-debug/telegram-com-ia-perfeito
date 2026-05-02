@@ -13,6 +13,12 @@ interface Message {
     media_type?: string | null;
 }
 
+interface MediaPreview {
+    src: string;
+    type: string;
+    label: string;
+}
+
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
 export default function AdminChatPage() {
@@ -31,6 +37,7 @@ export default function AdminChatPage() {
     const [forceLoading, setForceLoading] = useState(false);
     const [loading, setLoading] = useState(true);
     const [lastSync, setLastSync] = useState<Date | null>(null);
+    const [mediaPreview, setMediaPreview] = useState<MediaPreview | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const didInitialScroll = useRef(false);
 
@@ -326,7 +333,7 @@ export default function AdminChatPage() {
                                             </span>
                                         </div>
                                     )}
-                                    <MessageBubble message={msg} />
+                                    <MessageBubble message={msg} onOpenMedia={setMediaPreview} />
                                 </React.Fragment>
                             );
                         })}
@@ -424,11 +431,33 @@ export default function AdminChatPage() {
                     </Panel>
                 </div>
             </aside>
+
+            {mediaPreview && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 backdrop-blur-sm"
+                    onClick={() => setMediaPreview(null)}
+                >
+                    <button
+                        onClick={() => setMediaPreview(null)}
+                        className="absolute right-4 top-4 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+                    >
+                        Fechar
+                    </button>
+                    <div className="max-h-[92vh] w-full max-w-5xl" onClick={(event) => event.stopPropagation()}>
+                        {mediaPreview.type === "video" ? (
+                            <video src={mediaPreview.src} controls autoPlay className="mx-auto max-h-[92vh] w-full object-contain" />
+                        ) : (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={mediaPreview.src} alt={mediaPreview.label} className="mx-auto max-h-[92vh] w-full object-contain" />
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message, onOpenMedia }: { message: Message; onOpenMedia: (media: MediaPreview) => void }) {
     const isMe = message.sender === "bot" || message.sender === "admin";
     const isSystem = message.sender === "system";
     const isThought = message.sender === "thought";
@@ -461,14 +490,19 @@ function MessageBubble({ message }: { message: Message }) {
                     <span className="text-[10px] text-slate-500">{formatTime(message.created_at)}</span>
                 </div>
                 {mediaSrc && (
-                    <div className="mb-2 overflow-hidden rounded-md border border-white/10 bg-black/20">
+                    <button
+                        type="button"
+                        onClick={() => onOpenMedia({ src: mediaSrc, type: getMessageMediaType(message), label: displayText || "Midia do lead" })}
+                        className="mb-2 block w-full overflow-hidden rounded-md border border-white/10 bg-black/20 text-left transition hover:border-cyan-300/50"
+                        title="Abrir em tamanho grande"
+                    >
                         {getMessageMediaType(message) === "video" ? (
                             <video src={mediaSrc} controls preload="metadata" className="max-h-72 w-full object-contain" />
                         ) : (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={mediaSrc} alt="" className="max-h-72 w-full object-contain" />
                         )}
-                    </div>
+                    </button>
                 )}
                 {displayText && <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{displayText}</p>}
             </div>
