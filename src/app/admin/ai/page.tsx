@@ -230,6 +230,18 @@ export default function AdminAiPage() {
             .slice(0, 8);
     }, [stats]);
 
+    const statusWarnings = useMemo(() => {
+        const text = recentEvents.map((event) => `${event.provider} ${event.message || ""}`).join("\n").toLowerCase();
+        const warnings: string[] = [];
+        if (text.includes("free-models-per-day") || text.includes("rate limit")) {
+            warnings.push("OpenRouter Free bateu limite. Para voltar agora, coloque créditos no OpenRouter ou use Full Gemini.");
+        }
+        if (text.includes("403") || text.includes("denied access") || text.includes("forbidden")) {
+            warnings.push("Gemini está recusando a chave/projeto. Troque a API Key ou habilite o projeto no Google AI Studio.");
+        }
+        return warnings;
+    }, [recentEvents]);
+
     return (
         <div className="min-h-screen bg-[#080b10] text-slate-100">
             <header className="border-b border-white/10 bg-[#080b10]">
@@ -258,6 +270,15 @@ export default function AdminAiPage() {
                                 {loading ? "Salvando..." : "Salvar"}
                             </button>
                         </div>
+                        {statusWarnings.length > 0 && (
+                            <div className="mt-4 grid gap-2">
+                                {statusWarnings.map((warning) => (
+                                    <div key={warning} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
+                                        {warning}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                         <div className="mt-4 grid gap-3 sm:grid-cols-2">
                             <PresetButton preset={PRESETS.fullGemini} onClick={() => applyPreset(PRESETS.fullGemini)} active={order[0] === "gemini"} />
                             <PresetButton preset={PRESETS.openrouterFree} onClick={() => applyPreset(PRESETS.openrouterFree)} active={order[0] === "openrouter"} />

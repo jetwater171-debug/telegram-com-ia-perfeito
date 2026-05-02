@@ -1659,11 +1659,11 @@ Avalie o nivel real do lead agora.`
             // Simpler Fallback if retries exhausted
             if (attempt >= maxRetries) {
                 return {
-                    internal_thought: "Erro na IA (Esgotou tentativas), respondendo fallback: " + error.message,
+                    internal_thought: "IA indisponivel no momento. Detalhes tecnicos ficam registrados em /admin/ai.",
                     lead_classification: "desconhecido",
                     lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
                     current_state: "HOT_TALK",
-                    messages: ["amor a net ta ruim manda de novo?"], // Fallback message
+                    messages: ["amor minha net travou aqui", "me manda de novo rapidinho?"],
                     action: "none",
                     extracted_user_name: null,
                     audio_transcription: null,
