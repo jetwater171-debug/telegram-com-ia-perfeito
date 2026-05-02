@@ -27,23 +27,24 @@ OPENROUTER_API_KEY=sk-or-...
 OPENROUTER_REFERER=https://seu-dominio.com
 OPENROUTER_TITLE=Lari Telegram Bot
 
-# Ordem global opcional. Se nao configurar, o padrao comeca no OpenRouter free.
-AI_MODEL_ORDER=openrouter:z-ai/glm-4.5-air:free,openrouter:openai/gpt-oss-120b:free,openrouter:google/gemma-4-31b-it:free,openrouter:openrouter/free,gemini:gemini-2.5-flash
+# Ordem de provedores. O multi-IA e entre OpenRouter e Gemini.
+AI_MODEL_ORDER=openrouter,gemini
 
 # Ordens por etapa, opcionais.
-AI_STRATEGY_MODEL_ORDER=openrouter:z-ai/glm-4.5-air:free,openrouter:openai/gpt-oss-120b:free
-AI_DRAFT_MODEL_ORDER=openrouter:z-ai/glm-4.5-air:free,openrouter:openai/gpt-oss-120b:free
-AI_REVIEW_MODEL_ORDER=openrouter:openai/gpt-oss-120b:free,openrouter:z-ai/glm-4.5-air:free
-AI_EVALUATOR_MODEL_ORDER=openrouter:openai/gpt-oss-120b:free,openrouter:z-ai/glm-4.5-air:free
+AI_STRATEGY_MODEL_ORDER=openrouter,gemini
+AI_DRAFT_MODEL_ORDER=openrouter,gemini
+AI_REVIEW_MODEL_ORDER=openrouter,gemini
+AI_EVALUATOR_MODEL_ORDER=openrouter,gemini
+
+# Modelos usados dentro de cada provedor.
+OPENROUTER_DRAFT_MODEL=z-ai/glm-4.5-air:free
+GEMINI_DRAFT_MODEL=gemini-2.5-flash
 ```
 
 Padrao sem variaveis de ordem:
 
-1. `z-ai/glm-4.5-air:free`
-2. `openai/gpt-oss-120b:free`
-3. `google/gemma-4-31b-it:free`
-4. `openrouter/free`
-5. `gemini:gemini-2.5-flash`, apenas se `GEMINI_API_KEY` existir
+1. OpenRouter
+2. Gemini, apenas se `GEMINI_API_KEY` existir
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

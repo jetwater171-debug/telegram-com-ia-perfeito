@@ -956,6 +956,14 @@ type AiRuntimeSettings = {
     aiDraftModelOrder: string;
     aiReviewModelOrder: string;
     aiEvaluatorModelOrder: string;
+    openRouterStrategyModel: string;
+    openRouterDraftModel: string;
+    openRouterReviewModel: string;
+    openRouterEvaluatorModel: string;
+    geminiStrategyModel: string;
+    geminiDraftModel: string;
+    geminiReviewModel: string;
+    geminiEvaluatorModel: string;
 };
 
 const AI_SETTING_KEYS = [
@@ -969,6 +977,14 @@ const AI_SETTING_KEYS = [
     "ai_draft_model_order",
     "ai_review_model_order",
     "ai_evaluator_model_order",
+    "openrouter_strategy_model",
+    "openrouter_draft_model",
+    "openrouter_review_model",
+    "openrouter_evaluator_model",
+    "gemini_strategy_model",
+    "gemini_draft_model",
+    "gemini_review_model",
+    "gemini_evaluator_model",
 ];
 
 const ROLE_ENV_KEYS: Record<AiRole, string> = {
@@ -978,31 +994,12 @@ const ROLE_ENV_KEYS: Record<AiRole, string> = {
     evaluator: "AI_EVALUATOR_MODEL_ORDER",
 };
 
-const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string[]> = {
-    strategy: [
-        "z-ai/glm-4.5-air:free",
-        "openai/gpt-oss-120b:free",
-        "google/gemma-4-31b-it:free",
-        "openrouter/free",
-    ],
-    draft: [
-        "z-ai/glm-4.5-air:free",
-        "openai/gpt-oss-120b:free",
-        "google/gemma-4-31b-it:free",
-        "openrouter/free",
-    ],
-    review: [
-        "openai/gpt-oss-120b:free",
-        "z-ai/glm-4.5-air:free",
-        "google/gemma-4-31b-it:free",
-        "openrouter/free",
-    ],
-    evaluator: [
-        "openai/gpt-oss-120b:free",
-        "z-ai/glm-4.5-air:free",
-        "google/gemma-4-31b-it:free",
-        "openrouter/free",
-    ],
+const DEFAULT_PROVIDER_ORDER = "openrouter,gemini";
+const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
+    strategy: "z-ai/glm-4.5-air:free",
+    draft: "z-ai/glm-4.5-air:free",
+    review: "openai/gpt-oss-120b:free",
+    evaluator: "openai/gpt-oss-120b:free",
 };
 
 const getGeminiModelName = () => process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -1030,16 +1027,51 @@ const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
         openRouterReferer: settings.openrouter_referer || defaultOpenRouterReferer,
         openRouterTitle: settings.openrouter_title || defaultOpenRouterTitle,
         aiModelOrder: settings.ai_model_order || process.env.AI_MODEL_ORDER || "",
-        aiStrategyModelOrder: settings.ai_strategy_model_order || process.env.AI_STRATEGY_MODEL_ORDER || "",
-        aiDraftModelOrder: settings.ai_draft_model_order || process.env.AI_DRAFT_MODEL_ORDER || "",
-        aiReviewModelOrder: settings.ai_review_model_order || process.env.AI_REVIEW_MODEL_ORDER || "",
-        aiEvaluatorModelOrder: settings.ai_evaluator_model_order || process.env.AI_EVALUATOR_MODEL_ORDER || "",
+        aiStrategyModelOrder: settings.ai_strategy_model_order || process.env.AI_STRATEGY_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
+        aiDraftModelOrder: settings.ai_draft_model_order || process.env.AI_DRAFT_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
+        aiReviewModelOrder: settings.ai_review_model_order || process.env.AI_REVIEW_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
+        aiEvaluatorModelOrder: settings.ai_evaluator_model_order || process.env.AI_EVALUATOR_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
+        openRouterStrategyModel: settings.openrouter_strategy_model || process.env.OPENROUTER_STRATEGY_MODEL || DEFAULT_OPENROUTER_MODELS.strategy,
+        openRouterDraftModel: settings.openrouter_draft_model || process.env.OPENROUTER_DRAFT_MODEL || DEFAULT_OPENROUTER_MODELS.draft,
+        openRouterReviewModel: settings.openrouter_review_model || process.env.OPENROUTER_REVIEW_MODEL || DEFAULT_OPENROUTER_MODELS.review,
+        openRouterEvaluatorModel: settings.openrouter_evaluator_model || process.env.OPENROUTER_EVALUATOR_MODEL || DEFAULT_OPENROUTER_MODELS.evaluator,
+        geminiStrategyModel: settings.gemini_strategy_model || process.env.GEMINI_STRATEGY_MODEL || getGeminiModelName(),
+        geminiDraftModel: settings.gemini_draft_model || process.env.GEMINI_DRAFT_MODEL || getGeminiModelName(),
+        geminiReviewModel: settings.gemini_review_model || process.env.GEMINI_REVIEW_MODEL || getGeminiModelName(),
+        geminiEvaluatorModel: settings.gemini_evaluator_model || process.env.GEMINI_EVALUATOR_MODEL || getGeminiModelName(),
     };
 };
 
-const parseAiModelEntry = (entry: string): AiGatewayConfig | null => {
+const getRoleProviderModel = (role: AiRole, provider: AiProvider, settings: AiRuntimeSettings) => {
+    if (provider === "gemini") {
+        const map: Record<AiRole, string> = {
+            strategy: settings.geminiStrategyModel,
+            draft: settings.geminiDraftModel,
+            review: settings.geminiReviewModel,
+            evaluator: settings.geminiEvaluatorModel,
+        };
+        return map[role] || getGeminiModelName();
+    }
+
+    const map: Record<AiRole, string> = {
+        strategy: settings.openRouterStrategyModel,
+        draft: settings.openRouterDraftModel,
+        review: settings.openRouterReviewModel,
+        evaluator: settings.openRouterEvaluatorModel,
+    };
+    return map[role] || DEFAULT_OPENROUTER_MODELS[role];
+};
+
+const parseAiModelEntry = (entry: string, role: AiRole, settings: AiRuntimeSettings): AiGatewayConfig | null => {
     const trimmed = entry.trim();
     if (!trimmed) return null;
+
+    const providerOnly = trimmed.toLowerCase();
+    if (providerOnly === "openrouter" || providerOnly === "gemini") {
+        const provider = providerOnly as AiProvider;
+        const model = getRoleProviderModel(role, provider, settings);
+        return { provider, model, label: `${provider}:${model}` };
+    }
 
     const providerMatch = trimmed.match(/^(openrouter|gemini):(.+)$/i);
     if (!providerMatch) {
@@ -1052,11 +1084,11 @@ const parseAiModelEntry = (entry: string): AiGatewayConfig | null => {
     return { provider, model, label: `${provider}:${model}` };
 };
 
-const parseAiModelOrder = (value?: string | null): AiGatewayConfig[] => {
+const parseAiModelOrder = (value: string | null | undefined, role: AiRole, settings: AiRuntimeSettings): AiGatewayConfig[] => {
     if (!value) return [];
     return value
         .split(",")
-        .map(parseAiModelEntry)
+        .map((entry) => parseAiModelEntry(entry, role, settings))
         .filter((entry): entry is AiGatewayConfig => Boolean(entry));
 };
 
@@ -1067,25 +1099,16 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings): AiGateway
         review: settings.aiReviewModelOrder,
         evaluator: settings.aiEvaluatorModelOrder,
     };
-    const roleSpecific = parseAiModelOrder(roleSettingMap[role]);
-    const globalOrder = parseAiModelOrder(settings.aiModelOrder);
-    const defaults: AiGatewayConfig[] = DEFAULT_OPENROUTER_MODELS[role].map((model) => ({
-        provider: "openrouter",
-        model,
-        label: `openrouter:${model}`,
-    }));
-
-    if (settings.geminiApiKey) {
-        const geminiModel = getGeminiModelName();
-        defaults.push({ provider: "gemini", model: geminiModel, label: `gemini:${geminiModel}` });
-    }
+    const roleSpecific = parseAiModelOrder(roleSettingMap[role], role, settings);
+    const globalOrder = parseAiModelOrder(settings.aiModelOrder, role, settings);
+    const defaults = parseAiModelOrder(DEFAULT_PROVIDER_ORDER, role, settings);
 
     const order = [...roleSpecific, ...globalOrder, ...defaults];
     const seen = new Set<string>();
     return order.filter((gateway) => {
         if (gateway.provider === "openrouter" && !settings.openRouterApiKey) return false;
         if (gateway.provider === "gemini" && !settings.geminiApiKey) return false;
-        const key = `${gateway.provider}:${gateway.model}`;
+        const key = gateway.provider;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;

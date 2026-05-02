@@ -12,6 +12,14 @@ const CONFIG_KEYS = [
     "ai_draft_model_order",
     "ai_review_model_order",
     "ai_evaluator_model_order",
+    "openrouter_strategy_model",
+    "openrouter_draft_model",
+    "openrouter_review_model",
+    "openrouter_evaluator_model",
+    "gemini_strategy_model",
+    "gemini_draft_model",
+    "gemini_review_model",
+    "gemini_evaluator_model",
     "ai_gateway_recent_events",
     "ai_gateway_stats",
 ];
@@ -20,10 +28,15 @@ const DEFAULTS = {
     openrouter_base_url: "https://openrouter.ai/api/v1",
     openrouter_referer: process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
     openrouter_title: "Lari Telegram Bot",
-    ai_strategy_model_order: "openrouter:z-ai/glm-4.5-air:free,openrouter:openai/gpt-oss-120b:free,openrouter:google/gemma-4-31b-it:free,openrouter:openrouter/free",
-    ai_draft_model_order: "openrouter:z-ai/glm-4.5-air:free,openrouter:openai/gpt-oss-120b:free,openrouter:google/gemma-4-31b-it:free,openrouter:openrouter/free",
-    ai_review_model_order: "openrouter:openai/gpt-oss-120b:free,openrouter:z-ai/glm-4.5-air:free,openrouter:google/gemma-4-31b-it:free,openrouter:openrouter/free",
-    ai_evaluator_model_order: "openrouter:openai/gpt-oss-120b:free,openrouter:z-ai/glm-4.5-air:free,openrouter:google/gemma-4-31b-it:free,openrouter:openrouter/free",
+    provider_order: "openrouter,gemini",
+    openrouter_strategy_model: process.env.OPENROUTER_STRATEGY_MODEL || "z-ai/glm-4.5-air:free",
+    openrouter_draft_model: process.env.OPENROUTER_DRAFT_MODEL || "z-ai/glm-4.5-air:free",
+    openrouter_review_model: process.env.OPENROUTER_REVIEW_MODEL || "openai/gpt-oss-120b:free",
+    openrouter_evaluator_model: process.env.OPENROUTER_EVALUATOR_MODEL || "openai/gpt-oss-120b:free",
+    gemini_strategy_model: process.env.GEMINI_STRATEGY_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    gemini_draft_model: process.env.GEMINI_DRAFT_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    gemini_review_model: process.env.GEMINI_REVIEW_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    gemini_evaluator_model: process.env.GEMINI_EVALUATOR_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash",
 };
 
 const maskSecret = (value?: string | null) => {
@@ -39,6 +52,18 @@ const parseJson = (value: string, fallback: any) => {
     } catch {
         return fallback;
     }
+};
+
+const normalizeProviderOrder = (value?: string) => {
+    const parts = String(value || "")
+        .split(",")
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean)
+        .map((item) => item.split(":")[0])
+        .filter((item) => item === "openrouter" || item === "gemini");
+
+    const unique = Array.from(new Set(parts));
+    return unique.length ? unique.join(",") : DEFAULTS.provider_order;
 };
 
 const loadMap = async () => {
@@ -65,10 +90,18 @@ export async function GET() {
                 openrouterReferer: map.openrouter_referer || DEFAULTS.openrouter_referer,
                 openrouterTitle: map.openrouter_title || DEFAULTS.openrouter_title,
                 aiModelOrder: map.ai_model_order || "",
-                aiStrategyModelOrder: map.ai_strategy_model_order || DEFAULTS.ai_strategy_model_order,
-                aiDraftModelOrder: map.ai_draft_model_order || DEFAULTS.ai_draft_model_order,
-                aiReviewModelOrder: map.ai_review_model_order || DEFAULTS.ai_review_model_order,
-                aiEvaluatorModelOrder: map.ai_evaluator_model_order || DEFAULTS.ai_evaluator_model_order,
+                aiStrategyModelOrder: normalizeProviderOrder(map.ai_strategy_model_order),
+                aiDraftModelOrder: normalizeProviderOrder(map.ai_draft_model_order),
+                aiReviewModelOrder: normalizeProviderOrder(map.ai_review_model_order),
+                aiEvaluatorModelOrder: normalizeProviderOrder(map.ai_evaluator_model_order),
+                openrouterStrategyModel: map.openrouter_strategy_model || DEFAULTS.openrouter_strategy_model,
+                openrouterDraftModel: map.openrouter_draft_model || DEFAULTS.openrouter_draft_model,
+                openrouterReviewModel: map.openrouter_review_model || DEFAULTS.openrouter_review_model,
+                openrouterEvaluatorModel: map.openrouter_evaluator_model || DEFAULTS.openrouter_evaluator_model,
+                geminiStrategyModel: map.gemini_strategy_model || DEFAULTS.gemini_strategy_model,
+                geminiDraftModel: map.gemini_draft_model || DEFAULTS.gemini_draft_model,
+                geminiReviewModel: map.gemini_review_model || DEFAULTS.gemini_review_model,
+                geminiEvaluatorModel: map.gemini_evaluator_model || DEFAULTS.gemini_evaluator_model,
             },
             recentEvents: parseJson(map.ai_gateway_recent_events || "[]", []),
             stats,
@@ -85,11 +118,19 @@ export async function POST(req: NextRequest) {
             { key: "openrouter_base_url", value: String(body.openrouterBaseUrl || DEFAULTS.openrouter_base_url).trim() },
             { key: "openrouter_referer", value: String(body.openrouterReferer || DEFAULTS.openrouter_referer).trim() },
             { key: "openrouter_title", value: String(body.openrouterTitle || DEFAULTS.openrouter_title).trim() },
-            { key: "ai_model_order", value: String(body.aiModelOrder || "").trim() },
-            { key: "ai_strategy_model_order", value: String(body.aiStrategyModelOrder || DEFAULTS.ai_strategy_model_order).trim() },
-            { key: "ai_draft_model_order", value: String(body.aiDraftModelOrder || DEFAULTS.ai_draft_model_order).trim() },
-            { key: "ai_review_model_order", value: String(body.aiReviewModelOrder || DEFAULTS.ai_review_model_order).trim() },
-            { key: "ai_evaluator_model_order", value: String(body.aiEvaluatorModelOrder || DEFAULTS.ai_evaluator_model_order).trim() },
+            { key: "ai_model_order", value: normalizeProviderOrder(body.aiModelOrder) },
+            { key: "ai_strategy_model_order", value: normalizeProviderOrder(body.aiStrategyModelOrder) },
+            { key: "ai_draft_model_order", value: normalizeProviderOrder(body.aiDraftModelOrder) },
+            { key: "ai_review_model_order", value: normalizeProviderOrder(body.aiReviewModelOrder) },
+            { key: "ai_evaluator_model_order", value: normalizeProviderOrder(body.aiEvaluatorModelOrder) },
+            { key: "openrouter_strategy_model", value: String(body.openrouterStrategyModel || DEFAULTS.openrouter_strategy_model).trim() },
+            { key: "openrouter_draft_model", value: String(body.openrouterDraftModel || DEFAULTS.openrouter_draft_model).trim() },
+            { key: "openrouter_review_model", value: String(body.openrouterReviewModel || DEFAULTS.openrouter_review_model).trim() },
+            { key: "openrouter_evaluator_model", value: String(body.openrouterEvaluatorModel || DEFAULTS.openrouter_evaluator_model).trim() },
+            { key: "gemini_strategy_model", value: String(body.geminiStrategyModel || DEFAULTS.gemini_strategy_model).trim() },
+            { key: "gemini_draft_model", value: String(body.geminiDraftModel || DEFAULTS.gemini_draft_model).trim() },
+            { key: "gemini_review_model", value: String(body.geminiReviewModel || DEFAULTS.gemini_review_model).trim() },
+            { key: "gemini_evaluator_model", value: String(body.geminiEvaluatorModel || DEFAULTS.gemini_evaluator_model).trim() },
         ];
 
         const openrouterApiKey = String(body.openrouterApiKey || "").trim();
