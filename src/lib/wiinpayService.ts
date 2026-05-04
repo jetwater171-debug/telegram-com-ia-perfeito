@@ -19,8 +19,9 @@ export interface PaymentResponse {
 }
 
 export const WiinPayService = {
-  async createPayment(params: CreatePaymentParams): Promise<PaymentResponse> {
-    if (!API_KEY) {
+  async createPayment(params: CreatePaymentParams, options: { apiKey?: string } = {}): Promise<PaymentResponse> {
+    const apiKey = options.apiKey || API_KEY;
+    if (!apiKey) {
       throw new Error('WIINPAY_API_KEY not configured');
     }
     const response = await fetch(`${BASE_URL}/payment/create`, {
@@ -30,7 +31,7 @@ export const WiinPayService = {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        api_key: API_KEY,
+        api_key: apiKey,
         ...params
       })
     });
@@ -54,22 +55,42 @@ export const WiinPayService = {
     };
   },
 
-  async getPaymentStatus(paymentId: string): Promise<any> {
-    if (!API_KEY) {
+  async getPaymentStatus(paymentId: string, options: { apiKey?: string } = {}): Promise<any> {
+    const apiKey = options.apiKey || API_KEY;
+    if (!apiKey) {
       throw new Error('WIINPAY_API_KEY not configured');
     }
     const response = await fetch(`${BASE_URL}/payment/list/${paymentId}`, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${API_KEY}`,
-        'Accept': 'application/json'
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json',
+        'User-Agent': 'insomnia/11.1.0'
       }
     });
 
-    if (!response.ok) {
-      throw new Error('Failed to fetch payment status');
+    const text = await response.text();
+    let data: any = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
     }
 
-    return response.json();
+    if (!response.ok) {
+      return {
+        ok: false,
+        http_status: response.status,
+        error: data?.error?.message || data?.message || text || 'Failed to fetch payment status',
+        data
+      };
+    }
+
+    return {
+      ok: true,
+      gateway: 'wiinpay',
+      http_status: response.status,
+      ...data
+    };
   }
 };

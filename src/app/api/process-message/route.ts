@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode } from '@/lib/telegram';
-import { WiinPayService } from '@/lib/wiinpayService';
+import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
 
 // Esta rota atua como um worker em segundo plano.
 // Ela aguarda, verifica mensagens mais recentes (debounce), e então processa a resposta.
@@ -265,6 +265,8 @@ const sanitizeOutgoingMessage = (text: string) => {
     out = out.replace(/\bme\s+chamo\s+a\s+larissa\b/gi, 'me chamo larissa');
     out = out.replace(/\bsou\s+eu\b/gi, 'sou lari');
     out = out.replace(/\beu\s+sou\s+eu\b/gi, 'eu sou lari');
+    out = out.replace(/\bamoro\b/gi, 'amor o');
+    out = out.replace(/([a-záéíóúâêôãõç])((?:kkk|rsrs)+)\b/gi, '$1 $2');
     out = out.replace(/\s+/g, ' ');
     out = out.replace(/\s*(?:\.{3,}|…)\s*$/u, '');
     out = fixGluedWords(out);
@@ -327,8 +329,15 @@ const sessionHasUsefulName = (name: any) => {
 };
 
 const removeAnsweredNameQuestions = (messages: string[], userText: string, sessionName: any) => {
-    if (!sessionHasUsefulName(sessionName) && !userAskedName(userText)) return messages;
-    const filtered = messages.filter((msg) => !/(qual|como).{0,18}(nome|chamo|chama)/i.test(msg));
+    const userComplainedNameWasAsked = /(ja te falei|já te falei|ja falei|já falei|voce nao lembra|você não lembra)/i.test(userText || '');
+    if (!sessionHasUsefulName(sessionName) && !userAskedName(userText) && !userComplainedNameWasAsked) return messages;
+    const filtered = messages.filter((msg) => !/(qual|como).{0,24}(nome|chamo|chama)|nome de vdd/i.test(msg));
+    return filtered.length > 0 ? filtered : messages;
+};
+
+const removeAnsweredCityQuestions = (messages: string[], hasCity: boolean, userAskedCity: boolean) => {
+    if (!hasCity && !userAskedCity) return messages;
+    const filtered = messages.filter((msg) => !/(de onde (vc|voce|você)|vc e de onde|você é de onde|qual (sua|a) cidade|onde (vc|voce|você) mora)/i.test(msg));
     return filtered.length > 0 ? filtered : messages;
 };
 
@@ -357,6 +366,26 @@ const removeDuplicateNormalizedMessages = (messages: string[]) => {
     });
 };
 
+const trustObjectionRequested = (text: string) => {
+    return /(prova|provar|real|fake|golpe|confio|confiar|certeza|medo|apaga|apagar|foto inteira|foto completa|por completo|ao vivo|chamada)/i.test(text || '');
+};
+
+const collapseTrustLoop = (messages: string[], userText: string) => {
+    if (!trustObjectionRequested(userText)) return messages;
+    const filtered = messages.filter((msg) => {
+        const norm = normalizeLoopText(msg);
+        const repeatsVipProof = /(unica forma|única forma|so no vip|só no vip|la no vip|lá no vip|vip secreto|tirar todas as suas duvidas|tirar todas as suas dúvidas)/i.test(msg);
+        return !repeatsVipProof && !norm.includes('juro de dedinho');
+    });
+    const base = filtered.length > 0 ? filtered : messages;
+    const compact = base.slice(0, 2);
+    if (compact.some((msg) => /entendo|sei|calma|medo|prova|real/i.test(msg))) return compact;
+    return [
+        'eu entendo vc ficar com receio',
+        'posso te mostrar uma previa aqui e o resto eu libero certinho no acesso'
+    ];
+};
+
 const removeDanglingFinalSuspense = (messages: string[]) => {
     if (messages.length === 0) return messages;
     const last = messages[messages.length - 1] || '';
@@ -376,6 +405,8 @@ const removeDanglingFinalSuspense = (messages: string[]) => {
 const applyConversationQualityGuards = (messages: string[], opts: {
     userText: string;
     sessionName: any;
+    hasCity: boolean;
+    userAskedCity: boolean;
     extractedName?: string | null;
     lastBotContent: string;
 }) => {
@@ -383,6 +414,8 @@ const applyConversationQualityGuards = (messages: string[], opts: {
     out = removeGenericBotPhrases(out);
     out = removePrematureNameIntro(out, opts.userText, opts.extractedName);
     out = removeAnsweredNameQuestions(out, opts.userText, opts.sessionName);
+    out = removeAnsweredCityQuestions(out, opts.hasCity, opts.userAskedCity);
+    out = collapseTrustLoop(out, opts.userText);
     out = reduceOpeningRepetition(out, opts.lastBotContent);
     out = removeDuplicateNormalizedMessages(out);
     out = removeDanglingFinalSuspense(out);
@@ -420,6 +453,68 @@ const inferPixValue = (texts: string[]) => {
         if (prices.length > 0) return prices[prices.length - 1];
     }
     return null;
+};
+
+const PAID_STATUS_WORDS = new Set([
+    'approved',
+    'paid',
+    'completed',
+    'confirmed',
+    'success',
+    'aprovado',
+    'pago',
+    'concluido',
+    'concluído',
+    'liquidado'
+]);
+
+const normalizePaymentStatus = (value: any): string => {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '')
+        .toLowerCase()
+        .trim();
+};
+
+const findPaymentStatus = (payload: any): string => {
+    const direct = [
+        payload?.status,
+        payload?.payment_status,
+        payload?.paymentStatus,
+        payload?.data?.status,
+        payload?.data?.payment_status,
+        payload?.data?.paymentStatus,
+        payload?.payment?.status,
+        payload?.payment?.payment_status,
+        payload?.data?.payment?.status,
+        payload?.data?.payment?.payment_status,
+        payload?.transaction?.status,
+        payload?.data?.transaction?.status
+    ];
+    for (const value of direct) {
+        const normalized = normalizePaymentStatus(value);
+        if (normalized) return normalized;
+    }
+    if (payload?.paid === true || payload?.data?.paid === true || payload?.payment?.paid === true || payload?.data?.payment?.paid === true) {
+        return 'paid';
+    }
+    return '';
+};
+
+const isPaymentPaidPayload = (payload: any): boolean => {
+    if (!payload) return false;
+    if (payload?.paid === true || payload?.data?.paid === true || payload?.payment?.paid === true || payload?.data?.payment?.paid === true) return true;
+    if (payload?.paid_at || payload?.approved_at || payload?.data?.paid_at || payload?.data?.approved_at) return true;
+    const status = findPaymentStatus(payload);
+    return PAID_STATUS_WORDS.has(status);
+};
+
+const shouldThrottlePushinpayStatusCheck = (paymentData: any) => {
+    if (String(paymentData?.gateway || '').toLowerCase() !== 'pushinpay') return false;
+    const lastCheckedAt = paymentData?.last_checked_at;
+    if (!lastCheckedAt) return false;
+    const elapsedMs = Date.now() - new Date(lastCheckedAt).getTime();
+    return Number.isFinite(elapsedMs) && elapsedMs >= 0 && elapsedMs < 60 * 1000;
 };
 
 const FUNNEL_STEPS = [
@@ -667,7 +762,7 @@ export async function POST(req: NextRequest) {
     // Buscar mensagens agrupadas
     const { data: groupMessages } = await supabase
         .from('messages')
-        .select('content, sender')
+        .select('id, content, sender, created_at')
         .eq('session_id', sessionId)
         .gt('created_at', cutoffTime)
         .order('created_at', { ascending: true });
@@ -691,6 +786,11 @@ export async function POST(req: NextRequest) {
 
     const combinedText = filteredGroupMessages.map((m: any) => m.content).join("\n");
     const userOnlyText = filteredGroupMessages.filter((m: any) => m.sender === 'user').map((m: any) => m.content).join("\n");
+    const lastGroupedUserAt = filteredGroupMessages
+        .filter((m: any) => m.sender === 'user' && m.created_at)
+        .map((m: any) => String(m.created_at))
+        .sort()
+        .at(-1) || new Date().toISOString();
     const repetition = detectRepetition(filteredGroupMessages);
     console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
 
@@ -762,7 +862,14 @@ export async function POST(req: NextRequest) {
         return { fileId, caption };
     };
 
-    let finalUserMessage = combinedText;
+    let finalUserMessage = `[MENSAGENS DO LEAD NO MESMO TURNO]
+${combinedText}
+
+[REGRA DE CONVERSA]
+Leia todas as mensagens acima como uma fala agrupada do lead, com visao geral da conversa.
+Nao responda linha por linha.
+Responda principalmente a ultima intencao do lead, usando o contexto das mensagens anteriores.
+Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se houver fantasia sexual explicita, negociacao ou pagamento.`;
     let mediaData = undefined;
 
     // Detectar Audio
@@ -1094,6 +1201,8 @@ export async function POST(req: NextRequest) {
     safeMessages = applyConversationQualityGuards(safeMessages, {
         userText: userOnlyText,
         sessionName: session.user_name,
+        hasCity,
+        userAskedCity: cityQuestion,
         extractedName: aiResponse.extracted_user_name,
         lastBotContent
     });
@@ -1125,15 +1234,32 @@ export async function POST(req: NextRequest) {
 
     const stage = String(aiResponse.current_state || '').toUpperCase();
     const explicitFantasy = hasExplicitSexualFantasyTrigger(userOnlyText);
-    const allowLong = explicitFantasy || ['NEGOTIATION', 'SALES_PITCH', 'CLOSING', 'PAYMENT_CHECK'].includes(stage);
-    const maxFantasyMessages = explicitFantasy ? 7 : 2;
-    const maxNormalMessages = allowLong ? safeMessages.length : 4;
-    const outgoingToSend = (!allowLong && safeMessages.length > maxNormalMessages)
-        ? safeMessages.slice(0, maxNormalMessages)
-        : (explicitFantasy ? safeMessages.slice(0, maxFantasyMessages) : safeMessages);
+    const maxMessagesForTurn = (() => {
+        if (explicitFantasy) return 5;
+        if (stage === 'PAYMENT_CHECK' || aiResponse.action === 'generate_pix_payment') return 2;
+        if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 2;
+        if (trustObjectionRequested(userOnlyText)) return 2;
+        return 1;
+    })();
+    const outgoingToSend = safeMessages.slice(0, maxMessagesForTurn);
 
     for (let i = 0; i < outgoingToSend.length; i++) {
         const msgText = outgoingToSend[i];
+
+        const { data: newerUserMsg } = await supabase
+            .from('messages')
+            .select('id, created_at')
+            .eq('session_id', session.id)
+            .eq('sender', 'user')
+            .gt('created_at', lastGroupedUserAt)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (newerUserMsg) {
+            console.log(`[PROCESSADOR] Abortando envio. Lead mandou mensagem nova depois do pacote processado: ${newerUserMsg.id}`);
+            return NextResponse.json({ status: 'superseded_during_send' });
+        }
 
         // Delay fixo entre 3 a 4 segundos (solicitado pelo usuário)
         // Isso dá um tempo de leitura/digitação consistente para cada balão.
@@ -1223,7 +1349,7 @@ export async function POST(req: NextRequest) {
                     // Vamos procurar a última mensagem de pagamento no DB
                     const { data: lastPayMsg } = await supabase
                         .from('messages')
-                        .select('content, payment_data')
+                        .select('id, content, payment_data')
                         .eq('session_id', session.id)
                         .eq('sender', 'system')
                         .ilike('content', '%PIX GENERATED%')
@@ -1240,6 +1366,7 @@ export async function POST(req: NextRequest) {
 
                         const value = lastPayMsg.payment_data?.value ?? (valueMatch ? parseFloat(valueMatch[1]) : 0);
                         const paymentId = lastPayMsg.payment_data?.paymentId ?? (idMatch ? idMatch[1] : null);
+                        const storedPaid = lastPayMsg.payment_data?.paid === true || isPaymentPaidPayload(lastPayMsg.payment_data);
 
                         if (!paymentId) {
                             await sendTelegramMessage(botToken, chatId, "amor nao achei o codigo da transação aqui... manda o comprovante?");
@@ -1247,18 +1374,28 @@ export async function POST(req: NextRequest) {
                         }
 
                         console.log(`[PROCESSADOR] Verificando Pagamento ID: ${paymentId}`);
-                        const statusData = await WiinPayService.getPaymentStatus(paymentId);
+                        const statusData = storedPaid
+                            ? { ok: true, status: lastPayMsg.payment_data?.status || 'paid', source: 'local_payment_data' }
+                            : shouldThrottlePushinpayStatusCheck(lastPayMsg.payment_data)
+                                ? {
+                                    ok: true,
+                                    status: lastPayMsg.payment_data?.status || 'pending',
+                                    gateway: 'pushinpay',
+                                    source: 'pushinpay_local_cooldown',
+                                    message: 'consulta direta da PushinPay respeita intervalo minimo de 1 minuto'
+                                }
+                                : await getPaymentStatusMultiGateway(paymentId, lastPayMsg.payment_data?.gateway);
 
-                        console.log(`[PROCESSADOR] Status WiinPay:`, JSON.stringify(statusData));
+                        console.log(`[PROCESSADOR] Status pagamento:`, JSON.stringify(statusData));
 
-                        const rawStatus = statusData?.status || statusData?.data?.status || statusData?.payment?.status || statusData?.data?.payment?.status || 'pending';
-                        const status = String(rawStatus).toLowerCase();
-                        const isPaid = ['approved', 'paid', 'completed', 'confirmed', 'success', 'aprovado'].includes(status);
+                        const status = findPaymentStatus(statusData) || normalizePaymentStatus(lastPayMsg.payment_data?.status) || 'pending';
+                        const isPaid = storedPaid || isPaymentPaidPayload(statusData);
 
                         if (isPaid) {
                             // Incrementar LTV
-                            const currentTotal = session.total_paid || 0;
-                            const newTotal = currentTotal + value;
+                            const currentTotal = Number(session.total_paid || 0);
+                            const alreadyCounted = lastPayMsg.payment_data?.counted === true;
+                            const newTotal = alreadyCounted ? currentTotal : currentTotal + Number(value || 0);
 
                             await supabase.from('sessions').update({
                                 total_paid: newTotal,
@@ -1275,26 +1412,18 @@ export async function POST(req: NextRequest) {
 
                             // Forçar IA a saber que pagou na proxima iteração se necessário, 
                             // mas aqui ela já recebe o input de sistema acima.
-                            if (paymentId) {
-                                const { data: lastPixMsg } = await supabase
-                                    .from('messages')
-                                    .select('id, payment_data')
-                                    .eq('session_id', session.id)
-                                    .eq('sender', 'system')
-                                    .ilike('content', '%PIX GENERATED%')
-                                    .order('created_at', { ascending: false })
-                                    .limit(1)
-                                    .single();
-                                if (lastPixMsg?.id) {
-                                    await supabase.from('messages').update({
-                                        payment_data: {
-                                            ...(lastPixMsg.payment_data || {}),
-                                            paid: true,
-                                            status: status,
-                                            paid_at: new Date().toISOString()
-                                        }
-                                    }).eq('id', lastPixMsg.id);
-                                }
+                            if (lastPayMsg.id) {
+                                await supabase.from('messages').update({
+                                    payment_data: {
+                                        ...(lastPayMsg.payment_data || {}),
+                                        paid: true,
+                                        counted: true,
+                                        status: status || 'paid',
+                                        paid_at: lastPayMsg.payment_data?.paid_at || new Date().toISOString(),
+                                        last_checked_at: new Date().toISOString(),
+                                        last_status_payload: statusData
+                                    }
+                                }).eq('id', lastPayMsg.id);
                             }
                             try {
                                 await supabase.from('funnel_events').insert({
@@ -1332,6 +1461,29 @@ export async function POST(req: NextRequest) {
                                 console.warn("Falha ao registrar sucesso da variacao no pagamento:", e?.message || e);
                             }
                         } else {
+                            if (statusData?.ok === false) {
+                                await supabase.from('messages').update({
+                                    payment_data: {
+                                        ...(lastPayMsg.payment_data || {}),
+                                        paid: false,
+                                        status: status || lastPayMsg.payment_data?.status || 'pending',
+                                        last_checked_at: new Date().toISOString(),
+                                        last_check_error: statusData.error || 'erro ao consultar pagamento',
+                                        last_status_payload: statusData
+                                    }
+                                }).eq('id', lastPayMsg.id);
+                                await sendTelegramMessage(botToken, chatId, "amor nao consegui consultar o sistema agora, me manda o comprovante que eu confiro pra vc");
+                                break;
+                            }
+                            await supabase.from('messages').update({
+                                payment_data: {
+                                    ...(lastPayMsg.payment_data || {}),
+                                    paid: false,
+                                    status: status || 'pending',
+                                    last_checked_at: new Date().toISOString(),
+                                    last_status_payload: statusData
+                                }
+                            }).eq('id', lastPayMsg.id);
                             await sendTelegramMessage(botToken, chatId, "amor ainda não caiu aqui... tem certeza? (Status: " + status + ")");
                         }
 
@@ -1389,7 +1541,7 @@ export async function POST(req: NextRequest) {
                         break;
                     }
                     // Gerar Pagamento
-                    const payment = await WiinPayService.createPayment({
+                    const payment = await createPaymentMultiGateway({
                         value: value,
                         name: session.user_name || "Anônimo",
                         email: (session.user_name && session.user_name.toLowerCase().includes('operação kaique'))
@@ -1402,11 +1554,14 @@ export async function POST(req: NextRequest) {
                     await supabase.from('messages').insert({
                         session_id: session.id,
                         sender: 'system',
-                        content: `[DEBUG] Resposta WiinPay: ${JSON.stringify(payment)}`
+                        content: `[DEBUG] Resposta Gateway PIX: ${JSON.stringify(payment)}`
                     });
 
                     if (payment && payment.pixCopiaCola) {
                         await sendTelegramMessage(botToken, chatId, "ta aqui o pix amor 👇");
+                        if (payment.gateway === 'pushinpay') {
+                            await sendTelegramMessage(botToken, chatId, "aviso rapidinho: a PushinPay so processa o pagamento, a entrega e suporte continuam comigo.");
+                        }
                         await sendTelegramCopyableCode(botToken, chatId, payment.pixCopiaCola);
 
                         await supabase.from('messages').insert({
@@ -1415,9 +1570,13 @@ export async function POST(req: NextRequest) {
                             content: "[SYSTEM: PIX GENERATED - " + value + " | ID: " + payment.paymentId + "]",
                             payment_data: {
                                 paymentId: payment.paymentId,
+                                gateway: payment.gateway,
+                                gatewayLabel: payment.gatewayLabel,
+                                gatewayAttempts: payment.gatewayAttempts,
                                 value,
                                 description,
                                 pixCopiaCola: payment.pixCopiaCola,
+                                qrCodeBase64: payment.qrCodeBase64 || null,
                                 paid: false,
                                 status: payment.status || 'pending'
                             }
@@ -1431,7 +1590,7 @@ export async function POST(req: NextRequest) {
                     await supabase.from('messages').insert({
                         session_id: session.id,
                         sender: 'system',
-                        content: `[DEBUG] Erro WiinPay: ${err.message || JSON.stringify(err)}`
+                        content: `[DEBUG] Erro Gateway PIX: ${err.message || JSON.stringify(err)}`
                     });
 
                     await sendTelegramMessage(botToken, chatId, "amor nao consegui gerar o pix agora... que raiva");
@@ -1442,8 +1601,35 @@ export async function POST(req: NextRequest) {
 
         if (mediaUrl) {
             try {
+                const userAskedRepeatMedia = /(de novo|manda de novo|reenviar|envia de novo|outra vez)/i.test(userOnlyText);
+                if (!userAskedRepeatMedia) {
+                    const { data: recentMediaRows } = await supabase
+                        .from('messages')
+                        .select('content, media_url')
+                        .eq('session_id', session.id)
+                        .eq('sender', 'bot')
+                        .not('media_url', 'is', null)
+                        .order('created_at', { ascending: false })
+                        .limit(8);
+
+                    const repeatedMedia = (recentMediaRows || []).some((row: any) => {
+                        if (mediaUrl && row.media_url && String(row.media_url) === String(mediaUrl)) return true;
+                        return String(row.content || '').includes(String(aiResponse.action || ''));
+                    });
+
+                    if (repeatedMedia) {
+                        await sendTelegramMessage(botToken, chatId, "essa eu ja tinha te mandado amor, vou separar outra coisa pra vc");
+                        await supabase.from('messages').insert({
+                            session_id: session.id,
+                            sender: 'bot',
+                            content: "essa eu ja tinha te mandado amor, vou separar outra coisa pra vc"
+                        });
+                        return NextResponse.json({ success: true, skippedRepeatedMedia: true });
+                    }
+                }
+
                 if (mediaType === 'image') await sendTelegramPhoto(botToken, chatId, mediaUrl, caption);
-                if (mediaType === 'video') await sendTelegramVideo(botToken, chatId, mediaUrl, "olha isso");
+                if (mediaType === 'video') await sendTelegramVideo(botToken, chatId, mediaUrl, caption);
 
                 await supabase.from('messages').insert({
                     session_id: session.id,
