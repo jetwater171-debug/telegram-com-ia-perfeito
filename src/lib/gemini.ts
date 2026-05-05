@@ -239,6 +239,14 @@ const statsText = currentStats
 - Nao termine a ultima mensagem com reticencias ou suspense vazio. Feche com gancho concreto: pergunta boa, provocacao, escolha simples, previa ou oferta.
 - Se ele estiver desconfiado, nao fique repetindo "so no vip". Quebre a objecao uma vez, entregue uma prova/isca possivel se couber e puxe decisao.
 
+## AUTONOMIA COMERCIAL
+- A Lari nao espera o lead conduzir. Ela identifica a intencao e escolhe a menor rota para desejo, confianca ou pagamento.
+- Nunca venda "100%" com uma frase generica: cada lead precisa de uma abordagem. Comprador rapido recebe PIX; desconfiado recebe prova curta; sem grana recebe downsell; tarado recebe fantasia/produto; carente recebe atencao exclusiva.
+- Se o lead mandar foto/comprovante, primeiro entenda a imagem. Se parecer comprovante, pare o flerte e confira pagamento.
+- Se a IA nao tiver certeza do que ele quer, use uma pergunta fechada com duas opcoes, nao pergunta aberta.
+- Se a resposta parecer nada a ver com a ultima mensagem do lead, reescreva antes de devolver o JSON.
+- O objetivo nao e falar muito; e falar a coisa certa para aquele lead agora.
+
 ## CEREBRO DA LARI (OBRIGATORIO ANTES DE RESPONDER)
 Antes de escrever as mensagens, pense nesta ordem:
 1. O que ele acabou de dizer literalmente?
@@ -1124,14 +1132,29 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings): AiGateway
     });
 };
 
-const toOpenRouterMessages = (systemInstruction: string, history: AiMessage[], userContent: string) => ([
+const toOpenRouterMessages = (systemInstruction: string, history: AiMessage[], userContent: string, mediaPart?: any) => {
+    const inlineData = mediaPart?.inlineData;
+    const userMessageContent = inlineData?.mimeType?.startsWith('image/')
+        ? [
+            { type: "text", text: userContent },
+            {
+                type: "image_url",
+                image_url: {
+                    url: `data:${inlineData.mimeType};base64,${inlineData.data}`
+                }
+            }
+        ]
+        : userContent;
+
+    return [
     { role: "system", content: systemInstruction },
     ...history.map((message) => ({
         role: message.role,
         content: message.content,
     })),
-    { role: "user", content: userContent },
-]);
+        { role: "user", content: userMessageContent },
+    ];
+};
 
 const buildJsonReminder = (schemaName: string) => `
 
@@ -1197,6 +1220,7 @@ const callOpenRouterJson = async <T,>(
     systemInstruction: string,
     history: AiMessage[],
     userContent: string,
+    mediaPart?: any,
 ): Promise<T> => {
     if (!settings.openRouterApiKey) throw new Error("OPENROUTER_API_KEY not configured");
 
@@ -1210,7 +1234,7 @@ const callOpenRouterJson = async <T,>(
         },
         body: JSON.stringify({
             model: gateway.model,
-            messages: toOpenRouterMessages(systemInstruction, history, userContent),
+            messages: toOpenRouterMessages(systemInstruction, history, userContent, mediaPart),
             temperature: role === "draft" ? 0.85 : 0.35,
             response_format: { type: "json_object" },
         }),
@@ -1273,10 +1297,13 @@ const callAiGatewayJson = async <T,>(options: {
         try {
             if (gateway.provider === "openrouter") {
                 if (options.mediaPart) {
-                    const message = `${gateway.label} pulado: midia nao suportada neste provider`;
-                    attempts.push(message);
-                    await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "skipped", message });
-                    continue;
+                    const mimeType = String(options.mediaPart?.inlineData?.mimeType || '');
+                    if (!mimeType.startsWith('image/')) {
+                        const message = `${gateway.label} pulado: midia nao suportada neste provider`;
+                        attempts.push(message);
+                        await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "skipped", message });
+                        continue;
+                    }
                 }
                 const data = await callOpenRouterJson<T>(
                     options.settings,
@@ -1285,6 +1312,7 @@ const callAiGatewayJson = async <T,>(options: {
                     `${options.systemInstruction}${buildJsonReminder(options.schemaName)}`,
                     openRouterHistory,
                     options.text,
+                    options.mediaPart,
                 );
                 await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "success", durationMs: Date.now() - startedAt });
                 return { data, gateway, attempts };
@@ -1333,6 +1361,100 @@ const makeFallbackStrategy = (message: string) => {
         action_hint: wantsPayment ? 'generate_pix_payment' : 'none',
         payment_value_hint: null,
         confidence: 0.55
+    };
+};
+
+const makeLocalFallbackResponse = (
+    message: string,
+    context?: { currentStats?: LeadStats | null },
+    media?: { mimeType: string, data: string }
+): AIResponse => {
+    const text = (message || '').toLowerCase();
+    const stats = context?.currentStats || { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
+    const hasImage = Boolean(media?.mimeType?.startsWith('image/'));
+    const hasAudio = Boolean(media?.mimeType?.startsWith('audio/'));
+    const paymentLike = /(comprovante|paguei|pix|recibo|banco|transferencia|transferência|qr|pagamento|caiu|confere)/i.test(text);
+    const wantsPrice = /(pix|valor|pre[cç]o|quanto|comprar|fechado|manda)/i.test(text);
+    const wantsMedia = /(foto|video|vídeo|previa|prévia|ver|mostra|manda)/i.test(text);
+    const isSexual = /(nude|pelada|bunda|peito|pau|buceta|gozar|tes[aã]o|safada|putaria|comer|chupar|meter)/i.test(text);
+    const noMoney = /(caro|sem dinheiro|so tenho|só tenho|liso|desconto|faz por)/i.test(text);
+
+    if (hasImage && paymentLike) {
+        return {
+            internal_thought: "Fallback local: imagem recebida com contexto de comprovante, verificar pagamento.",
+            lead_classification: "curioso",
+            lead_stats: { ...stats, financeiro: Math.max(Number(stats.financeiro || 0), 65) },
+            current_state: "PAYMENT_CHECK",
+            messages: ["vou conferir aqui amor", "pera so um minutinho"],
+            action: "check_payment_status",
+            extracted_user_name: null,
+            audio_transcription: null,
+            payment_details: null
+        };
+    }
+
+    if (hasImage) {
+        return {
+            internal_thought: "Fallback local: imagem recebida, responder sem pedir para reenviar.",
+            lead_classification: isSexual ? "tarado" : "curioso",
+            lead_stats: { ...stats, tarado: isSexual ? Math.max(Number(stats.tarado || 0), 45) : Number(stats.tarado || 0) },
+            current_state: isSexual ? "HOT_TALK" : "CONNECTION",
+            messages: ["vi a foto amor", isSexual ? "agora vc me deixou curiosa" : "me fala rapidinho o que vc quer que eu veja nela"],
+            action: "none",
+            extracted_user_name: null,
+            audio_transcription: null,
+            payment_details: null
+        };
+    }
+
+    if (wantsPrice || noMoney) {
+        const value = noMoney ? 14.90 : 24.90;
+        return {
+            internal_thought: "Fallback local: lead em compra/negociacao, gerar PIX em vez de travar.",
+            lead_classification: "curioso",
+            lead_stats: { ...stats, financeiro: Math.max(Number(stats.financeiro || 0), 55) },
+            current_state: "PAYMENT_CHECK",
+            messages: noMoney
+                ? ["ta bom amor", "faço uma opcao menor pra vc", "vou gerar o pix"]
+                : ["perfeito amor", "vou gerar seu pix aqui"],
+            action: "generate_pix_payment",
+            extracted_user_name: null,
+            audio_transcription: null,
+            payment_details: {
+                value,
+                description: noMoney ? "VIP Mensal Promocional" : "VIP Vitalicio Lari"
+            }
+        };
+    }
+
+    if (wantsMedia || isSexual) {
+        return {
+            internal_thought: "Fallback local: lead quer midia/putaria, manter conversa quente e acionar previa coerente.",
+            lead_classification: "tarado",
+            lead_stats: { ...stats, tarado: Math.max(Number(stats.tarado || 0), isSexual ? 55 : 40) },
+            current_state: "PREVIEW",
+            messages: ["ta bom amor", "vou te mostrar uma previa rapidinho"],
+            action: "send_shower_photo",
+            extracted_user_name: null,
+            audio_transcription: null,
+            payment_details: null
+        };
+    }
+
+    return {
+        internal_thought: hasAudio
+            ? "Fallback local: audio recebido mas IA falhou, pedir resumo sem parecer erro tecnico."
+            : "Fallback local: manter conversa natural sem resposta aleatoria.",
+        lead_classification: "desconhecido",
+        lead_stats: stats,
+        current_state: "CONNECTION",
+        messages: hasAudio
+            ? ["ouvi aqui meio cortado amor", "me fala em texto rapidinho?"]
+            : ["entendi amor", "me fala uma coisa rapidinho", "vc quer mais carinho ou mais safadeza?"],
+        action: "none",
+        extracted_user_name: null,
+        audio_transcription: null,
+        payment_details: null
     };
 };
 
@@ -1442,8 +1564,8 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 
     if (media) {
         currentMessageParts.push({
-            inline_data: {
-                mime_type: media.mimeType,
+            inlineData: {
+                mimeType: media.mimeType,
                 data: media.data
             }
         });
@@ -1682,17 +1804,7 @@ Avalie o nivel real do lead agora.`
 
             // Simpler Fallback if retries exhausted
             if (attempt >= maxRetries) {
-                return {
-                    internal_thought: "IA indisponivel no momento. Detalhes tecnicos ficam registrados em /admin/ai.",
-                    lead_classification: "desconhecido",
-                    lead_stats: context?.currentStats || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
-                    current_state: "HOT_TALK",
-                    messages: ["amor minha net travou aqui", "me manda de novo rapidinho?"],
-                    action: "none",
-                    extracted_user_name: null,
-                    audio_transcription: null,
-                    payment_details: null
-                };
+                return makeLocalFallbackResponse(userMessage, context, media);
             }
         }
     }
