@@ -702,8 +702,8 @@ export async function POST(req: NextRequest) {
     if (!botToken) return NextResponse.json({ error: 'Sem token' });
     const chatId = session.telegram_chat_id;
 
-    // CONFIG: Tempo Total de Espera 6000ms (Debounce para Agrupamento)
-    // Estratégia: Esperar 2s -> Enviar Digitando -> Esperar 4s -> Processar
+    // CONFIG: Tempo Total de Espera 8000ms (Debounce para Agrupamento)
+    // Estratégia: Esperar 2s -> Enviar Digitando -> Esperar 6s -> Processar
     // Isso garante que se o lead mandar várias mensagens seguidas, a gente agrupe.
 
     // 1. Primeira Espera (2s)
@@ -712,8 +712,8 @@ export async function POST(req: NextRequest) {
     // 2. Enviar Ação Digitando
     await sendTelegramAction(botToken, chatId, 'typing');
 
-    // 3. Segunda Espera (4s)
-    await new Promise(resolve => setTimeout(resolve, 4000));
+    // 3. Segunda Espera (6s)
+    await new Promise(resolve => setTimeout(resolve, 6000));
 
     // 4. Verificar mensagens mais recentes (Lógica de Substituição)
     // Verificamos se há alguma mensagem MAIS NOVA que a que disparou este worker.
