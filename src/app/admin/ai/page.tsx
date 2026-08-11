@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 type ProviderKey = "openrouter" | "gemini";
@@ -263,10 +262,6 @@ export default function AdminAiPage() {
                         <h1 className="text-xl font-semibold">Multi-IAs da Lari</h1>
                         <p className="text-sm text-slate-400">Escolha Gemini ou OpenRouter Free e acompanhe erros.</p>
                     </div>
-                    <nav className="flex flex-wrap gap-2 text-sm">
-                        <Link href="/admin" className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-200">Conversas</Link>
-                        <Link href="/admin/settings" className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-200">Config</Link>
-                    </nav>
                 </div>
             </header>
 

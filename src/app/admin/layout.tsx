@@ -1,4 +1,5 @@
 import ReengagementWatcher from "@/components/ReengagementWatcher";
+import AdminTopbar from "@/components/AdminTopbar";
 
 export default function AdminLayout({
     children,
@@ -8,6 +9,7 @@ export default function AdminLayout({
     return (
         <>
             <ReengagementWatcher />
+            <AdminTopbar />
             {children}
         </>
     );

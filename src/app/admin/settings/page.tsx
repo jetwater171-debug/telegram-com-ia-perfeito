@@ -1,6 +1,5 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import Link from "next/link";
 
 export default function AdminSettingsPage() {
     const [token, setToken] = useState("");
@@ -73,30 +72,6 @@ export default function AdminSettingsPage() {
                         Ajuste o token do Telegram e reconecte o webhook quando precisar.
                     </p>
                 </header>
-
-                <nav className="flex flex-wrap gap-2 rounded-full border border-white/10 bg-white/5 p-1 text-sm">
-                    <Link href="/admin/insights" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
-                        Insights
-                    </Link>
-                    <Link href="/admin/scripts" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
-                        Scripts
-                    </Link>
-                    <Link href="/admin/previews" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
-                        Previas
-                    </Link>
-                    <Link href="/admin/variants" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
-                        Variacoes
-                    </Link>
-                    <Link href="/admin/ai" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
-                        Multi-IAs
-                    </Link>
-                    <Link href="/admin/payments" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
-                        Gateways PIX
-                    </Link>
-                    <Link href="/admin" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
-                        Voltar
-                    </Link>
-                </nav>
 
                 <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 via-white/3 to-white/5 p-6 shadow-[0_20px_50px_-30px_rgba(15,23,42,0.9)]">
                     <div className="flex items-start justify-between gap-4">

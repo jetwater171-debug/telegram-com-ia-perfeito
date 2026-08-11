@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { BASE_LEAD_SCORE, parseLeadScore, parseLeadScoreMeta } from "@/lib/leadScoring";
 
 interface LeadStats {
     tarado: number;
@@ -54,6 +55,8 @@ export default function AdminDashboard() {
     const [lastMessageBySession, setLastMessageBySession] = useState<Record<string, LastMessage>>({});
     const [loading, setLoading] = useState(true);
     const [lastSync, setLastSync] = useState<Date | null>(null);
+    const [recalculating, setRecalculating] = useState(false);
+    const [scoreMessage, setScoreMessage] = useState("");
 
     useEffect(() => {
         fetchSessions();
@@ -135,6 +138,26 @@ export default function AdminDashboard() {
         setLoading(false);
     };
 
+    const recalculateScores = async () => {
+        setRecalculating(true);
+        setScoreMessage("");
+        try {
+            const response = await fetch("/api/admin/recalculate-scores", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({}),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data?.error || "Falha ao recalcular");
+            setScoreMessage(`${data.updated || 0} conversas analisadas pelo histórico`);
+            await fetchSessions();
+        } catch (error: any) {
+            setScoreMessage(error?.message || "Não foi possível atualizar os scores");
+        } finally {
+            setRecalculating(false);
+        }
+    };
+
     const fetchLatestFunnelSteps = async (sessionIds: string[]) => {
         const { data, error } = await supabase
             .from("funnel_events")
@@ -176,7 +199,7 @@ export default function AdminDashboard() {
         let filtered = sessions;
         if (filter === "active") filtered = filtered.filter((s) => s.status === "active");
         if (filter === "paused") filtered = filtered.filter((s) => s.status === "paused");
-        if (filter === "hot") filtered = filtered.filter((s) => getSafeStats(s, lastMessageBySession).tarado >= 70);
+        if (filter === "hot") filtered = filtered.filter((s) => getSafeStats(s).tarado >= 70);
         if (filter === "paid") filtered = filtered.filter((s) => Number(s.total_paid || 0) > 0);
         if (phaseFilter !== "all") {
             filtered = filtered.filter((s) => getEffectiveFunnelStep(s, latestFunnelBySession).toUpperCase() === phaseFilter);
@@ -201,41 +224,13 @@ export default function AdminDashboard() {
         const paidSessions = sessions.filter((s) => Number(s.total_paid || 0) > 0);
         const revenue = sessions.reduce((sum, s) => sum + Number(s.total_paid || 0), 0);
         const active = sessions.filter((s) => s.status === "active").length;
-        const hot = sessions.filter((s) => getSafeStats(s, lastMessageBySession).tarado >= 70).length;
+        const hot = sessions.filter((s) => getSafeStats(s).tarado >= 70).length;
         const waiting = sessions.filter((s) => lastMessageBySession[s.id]?.sender === "user").length;
         return { total: sessions.length, active, hot, waiting, paid: paidSessions.length, revenue };
     }, [sessions, lastMessageBySession]);
 
     return (
         <div className="min-h-screen bg-[#080b10] text-slate-100">
-            <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080b10]/95 backdrop-blur">
-                <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between lg:px-6">
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-cyan-400 text-sm font-black text-slate-950">LM</div>
-                        <div>
-                            <h1 className="text-lg font-semibold">Painel Lari Morais</h1>
-                            <p className="text-xs text-slate-400">
-                                {lastSync ? `Ao vivo, sincronizado ${formatTimeAgo(lastSync.toISOString())}` : "Carregando conversas"}
-                            </p>
-                        </div>
-                    </div>
-                    <nav className="flex flex-wrap gap-2 text-sm">
-                        {[
-                            ["/admin/insights", "Insights"],
-                            ["/admin/scripts", "Scripts"],
-                            ["/admin/previews", "Previas"],
-                            ["/admin/variants", "Variacoes"],
-                            ["/admin/ai", "Multi-IAs"],
-                            ["/admin/settings", "Config"],
-                        ].map(([href, label]) => (
-                            <Link key={href} href={href} className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10">
-                                {label}
-                            </Link>
-                        ))}
-                    </nav>
-                </div>
-            </header>
-
             <main className="mx-auto grid w-full max-w-[1500px] gap-5 px-4 py-5 lg:grid-cols-[280px_1fr] lg:px-6">
                 <aside className="space-y-4 lg:sticky lg:top-[88px] lg:h-[calc(100vh-108px)]">
                     <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
@@ -300,13 +295,19 @@ export default function AdminDashboard() {
                             <p className="text-sm text-slate-400">Mostrando {filteredSessions.length} de {sessions.length} conversas</p>
                             <h2 className="text-2xl font-semibold tracking-tight">Conversas recentes</h2>
                         </div>
-                        <button onClick={fetchSessions} className="w-fit rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-200 transition hover:border-cyan-300/40">
-                            Sincronizar agora
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2">
+                            {scoreMessage && <span className="text-xs text-cyan-200">{scoreMessage}</span>}
+                            <button onClick={recalculateScores} disabled={recalculating} className="rounded-lg border border-violet-300/30 bg-violet-300/10 px-3 py-2 text-sm font-semibold text-violet-100 transition hover:border-violet-300/60 disabled:opacity-50">
+                                {recalculating ? "Analisando histórico..." : "Atualizar barrinhas"}
+                            </button>
+                            <button onClick={fetchSessions} className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-200 transition hover:border-cyan-300/40">
+                                Sincronizar
+                            </button>
+                        </div>
                     </div>
 
                     <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.035]">
-                        <div className="hidden grid-cols-[minmax(240px,1.1fr)_minmax(260px,1.4fr)_120px_120px_120px] border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 lg:grid">
+                        <div className="hidden grid-cols-[minmax(220px,1fr)_minmax(240px,1.25fr)_120px_220px_110px] border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 lg:grid">
                             <span>Lead</span>
                             <span>Ultima mensagem</span>
                             <span>Funil</span>
@@ -317,17 +318,18 @@ export default function AdminDashboard() {
                         {loading && <div className="p-8 text-center text-slate-500">Carregando painel...</div>}
 
                         {!loading && filteredSessions.map((session) => {
-                            const safeStats = getSafeStats(session, lastMessageBySession);
+                            const safeStats = getSafeStats(session);
                             const last = lastMessageBySession[session.id];
                             const funnelStep = getEffectiveFunnelStep(session, latestFunnelBySession);
                             const waiting = last?.sender === "user";
                             const memory = summarizeMemory(session);
+                            const scoreMeta = parseLeadScoreMeta(session.lead_score);
 
                             return (
                                 <Link
                                     key={session.id}
                                     href={`/admin/chat/${session.telegram_chat_id}`}
-                                    className="grid gap-3 border-b border-white/10 px-4 py-4 transition last:border-b-0 hover:bg-white/[0.055] lg:grid-cols-[minmax(240px,1.1fr)_minmax(260px,1.4fr)_120px_120px_120px] lg:items-center"
+                                    className="grid gap-3 border-b border-white/10 px-4 py-4 transition last:border-b-0 hover:bg-white/[0.055] lg:grid-cols-[minmax(220px,1fr)_minmax(240px,1.25fr)_120px_220px_110px] lg:items-center"
                                 >
                                     <div className="min-w-0">
                                         <div className="flex items-center gap-2">
@@ -355,18 +357,12 @@ export default function AdminDashboard() {
                                         </span>
                                     </div>
 
-                                    <div>
-                                        <div className="mb-1 flex justify-between text-[11px] text-slate-500">
-                                            <span>Hot</span>
-                                            <span>{safeStats.tarado}%</span>
-                                        </div>
-                                        <div className="h-2 rounded-full bg-black/40">
-                                            <div className="h-full rounded-full bg-rose-400" style={{ width: `${safeStats.tarado}%` }} />
-                                        </div>
-                                        <div className="mt-1 flex justify-between text-[11px] text-slate-500">
-                                            <span>Venda</span>
-                                            <span>{safeStats.financeiro}%</span>
-                                        </div>
+                                    <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                                        <MiniScoreBar label="Quente" value={safeStats.tarado} color="bg-rose-400" />
+                                        <MiniScoreBar label="Compra" value={safeStats.financeiro} color="bg-emerald-400" />
+                                        <MiniScoreBar label="Carente" value={safeStats.carente} color="bg-cyan-400" />
+                                        <MiniScoreBar label="Emocional" value={safeStats.sentimental} color="bg-violet-400" />
+                                        {scoreMeta && <p className="col-span-2 text-[10px] text-slate-600">Confiança {scoreMeta.confidence}% · {scoreMeta.message_count} mensagens</p>}
                                     </div>
 
                                     <div className="text-left lg:text-right">
@@ -396,52 +392,29 @@ function Metric({ label, value, accent = "text-slate-100" }: { label: string; va
     );
 }
 
+function MiniScoreBar({ label, value, color }: { label: string; value: number; color: string }) {
+    return (
+        <div>
+            <div className="mb-1 flex justify-between text-[10px] text-slate-500"><span>{label}</span><span>{value}%</span></div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-black/40">
+                <div className={`h-full rounded-full transition-[width] duration-500 ${color}`} style={{ width: `${value}%` }} />
+            </div>
+        </div>
+    );
+}
+
 function sortSessions(rows: Session[]) {
     return [...rows].sort((a, b) => new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime());
 }
 
-function clampStat(n: number) {
-    return Math.max(0, Math.min(100, Number(n) || 0));
-}
-
-function parseLeadScore(raw: unknown) {
-    let stats = raw;
-    if (typeof stats === "string") {
-        try { stats = JSON.parse(stats); } catch { stats = null; }
-    }
-    if (!stats || typeof stats !== "object") return null;
-    const data = stats as Record<string, unknown>;
-    return {
-        tarado: clampStat(Number(data.tarado)),
-        financeiro: clampStat(Number(data.financeiro)),
-        carente: clampStat(Number(data.carente)),
-        sentimental: clampStat(Number(data.sentimental)),
-    };
-}
-
-function getSafeStats(session: Session, lastMessageBySession: Record<string, LastMessage>) {
-    const base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
+function getSafeStats(session: Session) {
     const parsed = parseLeadScore(session.lead_score);
     if (parsed && !isAllZero(parsed)) return parsed;
-    return applyHeuristicStats(lastMessageBySession[session.id]?.content || "", base);
+    return { ...BASE_LEAD_SCORE };
 }
 
 function isAllZero(s: LeadStats) {
     return ["tarado", "financeiro", "carente", "sentimental"].every((key) => Number(s[key as keyof LeadStats] || 0) === 0);
-}
-
-function applyHeuristicStats(text: string, current: LeadStats) {
-    const s = { ...current };
-    const t = (text || "").toLowerCase();
-    const inc = (key: keyof LeadStats, val: number) => {
-        s[key] = clampStat(s[key] + val);
-    };
-    if (/(manda.*foto|quero ver|deixa eu ver|foto|video|manda mais)/i.test(t)) inc("tarado", 8);
-    if (/(pix|vou comprar|passa o pix|fechado|pode gerar|manda o pix)/i.test(t)) inc("financeiro", 14);
-    else if (/(quanto custa|preco|valor|mensal|vitalicio)/i.test(t)) inc("financeiro", 6);
-    if (/(bom dia amor|boa noite vida|to sozinho|carente|saudade)/i.test(t)) inc("carente", 7);
-    if (/(saudade|solidao|carinho|afeto)/i.test(t)) inc("sentimental", 7);
-    return s;
 }
 
 function getEffectiveFunnelStep(session: Session, latestFunnelBySession: Record<string, string>) {

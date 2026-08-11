@@ -3,6 +3,7 @@ import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode } from '@/lib/telegram';
 import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
+import { calculateLeadScore, markLeadPaid, toStoredLeadScore } from '@/lib/leadScoring';
 
 // Esta rota atua como um worker em segundo plano.
 // Ela aguarda, verifica mensagens mais recentes (debounce), e então processa a resposta.
@@ -24,63 +25,6 @@ const detectCityFromText = (input: string): string | null => {
 
     const parts = city.split(/\s+/).slice(0, 3);
     return parts.join(' ');
-};
-
-const clampStat = (n: number) => Math.max(0, Math.min(100, Number(n) || 0));
-
-const normalizeStats = (stats: any, base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 }) => {
-    const s = stats || base;
-    return {
-        tarado: clampStat((s as any).tarado ?? base.tarado),
-        financeiro: clampStat((s as any).financeiro ?? base.financeiro),
-        carente: clampStat((s as any).carente ?? base.carente),
-        sentimental: clampStat((s as any).sentimental ?? base.sentimental)
-    };
-};
-
-const isAllZero = (stats: any) => {
-    if (!stats) return true;
-    return (Number(stats.tarado) || 0) === 0 &&
-        (Number(stats.financeiro) || 0) === 0 &&
-        (Number(stats.carente) || 0) === 0 &&
-        (Number(stats.sentimental) || 0) === 0;
-};
-
-const applyHeuristicStats = (text: string, current: any) => {
-    const base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
-    const s = normalizeStats(current, base);
-    const t = (text || '').toLowerCase();
-
-    const inc = (key: keyof typeof s, val: number) => {
-        s[key] = clampStat(s[key] + val);
-    };
-
-    if (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|vídeo|video|pelada|sem roupa|manda mais)/i.test(t)) inc('tarado', 8);
-    if (/(gostosa|delicia|tes[a?]o|safada|linda|d[ei]l?icia)/i.test(t)) inc('tarado', 4);
-    if (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t)) inc('tarado', 14);
-    if (/(nao sou tarado|nao to tarado|nao curto|nao gosto disso|nao quero isso|para com isso|respeita|pare|sem putaria|sem nude|nao manda|nao gostei|voce e feia|vc e feia)/i.test(t)) inc('tarado', -30);
-    if (/(so quero conversar|nao quero nada sexual|so amizade)/i.test(t)) inc('tarado', -20);
-    if (/(sou casado|sou comprometido|tenho esposa|minha esposa|minha mulher|minha namorada|to de boa|so conversando|nao to afim|nao quero nada agora)/i.test(t)) inc('tarado', -15);
-
-    if (/(quanto custa|quanto e|pre[cç]o|valor|mensal|vital[ií]cio)/i.test(t)) inc('financeiro', 6);
-    if (/(pix|vou comprar|passa o pix|fechado|pode gerar|manda o pix)/i.test(t)) inc('financeiro', 14);
-    if (/(tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t)) inc('financeiro', 10);
-    if (/(ta caro|caro|sem dinheiro|liso|desempregado)/i.test(t)) inc('financeiro', -20);
-
-    const isShortReply = t.trim().split(/\s+/).length <= 2;
-    const isRudeOrCold = /(vc e chata|voce e chata|chata|feia|ridicula|ridicula|idiota|burra|vai se foder|vai tomar|toma no cu|vtnc|vsf|se fode|se fuder|cala a boca|fodase|foda-se|nao enche|para de encher|ta chato|ta irritante|não enche|ta irritante|ta chata|nao quero falar|nao quero conversar|me deixa|para de falar|para de mandar|ta me enchendo|to de boa|tô de boa|nao to afim|nao quero)/i.test(t);
-
-    if (/(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ningu[e?]m me quer|queria uma namorada|carente|me chama|sdds|saudade)/i.test(t)) inc('carente', 7);
-    if (isShortReply) inc('carente', -5);
-
-    if (/(saudade|solid[a?]o|sentindo falta|carinho|afeto)/i.test(t)) inc('sentimental', 7);
-    if (isRudeOrCold) {
-        inc('carente', -15);
-        inc('sentimental', -20);
-        inc('tarado', -15);
-    }
-
-    return s;
 };
 
 const normalizeLeadMemory = (input: any) => {
@@ -202,30 +146,6 @@ const detectLeadMemorySignals = (userText: string, botTexts: string[], aiRespons
         },
         updated_at: new Date().toISOString()
     };
-};
-
-const hasTaradoPositiveTrigger = (text: string) => {
-    const t = (text || '').toLowerCase();
-    return (/(manda.*foto|quero ver|deixa eu ver|cad[e?]|nudes?|foto|vÃ­deo|video|pelada|sem roupa|manda mais)/i.test(t)) ||
-        (/(gostosa|delicia|tes[a?]o|safada|linda|d[ei]l?icia)/i.test(t)) ||
-        (/(quero transar|chupar|comer|foder|gozar|pau|buceta|porra|me come|te comer)/i.test(t));
-};
-
-type StatKey = 'tarado' | 'financeiro' | 'carente' | 'sentimental';
-
-const hasPositiveStatTrigger = (text: string, key: StatKey) => {
-    const t = (text || '').toLowerCase();
-    if (key === 'tarado') return hasTaradoPositiveTrigger(t);
-    if (key === 'financeiro') {
-        return /(quanto custa|quanto e|pre[cç]o|valor|mensal|vital[ií]cio|pix|vou comprar|passa o pix|fechado|pode gerar|manda o pix|tenho dinheiro|sou rico|ferrari|viajei|carro|viagem)/i.test(t);
-    }
-    if (key === 'carente') {
-        return /(bom dia amor|boa noite vida|sonhei com vc|to sozinho|ningu[e?]m me quer|queria uma namorada|carente|me chama|sdds|saudade)/i.test(t);
-    }
-    if (key === 'sentimental') {
-        return /(saudade|solid[a?]o|sentindo falta|carinho|afeto|ex-namorada|trai[cç][aã]o|desabafo)/i.test(t);
-    }
-    return false;
 };
 
 const hasExplicitSexualFantasyTrigger = (text: string) => {
@@ -1020,34 +940,12 @@ Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se hou
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
 
     // 5. Atualizar Stats & Salvar Pensamentos
-    const currentStats = normalizeStats(session.lead_score);
-    if (!aiResponse.lead_stats) {
-        aiResponse.lead_stats = applyHeuristicStats(userOnlyText, currentStats);
-    }
-
-    const aiStats = normalizeStats(aiResponse.lead_stats);
-    const heuristicStats = applyHeuristicStats(userOnlyText, currentStats);
-
-    const aiUnchanged = JSON.stringify(aiStats) === JSON.stringify(currentStats);
-    if (isAllZero(aiStats) || aiUnchanged) {
-        aiResponse.lead_stats = heuristicStats;
-    } else {
-        const pick = (key: StatKey) => {
-            const delta = heuristicStats[key] - currentStats[key];
-            if (delta < 0) return Math.min(aiStats[key], heuristicStats[key]);
-            if (!hasPositiveStatTrigger(userOnlyText, key) && aiStats[key] > currentStats[key]) {
-                return currentStats[key];
-            }
-            if (delta > 0) return Math.min(aiStats[key], heuristicStats[key]);
-            return aiStats[key] > currentStats[key] ? currentStats[key] : aiStats[key];
-        };
-        aiResponse.lead_stats = {
-            tarado: pick('tarado'),
-            financeiro: pick('financeiro'),
-            carente: pick('carente'),
-            sentimental: pick('sentimental')
-        };
-    }
+    const deterministicScore = calculateLeadScore([{ content: userOnlyText }], {
+        initial: session.lead_score,
+        totalPaid: Number(session.total_paid || 0),
+        includeContextBoosts: false,
+    });
+    aiResponse.lead_stats = toStoredLeadScore(deterministicScore);
 
     console.log("📊 [STATS UPDATE] ANTES:", JSON.stringify(session.lead_score));
     console.log("📊 [STATS UPDATE] DEPOIS (IA):", JSON.stringify(aiResponse.lead_stats));
@@ -1399,6 +1297,7 @@ Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se hou
 
                             await supabase.from('sessions').update({
                                 total_paid: newTotal,
+                                lead_score: markLeadPaid(session.lead_score),
                             }).eq('id', session.id);
 
                             // Notificar IA sobre sucesso (via Mensagem de Sistema oculta)

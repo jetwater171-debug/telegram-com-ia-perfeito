@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendTelegramMessage } from '@/lib/telegram';
+import { markLeadPaid } from '@/lib/leadScoring';
 import { normalizePaymentGatewayId } from '@/lib/paymentGatewayService';
 
 const PAID_STATUS = new Set(['paid', 'approved', 'completed', 'confirmed', 'success', 'aprovado', 'pago', 'concluido', 'liquidado']);
@@ -91,7 +92,7 @@ async function POST(req: NextRequest) {
 
     const { data: session } = await supabase
       .from('sessions')
-      .select('id, telegram_chat_id, total_paid')
+      .select('id, telegram_chat_id, total_paid, lead_score')
       .eq('id', paymentMsg.session_id)
       .maybeSingle();
 
@@ -115,7 +116,10 @@ async function POST(req: NextRequest) {
     }).eq('id', paymentMsg.id);
 
     if (shouldCount && session?.id) {
-      await supabase.from('sessions').update({ total_paid: newTotal }).eq('id', session.id);
+      await supabase.from('sessions').update({
+        total_paid: newTotal,
+        lead_score: markLeadPaid(session.lead_score),
+      }).eq('id', session.id);
       await supabase.from('messages').insert({
         session_id: session.id,
         sender: 'system',

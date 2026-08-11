@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
@@ -133,11 +132,6 @@ export default function AdminPaymentsPage() {
                         <h1 className="text-xl font-semibold">Gateways PIX</h1>
                         <p className="text-sm text-slate-400">Ordem, fallback e credenciais de pagamento da Lari.</p>
                     </div>
-                    <nav className="flex flex-wrap gap-2 text-sm">
-                        <Link href="/admin" className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-200">Conversas</Link>
-                        <Link href="/admin/ai" className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-200">Multi-IAs</Link>
-                        <Link href="/admin/settings" className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-200">Config</Link>
-                    </nav>
                 </div>
             </header>
 

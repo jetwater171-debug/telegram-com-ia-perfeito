@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useParams, useRouter } from "next/navigation";
+import { parseLeadScore, parseLeadScoreMeta } from "@/lib/leadScoring";
 
 interface Message {
     id: string;
@@ -31,11 +32,12 @@ export default function AdminChatPage() {
     const [session, setSession] = useState<any>(null);
     const [leadOrigin, setLeadOrigin] = useState<any>(null);
     const [latestFunnelStep, setLatestFunnelStep] = useState<string | null>(null);
-    const [leadTyping, setLeadTyping] = useState(false);
+    const [typingClock, setTypingClock] = useState(() => Date.now());
     const [showThoughts, setShowThoughts] = useState(false);
     const [showSystem, setShowSystem] = useState(false);
     const [actionMsg, setActionMsg] = useState("");
     const [forceLoading, setForceLoading] = useState(false);
+    const [scoreLoading, setScoreLoading] = useState(false);
     const [loading, setLoading] = useState(true);
     const [lastSync, setLastSync] = useState<Date | null>(null);
     const [mediaPreview, setMediaPreview] = useState<MediaPreview | null>(null);
@@ -81,20 +83,9 @@ export default function AdminChatPage() {
     }, [session?.id]);
 
     useEffect(() => {
-        if (!messages.length) {
-            setLeadTyping(false);
-            return;
-        }
-        const lastMsg = messages[messages.length - 1];
-        if (lastMsg.sender !== "user") {
-            setLeadTyping(false);
-            return;
-        }
-        const isRecent = Date.now() - new Date(lastMsg.created_at).getTime() <= 20000;
-        setLeadTyping(isRecent);
-        const typingTimeout = window.setTimeout(() => setLeadTyping(false), 20000);
-        return () => window.clearTimeout(typingTimeout);
-    }, [messages]);
+        const timer = window.setInterval(() => setTypingClock(Date.now()), 5000);
+        return () => window.clearInterval(timer);
+    }, []);
 
     useEffect(() => {
         if (!messages.length) return;
@@ -271,12 +262,27 @@ export default function AdminChatPage() {
         router.push("/admin");
     };
 
-    const lastUserMessage = useMemo(() => {
-        for (let i = messages.length - 1; i >= 0; i--) {
-            if (messages[i].sender === "user" && messages[i].content) return messages[i].content;
+    const recalculateScore = async () => {
+        if (!session?.id) return;
+        setScoreLoading(true);
+        setActionMsg("");
+        try {
+            const response = await fetch("/api/admin/recalculate-scores", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sessionId: session.id }),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data?.error || "Falha ao recalcular");
+            const { data: freshSession } = await supabase.from("sessions").select("*").eq("id", session.id).single();
+            if (freshSession) setSession(freshSession);
+            setActionMsg("Barrinhas atualizadas usando todo o histórico do lead.");
+        } catch (error: any) {
+            setActionMsg(error?.message || "Não foi possível atualizar as barrinhas.");
+        } finally {
+            setScoreLoading(false);
         }
-        return "";
-    }, [messages]);
+    };
 
     const visibleMessages = useMemo(() => {
         return messages.filter((msg) => {
@@ -286,7 +292,13 @@ export default function AdminChatPage() {
         });
     }, [messages, showThoughts, showSystem]);
 
-    const safeLeadScore = getSafeLeadScore(session?.lead_score, lastUserMessage);
+    const leadTyping = useMemo(() => {
+        const lastMsg = messages[messages.length - 1];
+        return Boolean(lastMsg && lastMsg.sender === "user" && typingClock - new Date(lastMsg.created_at).getTime() <= 20000);
+    }, [messages, typingClock]);
+
+    const safeLeadScore = parseLeadScore(session?.lead_score);
+    const scoreMeta = parseLeadScoreMeta(session?.lead_score);
     const effectiveFunnelStep = session?.funnel_step || latestFunnelStep || "";
     const leadMemory = useMemo(() => parseLeadMemory(session?.lead_memory), [session?.lead_memory]);
     const originInfo = useMemo(() => buildOriginInfo(session, leadMemory, leadOrigin), [session, leadMemory, leadOrigin]);
@@ -443,10 +455,18 @@ export default function AdminChatPage() {
                     </Panel>
 
                     <Panel title="Score">
-                        <ScoreBar label="Hot" value={safeLeadScore.tarado} color="bg-rose-400" />
-                        <ScoreBar label="Financeiro" value={safeLeadScore.financeiro} color="bg-emerald-400" />
-                        <ScoreBar label="Carente" value={safeLeadScore.carente} color="bg-cyan-400" />
-                        <ScoreBar label="Sentimental" value={safeLeadScore.sentimental} color="bg-violet-400" />
+                        <ScoreBar label="Interesse quente" hint="Pedidos e sinais sexuais" value={safeLeadScore.tarado} color="bg-rose-400" />
+                        <ScoreBar label="Chance de compra" hint="Preço, PIX e intenção de pagar" value={safeLeadScore.financeiro} color="bg-emerald-400" />
+                        <ScoreBar label="Busca de atenção" hint="Carência e necessidade de contato" value={safeLeadScore.carente} color="bg-cyan-400" />
+                        <ScoreBar label="Vínculo emocional" hint="Afeto, saudade e desabafos" value={safeLeadScore.sentimental} color="bg-violet-400" />
+                        {scoreMeta && (
+                            <div className="mt-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-[11px] text-slate-500">
+                                Confiança {scoreMeta.confidence}% · {scoreMeta.message_count} mensagens analisadas · atualizado {formatTimeAgo(scoreMeta.updated_at)}
+                            </div>
+                        )}
+                        <button onClick={recalculateScore} disabled={scoreLoading} className="mt-3 w-full rounded-lg border border-violet-300/30 bg-violet-300/10 px-3 py-2 text-xs font-semibold text-violet-100 transition hover:border-violet-300/60 disabled:opacity-50">
+                            {scoreLoading ? "Analisando histórico..." : "Recalcular pelo histórico"}
+                        </button>
                     </Panel>
 
                     <Panel title="Memoria">
@@ -678,16 +698,17 @@ function KeyValueList({ title, items }: { title: string; items: Array<[string, s
     );
 }
 
-function ScoreBar({ label, value, color }: { label: string; value: number; color: string }) {
+function ScoreBar({ label, hint, value, color }: { label: string; hint: string; value: number; color: string }) {
     return (
         <div className="mb-3 last:mb-0">
             <div className="mb-1 flex justify-between text-xs text-slate-400">
                 <span>{label}</span>
-                <span>{value}%</span>
+                <span className="font-semibold text-slate-200">{value}%</span>
             </div>
-            <div className="h-2 rounded-full bg-black/40">
-                <div className={`h-full rounded-full ${color}`} style={{ width: `${value}%` }} />
+            <div className="h-2 overflow-hidden rounded-full bg-black/40">
+                <div className={`h-full rounded-full transition-[width] duration-500 ${color}`} style={{ width: `${value}%` }} />
             </div>
+            <p className="mt-1 text-[10px] text-slate-600">{hint}</p>
         </div>
     );
 }
@@ -741,44 +762,6 @@ function detectDeviceLabel(userAgent: string, fallback?: string) {
     if (/android/.test(ua)) return "Android";
     if (/windows|macintosh|linux/.test(ua)) return "Desktop";
     return fallback || "";
-}
-
-function getSafeLeadScore(raw: unknown, fallbackText: string) {
-    const base = { tarado: 5, financeiro: 10, carente: 20, sentimental: 20 };
-    let stats = raw;
-    if (typeof stats === "string") {
-        try { stats = JSON.parse(stats); } catch { stats = null; }
-    }
-    if (!stats || typeof stats !== "object" || isAllZero(stats as any)) {
-        stats = applyHeuristicStats(fallbackText, base);
-    }
-    const data = stats as Record<string, unknown>;
-    return {
-        tarado: clampStat(Number(data.tarado ?? base.tarado)),
-        financeiro: clampStat(Number(data.financeiro ?? base.financeiro)),
-        carente: clampStat(Number(data.carente ?? base.carente)),
-        sentimental: clampStat(Number(data.sentimental ?? base.sentimental)),
-    };
-}
-
-function applyHeuristicStats(text: string, current: any) {
-    const s = { ...current };
-    const t = (text || "").toLowerCase();
-    const inc = (key: keyof typeof s, val: number) => { s[key] = clampStat(s[key] + val); };
-    if (/(manda.*foto|quero ver|deixa eu ver|foto|video|manda mais)/i.test(t)) inc("tarado", 8);
-    if (/(pix|vou comprar|passa o pix|fechado|pode gerar|manda o pix)/i.test(t)) inc("financeiro", 14);
-    else if (/(quanto custa|preco|valor|mensal|vitalicio)/i.test(t)) inc("financeiro", 6);
-    if (/(bom dia amor|boa noite vida|to sozinho|carente|saudade)/i.test(t)) inc("carente", 7);
-    if (/(saudade|solidao|carinho|afeto)/i.test(t)) inc("sentimental", 7);
-    return s;
-}
-
-function isAllZero(s: Record<string, unknown>) {
-    return ["tarado", "financeiro", "carente", "sentimental"].every((key) => Number(s[key] || 0) === 0);
-}
-
-function clampStat(n: number) {
-    return Math.max(0, Math.min(100, Number(n) || 0));
 }
 
 function initials(name?: string) {
