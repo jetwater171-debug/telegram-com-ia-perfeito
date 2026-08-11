@@ -226,7 +226,6 @@ export default function AdminDashboard() {
                             ["/admin/previews", "Previas"],
                             ["/admin/variants", "Variacoes"],
                             ["/admin/ai", "Multi-IAs"],
-                            ["/admin/optimizer", "IA"],
                             ["/admin/settings", "Config"],
                         ].map(([href, label]) => (
                             <Link key={href} href={href} className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10">

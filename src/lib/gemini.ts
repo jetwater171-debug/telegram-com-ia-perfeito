@@ -1486,6 +1486,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         .from('prompt_blocks')
         .select('key,label,content,enabled,updated_at')
         .eq('enabled', true)
+        .neq('key', 'auto_optimizer')
         .order('updated_at', { ascending: false })
         .limit(20);
 

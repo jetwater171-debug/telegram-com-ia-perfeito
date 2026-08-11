@@ -87,9 +87,6 @@ export default function AdminSettingsPage() {
                     <Link href="/admin/variants" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
                         Variacoes
                     </Link>
-                    <Link href="/admin/optimizer" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
-                        IA
-                    </Link>
                     <Link href="/admin/ai" className="rounded-full px-3 py-1.5 text-slate-200 transition hover:bg-white/10">
                         Multi-IAs
                     </Link>

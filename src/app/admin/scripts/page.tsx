@@ -33,6 +33,7 @@ export default function AdminScriptsPage() {
         const { data } = await supabase
             .from('prompt_blocks')
             .select('*')
+            .neq('key', 'auto_optimizer')
             .order('updated_at', { ascending: false });
         setBlocks((data as PromptBlock[]) || []);
     };
