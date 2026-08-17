@@ -62,9 +62,26 @@ const responseSchema = {
                 value: { type: "NUMBER" },
                 description: { type: "STRING" }
             }
+        },
+        lead_memory_patch: {
+            type: "OBJECT",
+            nullable: true,
+            properties: {
+                best_tone: { type: "STRING" },
+                emotional_context: { type: "STRING" },
+                relationship_stage: { type: "STRING", enum: ["new", "familiar", "engaged", "buyer", "returning"] },
+                next_personal_step: { type: "STRING" },
+                wanted_products: { type: "ARRAY", items: { type: "STRING" } },
+                rejected_products: { type: "ARRAY", items: { type: "STRING" } },
+                desires: { type: "ARRAY", items: { type: "STRING" } },
+                objections: { type: "ARRAY", items: { type: "STRING" } },
+                known_facts: { type: "ARRAY", items: { type: "STRING" } },
+                conversation_hooks: { type: "ARRAY", items: { type: "STRING" } },
+                notes: { type: "ARRAY", items: { type: "STRING" } }
+            }
         }
     },
-    required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action"],
+    required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action", "lead_memory_patch"],
 };
 
 const centralBrainSchema = {
@@ -1419,7 +1436,6 @@ const callOpenRouterJson = async <T,>(
 
     const response = await fetch(`${settings.openRouterBaseUrl}/chat/completions`, {
         method: "POST",
-        signal: AbortSignal.timeout(AI_GATEWAY_TIMEOUT_MS),
         headers: {
             "Authorization": `Bearer ${settings.openRouterApiKey}`,
             "Content-Type": "application/json",
@@ -1430,7 +1446,12 @@ const callOpenRouterJson = async <T,>(
             model: gateway.model,
             messages: toOpenRouterMessages(systemInstruction, history, userContent, mediaPart),
             temperature: role === "draft" ? 0.85 : 0.35,
+            max_tokens: 1200,
             response_format: { type: "json_object" },
+            provider: {
+                sort: "latency",
+                allow_fallbacks: true,
+            },
         }),
     });
 
@@ -1827,10 +1848,11 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     while (attempt < maxRetries) {
         try {
             let strategy: any = makeFallbackStrategy(userMessage);
-            let strategyStatus = 'fallback local';
+            let strategyStatus = 'integrado na chamada unica';
+            const useSeparateStrategyCall = false;
 
-            if (!aiSettings.aiStrategyEnabled) {
-                strategyStatus = 'desativada, fallback local';
+            if (!useSeparateStrategyCall || !aiSettings.aiStrategyEnabled) {
+                strategyStatus = 'integrado na chamada unica';
             } else {
             try {
                 const strategyPrompt = `${baseInstruction}
@@ -1877,8 +1899,8 @@ memory_patch deve conter: best_tone, emotional_context, relationship_stage, next
 
             const draftPrompt = `${baseInstruction}
 
-# IA 2: LARI
-Voce e a Lari falando com o lead. Use a estrategia recebida como direcao, mas responda natural, humana e contextual.
+# CEREBRO E LARI EM UMA UNICA CHAMADA
+Primeiro analise silenciosamente o lead usando memoria e historico; depois escreva a resposta final natural, humana e contextual.
 Nao copie frases prontas se nao encaixarem. A estrategia manda o objetivo, voce escreve como uma menina real.
 Siga o message_plan do cerebro na ordem, sem mencionar analise, plano, memoria, venda ou IA.
 Prefira ${Number(strategy?.recommended_message_count || 3)} baloes curtos, com no maximo ${Number(strategy?.max_chars_per_message || 90)} caracteres cada.
@@ -1889,7 +1911,7 @@ Recupere o connection_cue apenas se ele for um fato real do historico ou da memo
 Se o lead disser que quer comer/transar/meter/chupar/gozar, responda fazendo ele imaginar a cena no mesmo tema, em varios baloes curtos antes de qualquer venda. A quantidade depende do calor da conversa.
 Se for usar action de foto/video, escreva antes uma mensagem curta conectando a midia ao que o lead acabou de falar.
 
-Retorne JSON com: internal_thought (resumo operacional curto, sem raciocinio passo a passo), lead_classification, lead_stats completo, extracted_user_name, audio_transcription, current_state, messages, action, preview_id e payment_details. Use null nos campos opcionais sem valor.`;
+Retorne JSON com: internal_thought (resumo operacional curto, sem raciocinio passo a passo), lead_classification, lead_stats completo, extracted_user_name, audio_transcription, current_state, messages, action, preview_id, payment_details e lead_memory_patch. Use null nos campos opcionais sem valor.`;
 
             const draftParts: any[] = [{
                 text: `${userMessage}
@@ -1915,10 +1937,9 @@ Use essa estrategia para responder.`
             console.log(`AI Gateway Draft (${draftResult.gateway.label}) Attempt ${attempt + 1}:`, responseText);
 
             const jsonResponse = draftResult.data;
-            jsonResponse.lead_classification = strategy?.lead_type || jsonResponse.lead_classification;
-            jsonResponse.lead_memory_patch = strategy?.memory_patch || null;
-            jsonResponse.recommended_message_count = Math.max(1, Math.min(6, Number(strategy?.recommended_message_count || 3)));
-            jsonResponse.max_chars_per_message = Math.max(55, Math.min(110, Number(strategy?.max_chars_per_message || 90)));
+            jsonResponse.lead_memory_patch = jsonResponse.lead_memory_patch || strategy?.memory_patch || null;
+            jsonResponse.recommended_message_count = Math.max(1, Math.min(6, Number(jsonResponse.messages?.length || strategy?.recommended_message_count || 3)));
+            jsonResponse.max_chars_per_message = Math.max(55, Math.min(110, Number(Math.max(0, ...(jsonResponse.messages || []).map((message) => String(message || '').length)) || strategy?.max_chars_per_message || 90)));
 
             let review: any = {
                 approved: true,
@@ -1933,9 +1954,10 @@ Use essa estrategia para responder.`
             let reviewStatus = 'sem revisao';
             const criticalReviewNeeded = ["generate_pix_payment", "check_payment_status"].includes(String(jsonResponse.action || ""))
                 || Number(strategy?.confidence || 0) < 0.4;
+            const useSeparateReviewCall = false;
 
-            if (!aiSettings.aiReviewEnabled) {
-                reviewStatus = 'desativada';
+            if (!useSeparateReviewCall || !aiSettings.aiReviewEnabled) {
+                reviewStatus = 'integrada na chamada unica';
             } else if (!criticalReviewNeeded) {
                 reviewStatus = 'guardas locais (rota rapida)';
             } else {

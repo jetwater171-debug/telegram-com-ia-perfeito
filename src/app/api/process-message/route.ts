@@ -18,7 +18,7 @@ import {
     shouldUseFishAudio,
 } from '@/lib/fishAudio';
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 // Esta rota atua como um worker em segundo plano.
 // Ela aguarda, verifica mensagens mais recentes (debounce), e então processa a resposta.
