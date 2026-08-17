@@ -74,7 +74,7 @@ const emptySettings: AiSettings = {
     fishAudioApiKeyMasked: "",
     fishAudioApiKeySaved: false,
     fishAudioEnabled: false,
-    fishAudioVoiceId: "1ce455454bad4f0f8c8e4251e74ac93c",
+    fishAudioVoiceId: "24522123b5804bf691a8450d9187f03e",
     fishAudioModel: "s2.1-pro-free",
     fishAudioFrequencyPercent: 18,
     fishAudioCooldownMinutes: 30,

@@ -14,7 +14,7 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 export const DEFAULT_FISH_AUDIO_SETTINGS: Omit<FishAudioSettings, "apiKey"> = {
     enabled: false,
-    voiceId: "1ce455454bad4f0f8c8e4251e74ac93c",
+    voiceId: "24522123b5804bf691a8450d9187f03e",
     model: "s2.1-pro-free",
     frequencyPercent: 18,
     cooldownMinutes: 30,
