@@ -26,6 +26,14 @@ type AiSettings = {
     geminiDraftModel: string;
     geminiReviewModel: string;
     geminiEvaluatorModel: string;
+    fishAudioApiKeyMasked: string;
+    fishAudioApiKeySaved: boolean;
+    fishAudioEnabled: boolean;
+    fishAudioVoiceId: string;
+    fishAudioModel: string;
+    fishAudioFrequencyPercent: number;
+    fishAudioCooldownMinutes: number;
+    fishAudioMaxChars: number;
 };
 
 type AiEvent = {
@@ -63,6 +71,14 @@ const emptySettings: AiSettings = {
     geminiDraftModel: DEFAULT_GEMINI_MODEL,
     geminiReviewModel: DEFAULT_GEMINI_MODEL,
     geminiEvaluatorModel: DEFAULT_GEMINI_LITE_MODEL,
+    fishAudioApiKeyMasked: "",
+    fishAudioApiKeySaved: false,
+    fishAudioEnabled: false,
+    fishAudioVoiceId: "1ce455454bad4f0f8c8e4251e74ac93c",
+    fishAudioModel: "s2.1-pro-free",
+    fishAudioFrequencyPercent: 18,
+    fishAudioCooldownMinutes: 30,
+    fishAudioMaxChars: 280,
 };
 
 const providerLabels: Record<ProviderKey, string> = {
@@ -72,9 +88,9 @@ const providerLabels: Record<ProviderKey, string> = {
 
 const roleLabels: Record<string, string> = {
     draft: "Lari",
-    strategy: "Estrategista",
+    strategy: "Cérebro central",
     review: "Revisora",
-    evaluator: "Avaliadora",
+    evaluator: "Avaliadora (legado)",
 };
 
 const PRESETS = {
@@ -138,6 +154,9 @@ export default function AdminAiPage() {
     const [order, setOrder] = useState<ProviderKey[]>(["openrouter", "gemini"]);
     const [openrouterApiKey, setOpenrouterApiKey] = useState("");
     const [geminiApiKey, setGeminiApiKey] = useState("");
+    const [fishAudioApiKey, setFishAudioApiKey] = useState("");
+    const [fishTestUrl, setFishTestUrl] = useState("");
+    const [testingFish, setTestingFish] = useState(false);
     const [stats, setStats] = useState<AiStat[]>([]);
     const [recentEvents, setRecentEvents] = useState<AiEvent[]>([]);
     const [loading, setLoading] = useState(false);
@@ -146,6 +165,10 @@ export default function AdminAiPage() {
     useEffect(() => {
         load();
     }, []);
+
+    useEffect(() => () => {
+        if (fishTestUrl) URL.revokeObjectURL(fishTestUrl);
+    }, [fishTestUrl]);
 
     const load = async () => {
         const res = await fetch("/api/admin/ai-settings", { cache: "no-store" });
@@ -180,6 +203,7 @@ export default function AdminAiPage() {
         const providerOrder = order.join(",");
         const openrouterKey = openrouterApiKey.trim();
         const geminiKey = geminiApiKey.trim();
+        const fishKey = fishAudioApiKey.trim();
         const res = await fetch("/api/admin/ai-settings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -187,6 +211,7 @@ export default function AdminAiPage() {
                 ...settings,
                 openrouterApiKey: openrouterKey,
                 geminiApiKey: geminiKey,
+                fishAudioApiKey: fishKey,
                 aiModelOrder: providerOrder,
                 aiDraftModelOrder: providerOrder,
                 aiStrategyModelOrder: providerOrder,
@@ -201,9 +226,38 @@ export default function AdminAiPage() {
             setMsg("Configuração salva no banco. Se o campo da chave ficar vazio depois de atualizar, é normal: a chave fica oculta.");
             setOpenrouterApiKey("");
             setGeminiApiKey("");
+            setFishAudioApiKey("");
             await load();
         }
         setLoading(false);
+    };
+
+    const testFishAudio = async () => {
+        setTestingFish(true);
+        setMsg("");
+        try {
+            const res = await fetch("/api/admin/fish-audio/test", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    fishAudioApiKey: fishAudioApiKey.trim(),
+                    fishAudioVoiceId: settings.fishAudioVoiceId,
+                    fishAudioModel: settings.fishAudioModel,
+                }),
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data?.error || `Fish Audio respondeu ${res.status}`);
+            }
+            const blob = await res.blob();
+            if (fishTestUrl) URL.revokeObjectURL(fishTestUrl);
+            setFishTestUrl(URL.createObjectURL(blob));
+            setMsg("Áudio de teste gerado. Dê play abaixo para ouvir.");
+        } catch (error: any) {
+            setMsg(`Erro no teste de voz: ${error?.message || error}`);
+        } finally {
+            setTestingFish(false);
+        }
     };
 
     const clearLogs = async () => {
@@ -331,7 +385,7 @@ export default function AdminAiPage() {
 
                     <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
                         <h2 className="text-lg font-semibold">Camadas da Lari</h2>
-                        <p className="mt-1 text-sm text-slate-400">Desligue o que nao precisar para economizar chamadas. A Lari responde sempre fica ligada.</p>
+                        <p className="mt-1 text-sm text-slate-400">O caminho normal usa o cérebro central e a Lari. A revisão extra só entra em decisões críticas.</p>
                         <div className="mt-4 grid gap-3">
                             <LayerToggle
                                 title="Lari responde"
@@ -341,22 +395,23 @@ export default function AdminAiPage() {
                                 onChange={() => undefined}
                             />
                             <LayerToggle
-                                title="Estrategista"
-                                description="Pensa antes da Lari responder. Desligada, usa estrategia local simples."
+                                title="Cérebro central"
+                                description="Analisa cada lead, usa memória persistente e planeja os balões antes da Lari responder."
                                 checked={settings.aiStrategyEnabled}
                                 onChange={(checked) => setSettings((prev) => ({ ...prev, aiStrategyEnabled: checked }))}
                             />
                             <LayerToggle
                                 title="Revisora"
-                                description="Revisa e corrige a resposta antes de enviar."
+                                description="Revisa PIX e respostas de baixa confiança; conversas normais usam guardas locais mais rápidas."
                                 checked={settings.aiReviewEnabled}
                                 onChange={(checked) => setSettings((prev) => ({ ...prev, aiReviewEnabled: checked }))}
                             />
                             <LayerToggle
-                                title="Avaliadora"
-                                description="Atualiza as barrinhas e classificacao do lead."
-                                checked={settings.aiEvaluatorEnabled}
-                                onChange={(checked) => setSettings((prev) => ({ ...prev, aiEvaluatorEnabled: checked }))}
+                                title="Score integrado"
+                                description="A classificação vem do cérebro e as barrinhas são calculadas no backend, sem uma chamada extra."
+                                checked
+                                locked
+                                onChange={() => undefined}
                             />
                         </div>
                     </div>
@@ -391,6 +446,104 @@ export default function AdminAiPage() {
                         <div className="mt-4 grid gap-4 sm:grid-cols-2">
                             <ModelSelect title="Gemini Lari" value={settings.geminiDraftModel} options={geminiOptions} onChange={(value) => setSettings((prev) => ({ ...prev, geminiDraftModel: value, geminiStrategyModel: value, geminiReviewModel: value }))} />
                             <ModelSelect title="OpenRouter Lari" value={settings.openrouterDraftModel} options={openRouterOptions} onChange={(value) => setSettings((prev) => ({ ...prev, openrouterDraftModel: value, openrouterStrategyModel: value, openrouterReviewModel: value }))} />
+                        </div>
+                    </div>
+
+                    <div className="rounded-lg border border-fuchsia-300/20 bg-fuchsia-300/[0.04] p-5">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                                <p className="text-xs uppercase tracking-[0.18em] text-fuchsia-200">Fish Audio</p>
+                                <h2 className="mt-1 text-lg font-semibold">Voz natural da Lari</h2>
+                                <p className="mt-1 max-w-xl text-sm leading-6 text-slate-400">
+                                    Envia um áudio curto em momentos naturais. Emoção, pausa e tom são escolhidos pelo contexto; PIX e links continuam sempre em texto.
+                                </p>
+                            </div>
+                            <label className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm">
+                                <input
+                                    type="checkbox"
+                                    checked={settings.fishAudioEnabled}
+                                    onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioEnabled: event.target.checked }))}
+                                    className="h-5 w-5 accent-fuchsia-300"
+                                />
+                                {settings.fishAudioEnabled ? "Ligada" : "Desligada"}
+                            </label>
+                        </div>
+
+                        <div className="mt-5 grid gap-4">
+                            <KeyField
+                                label="Fish Audio API Key"
+                                value={fishAudioApiKey}
+                                onChange={setFishAudioApiKey}
+                                placeholder="sk-fish-..."
+                                masked={settings.fishAudioApiKeyMasked}
+                                saved={settings.fishAudioApiKeySaved}
+                            />
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <Field label="ID da voz">
+                                    <input
+                                        value={settings.fishAudioVoiceId}
+                                        onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioVoiceId: event.target.value }))}
+                                        className={inputClass}
+                                        placeholder="ID do modelo de voz"
+                                    />
+                                </Field>
+                                <Field label="Modelo Fish">
+                                    <select
+                                        value={settings.fishAudioModel}
+                                        onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioModel: event.target.value }))}
+                                        className={inputClass}
+                                    >
+                                        <option value="s2.1-pro-free">S2.1 Pro Free</option>
+                                        <option value="s2.1-pro">S2.1 Pro</option>
+                                    </select>
+                                </Field>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-3">
+                                <Field label={`Frequência: ${settings.fishAudioFrequencyPercent}%`}>
+                                    <input
+                                        type="range"
+                                        min="1"
+                                        max="60"
+                                        value={settings.fishAudioFrequencyPercent}
+                                        onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioFrequencyPercent: Number(event.target.value) }))}
+                                        className="w-full accent-fuchsia-300"
+                                    />
+                                </Field>
+                                <Field label="Intervalo por lead (min)">
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="1440"
+                                        value={settings.fishAudioCooldownMinutes}
+                                        onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioCooldownMinutes: Number(event.target.value) }))}
+                                        className={inputClass}
+                                    />
+                                </Field>
+                                <Field label="Máximo de caracteres">
+                                    <input
+                                        type="number"
+                                        min="60"
+                                        max="500"
+                                        value={settings.fishAudioMaxChars}
+                                        onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioMaxChars: Number(event.target.value) }))}
+                                        className={inputClass}
+                                    />
+                                </Field>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-3">
+                                <button
+                                    type="button"
+                                    onClick={testFishAudio}
+                                    disabled={testingFish || (!fishAudioApiKey.trim() && !settings.fishAudioApiKeyMasked)}
+                                    className="rounded-lg border border-fuchsia-200/30 bg-fuchsia-300/10 px-4 py-2 text-sm font-semibold text-fuchsia-100 disabled:opacity-40"
+                                >
+                                    {testingFish ? "Gerando voz..." : "Ouvir teste"}
+                                </button>
+                                {fishTestUrl && <audio controls autoPlay src={fishTestUrl} className="h-10 max-w-full" />}
+                            </div>
+                            <p className="text-xs leading-5 text-slate-500">
+                                Configuração inicial: voz brasileira jovem e conversacional, 18% das respostas e no máximo um áudio a cada 30 minutos por lead.
+                            </p>
                         </div>
                     </div>
                 </section>

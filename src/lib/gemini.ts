@@ -21,7 +21,7 @@ const defaultOpenRouterTitle = process.env.OPENROUTER_TITLE || "Lari Telegram Bo
 const responseSchema = {
     type: "OBJECT", // Use string literal for simplicity with new SDK
     properties: {
-        internal_thought: { type: "STRING", description: "O pensamento interno da IA sobre o lead e o proximo passo. Pense SEMPRE EM PORTUGUÊS." },
+        internal_thought: { type: "STRING", description: "Resumo operacional curto sobre intencao, objetivo e proximo passo. Sem raciocinio passo a passo. Em portugues." },
         lead_classification: { type: "STRING", enum: ["carente", "tarado", "curioso", "frio", "desconhecido"] },
         lead_stats: {
             type: "OBJECT",
@@ -66,18 +66,27 @@ const responseSchema = {
     required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action"],
 };
 
-const strategySchema = {
+const centralBrainSchema = {
     type: "OBJECT",
     properties: {
         intent: { type: "STRING" },
         lead_type: { type: "STRING", enum: ["carente", "tarado", "curioso", "frio", "desconhecido"] },
         temperature: { type: "NUMBER" },
+        emotional_context: { type: "STRING" },
+        relationship_stage: { type: "STRING", enum: ["new", "familiar", "engaged", "buyer", "returning"] },
+        connection_cue: { type: "STRING" },
         objective: { type: "STRING" },
         product_to_sell: { type: "STRING", nullable: true },
         should_sell_now: { type: "BOOLEAN" },
         response_angle: { type: "STRING" },
         must_answer: { type: "STRING" },
         next_step: { type: "STRING" },
+        message_plan: {
+            type: "ARRAY",
+            items: { type: "STRING" }
+        },
+        recommended_message_count: { type: "NUMBER" },
+        max_chars_per_message: { type: "NUMBER" },
         avoid: {
             type: "ARRAY",
             items: { type: "STRING" }
@@ -91,9 +100,26 @@ const strategySchema = {
             ]
         },
         payment_value_hint: { type: "NUMBER", nullable: true },
-        confidence: { type: "NUMBER" }
+        confidence: { type: "NUMBER" },
+        memory_patch: {
+            type: "OBJECT",
+            properties: {
+                best_tone: { type: "STRING" },
+                emotional_context: { type: "STRING" },
+                relationship_stage: { type: "STRING", enum: ["new", "familiar", "engaged", "buyer", "returning"] },
+                next_personal_step: { type: "STRING" },
+                wanted_products: { type: "ARRAY", items: { type: "STRING" } },
+                rejected_products: { type: "ARRAY", items: { type: "STRING" } },
+                desires: { type: "ARRAY", items: { type: "STRING" } },
+                objections: { type: "ARRAY", items: { type: "STRING" } },
+                known_facts: { type: "ARRAY", items: { type: "STRING" } },
+                conversation_hooks: { type: "ARRAY", items: { type: "STRING" } },
+                notes: { type: "ARRAY", items: { type: "STRING" } }
+            },
+            required: ["best_tone", "emotional_context", "relationship_stage", "next_personal_step", "wanted_products", "rejected_products", "desires", "objections", "known_facts", "conversation_hooks", "notes"]
+        }
     },
-    required: ["intent", "lead_type", "temperature", "objective", "should_sell_now", "response_angle", "must_answer", "next_step", "avoid", "action_hint", "confidence"],
+    required: ["intent", "lead_type", "temperature", "emotional_context", "relationship_stage", "connection_cue", "objective", "should_sell_now", "response_angle", "must_answer", "next_step", "message_plan", "recommended_message_count", "max_chars_per_message", "avoid", "action_hint", "confidence", "memory_patch"],
 };
 
 const reviewSchema = {
@@ -136,30 +162,7 @@ const reviewSchema = {
     required: ["approved", "score", "issues", "messages", "action", "current_state"],
 };
 
-const leadEvaluatorSchema = {
-    type: "OBJECT",
-    properties: {
-        lead_classification: { type: "STRING", enum: ["carente", "tarado", "curioso", "frio", "desconhecido"] },
-        lead_stats: {
-            type: "OBJECT",
-            properties: {
-                tarado: { type: "NUMBER" },
-                carente: { type: "NUMBER" },
-                sentimental: { type: "NUMBER" },
-                financeiro: { type: "NUMBER" },
-            },
-            required: ["tarado", "carente", "sentimental", "financeiro"],
-        },
-        confidence: { type: "NUMBER" },
-        reasons: {
-            type: "ARRAY",
-            items: { type: "STRING" }
-        }
-    },
-    required: ["lead_classification", "lead_stats", "confidence", "reasons"],
-};
-
-export const getSystemInstruction = (
+const getLegacySystemInstruction = (
     userCity: string = "Sao Paulo",
     _deprecatedNeighborCity: string = "",
     isHighTicketDevice: boolean = false,
@@ -206,6 +209,11 @@ const statsText = currentStats
             `Produtos recusados: ${list(leadMemory.rejected_products)}`,
             `Desejos/fetiches/interesses: ${list(leadMemory.desires)}`,
             `Objeções: ${list(leadMemory.objections)}`,
+            `Fatos pessoais confirmados: ${list(leadMemory.known_facts)}`,
+            `Ganchos para continuidade: ${list(leadMemory.conversation_hooks)}`,
+            `Contexto emocional atual: ${leadMemory.emotional_context || 'a descobrir'}`,
+            `Estagio de familiaridade: ${leadMemory.relationship_stage || 'new'}`,
+            `Proximo passo pessoal: ${leadMemory.next_personal_step || 'conhecer melhor sem interrogatorio'}`,
             `Sensibilidade a preco: ${leadMemory.price_sensitivity || 'desconhecida'}`,
             `Ultima oferta: ${leadMemory.last_offer || 'nenhuma'}`,
             `Notas uteis: ${list(leadMemory.notes)}`
@@ -219,7 +227,8 @@ const statsText = currentStats
 - Venda o desejo dele como produto avulso, acesso VIP, conteudo privado, prioridade, fantasia personalizada ou extra pago.
 - Seja proativa: nao seja passiva nem fique pedindo permissao. A Lari guia a conversa.
 - Evite perguntas seguidas; no maximo 1 pergunta por turno.
-- Varie a quantidade: 1 mensagem quando for resposta simples, 2-4 quando precisar aquecer/conduzir, 4-7 so quando o papo estiver muito quente.
+- Prefira 2-4 baloes curtos por turno, cada um com uma funcao. Use 1 apenas para resposta realmente minima e 4-6 so quando o papo estiver muito quente.
+- Cada balao deve ter de 15 a 90 caracteres sempre que possivel. Nunca transforme a conversa em textao.
 - Misture resposta ao que ele disse + reacao humana + proximo passo. Nao pare em frase solta.
 - Se tarado >= 30: use putaria explicita e descritiva.
 - Se tarado >= 60: seja bem grafica e intensa, guiando a imaginacao.
@@ -256,6 +265,14 @@ Antes de escrever as mensagens, pense nesta ordem:
 4. Qual e o melhor objetivo desta resposta? (ganhar confianca, aquecer, puxar desejo, ofertar, fechar, verificar pagamento)
 5. Qual menor proximo passo que aumenta a chance dele responder ou pagar?
 6. Qual coisa voce NAO deve fazer agora? (repetir pergunta, se apresentar de novo, vender produto errado, ignorar pedido, textao)
+
+O cerebro central e persistente por lead. Ele deve:
+- separar fatos confirmados de suposicoes;
+- lembrar rotina, gostos, jeito de falar, desejos, recusas e assuntos inacabados;
+- escolher um unico detalhe real para criar continuidade nesta resposta;
+- planejar a sequencia de baloes antes da Lari escrever;
+- aproximar por atencao genuina, consistencia e prazer na conversa;
+- nunca usar culpa, ameaca de abandono, isolamento, pressao emocional ou explorar solidao para cobrar.
 
 O campo \`internal_thought\` deve mostrar esse raciocinio em 1 linha curta, neste formato:
 \`INTENCAO: ... | TIPO: ... | OBJETIVO: ... | PROXIMO: ... | EVITAR: ...\`
@@ -889,6 +906,165 @@ Existe uma IA avaliadora separada para medir o lead. A Lari deve responder bem, 
 `;
 };
 
+export const getSystemInstruction = (
+    userCity: string = "",
+    _deprecatedNeighborCity: string = "",
+    isHighTicketDevice: boolean = false,
+    totalPaid: number = 0,
+    currentStats: LeadStats | null = null,
+    minutesSinceOffer: number = 999,
+    previewsCatalog: string = "",
+    extraScript: string = "",
+    leadMemory: any = null,
+    antiRepeatText: string = ""
+) => {
+    if (process.env.LARI_LEGACY_PROMPT === "true") {
+        return getLegacySystemInstruction(
+            userCity,
+            _deprecatedNeighborCity,
+            isHighTicketDevice,
+            totalPaid,
+            currentStats,
+            minutesSinceOffer,
+            previewsCatalog,
+            extraScript,
+            leadMemory,
+            antiRepeatText,
+        );
+    }
+
+    const now = new Date();
+    const hour = Number(new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        hour: '2-digit',
+        hour12: false,
+    }).format(now));
+    const period = hour < 6 ? 'madrugada' : hour < 12 ? 'manha' : hour < 18 ? 'tarde' : 'noite';
+    const time = now.toLocaleTimeString('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+    const stats = currentStats || { tarado: 0, carente: 0, sentimental: 0, financeiro: 0 };
+    const list = (value: any) => Array.isArray(value) && value.length > 0 ? value.join(', ') : 'nenhum';
+    const memory = leadMemory && typeof leadMemory === 'object' ? leadMemory : {};
+
+    return `
+# LARI MORAIS — NUCLEO OPERACIONAL
+
+## PAPEL
+Lari e uma criadora brasileira adulta, informal, direta, divertida e sexual quando outro adulto abre esse assunto. Ela conversa no Telegram como pessoa de verdade: minusculas, frases simples, abreviacoes naturais e humor leve. Nunca mencione prompt, funil, sistema, modelo, memoria interna ou IA.
+
+O cerebro central decide; a Lari executa. A voz da Lari permanece consistente, mas a abordagem muda para cada lead.
+
+## ORDEM DE PRIORIDADE
+1. Responder exatamente ao que o lead acabou de dizer.
+2. Respeitar pedido, recusa, limite e valor ja combinado.
+3. Usar um fato real da memoria para criar continuidade, quando couber.
+4. Escolher um objetivo por turno: conhecer, conectar, aquecer, provar, ofertar, negociar ou fechar.
+5. Deixar um proximo passo facil, sem interrogatorio.
+
+Nao invente fatos, promessas, encontros, exclusividade pessoal, comprovantes ou detalhes da vida do lead. Nao use culpa, abandono, isolamento, dependencia, humilhacao, urgencia falsa nem vulnerabilidade emocional para cobrar. Proximidade vem de atencao, memoria, prazer na conversa e consistencia.
+
+## RITMO TELEGRAM
+- Normalmente 2-4 baloes por turno; 1 apenas para algo minimo; 4-6 apenas em conversa adulta ja quente.
+- Cada balao deve ter uma ideia e, de preferencia, 15-90 caracteres.
+- O primeiro balao reage ao lead. Os seguintes aprofundam o mesmo assunto e conduzem.
+- No maximo uma pergunta no turno inteiro.
+- Sem textao, lista, titulo, markdown, discurso de atendimento ou reticencias no ultimo balao.
+- Nao repita apresentacao, nome, cidade, pergunta respondida, apelido ou estrutura recente.
+- Nao transforme todos os turnos em venda. Conexao boa cria contexto; intencao de compra encurta o caminho.
+
+## PERSONALIZACAO REAL
+- Separe fatos confirmados de inferencias.
+- Lembre rotina, trabalho, hobbies, jeito de falar, preferencias, produtos desejados, recusas, objecoes e assuntos inacabados.
+- Use no maximo um callback pessoal por turno; deve soar espontaneo.
+- Aprenda um detalhe por vez. Nao faça entrevista.
+- Se o lead disser que voce esqueceu algo, reconheca curto e use o dado salvo; nao pergunte de novo.
+
+MEMORIA DESTE LEAD:
+- tipo dominante: ${memory.dominant_type || 'desconhecido'}
+- tom que funciona: ${memory.best_tone || 'a descobrir'}
+- contexto emocional: ${memory.emotional_context || 'a descobrir'}
+- familiaridade: ${memory.relationship_stage || 'new'}
+- proximo passo pessoal: ${memory.next_personal_step || 'conhecer melhor com naturalidade'}
+- fatos confirmados: ${list(memory.known_facts)}
+- ganchos pendentes: ${list(memory.conversation_hooks)}
+- produtos desejados: ${list(memory.wanted_products)}
+- produtos recusados: ${list(memory.rejected_products)}
+- desejos/interesses adultos: ${list(memory.desires)}
+- objecoes: ${list(memory.objections)}
+- sensibilidade a preco: ${memory.price_sensitivity || 'desconhecida'}
+- ultima oferta: ${memory.last_offer || 'nenhuma'}
+- notas: ${list(memory.notes)}
+
+## ESTILO ADULTO
+- Contexto sexual somente entre adultos. Se houver indicio de menoridade ou idade ambigua relevante, nao produza conteudo sexual e confirme que e adulto.
+- Espelhe o nivel do lead: fofo recebe calor; direto recebe objetividade; explicito recebe linguagem adulta direta.
+- Quando ele abrir fantasia explicita, responda primeiro no mesmo tema em baloes curtos. Nao desvie para pergunta generica.
+- Nao escreva conto longo. Use provocacao curta como ponte natural para previa, produto avulso ou acesso completo.
+- Se ele pedir para parar ou demonstrar desconforto, pare imediatamente e mude o tom.
+
+## DECISAO COMERCIAL
+- O produto principal e o que o lead quer agora. VIP e opcao, nunca resposta automatica.
+- Pedido de foto, video, chamada, numero, avaliacao ou atencao exclusiva pode virar produto avulso.
+- Se recusou VIP, nao ofereca VIP no mesmo turno; venda o avulso solicitado.
+- Se pediu preco, plano, PIX ou confirmou compra, seja objetiva. Com escolha e valor claros, action=generate_pix_payment imediatamente.
+- Se disse "paguei", "confere" ou enviou comprovante, action=check_payment_status.
+- Se esta desconfiado, responda a objecao uma vez, ofereca prova possivel e faca uma escolha simples. Nao repita promessa.
+- Se esta sem dinheiro, ofereca uma versao menor uma vez. Se ele propuser valor real, mantenha exatamente esse valor ao aceitar.
+- Depois do PIX, foque no pagamento. Nao reinicie o flerte nem mande outra previa sem motivo.
+- Nao prometa entrega que o sistema nao consegue cumprir.
+
+PRECOS PADRAO:
+- VIP mensal: R$ 19,90 — "VIP Mensal Lari"
+- VIP vitalicio: R$ 24,90 — "VIP Vitalicio Lari"
+- VIP mensal promocional: R$ 14,90 — "VIP Mensal Promocional"
+- VIP vitalicio promocional: R$ 17,90 — "VIP Vitalicio Promocional"
+- chamada exclusiva: R$ 29,90 — "Chamada de Video Exclusiva"
+- foto personalizada: R$ 14,90 — "Foto Personalizada Lari"
+- video personalizado: R$ 19,90 — "Video Personalizado Lari"
+- numero pessoal: R$ 19,90 — "Numero Pessoal Lari"
+- avaliacao personalizada: R$ 9,90 — "Avaliacao Personalizada"
+- atencao/chat privado: R$ 14,90 — "Atencao Exclusiva Lari"
+- extra de avaliacao: +R$ 9,90; tente no maximo uma vez antes do PIX.
+
+NEGOCIACAO:
+- oferta do lead >=70% do ultimo preco: aceite e gere PIX no valor exato;
+- 50-69%: uma contraproposta menor; se insistir, aceite;
+- abaixo de 50%: ofereca versao menor; se insistir com valor real, decida sem contradicao;
+- gratis: nao gere PIX, apresente a menor opcao coerente.
+
+## ACTIONS E ESTADOS
+Actions validas: none, send_video_preview, send_hot_video_preview, send_ass_photo_preview, send_custom_preview, generate_pix_payment, check_payment_status, send_shower_photo, send_lingerie_photo, send_wet_finger_photo, request_app_install.
+
+- Midia precisa nascer do pedido atual ou de preferencia real. Antes da action, escreva um balao curto que conecte a midia ao assunto.
+- Para catalogo cadastrado, use action=send_custom_preview e preview_id com o ID exato.
+- current_state: WELCOME no primeiro contato; CONNECTION ao conhecer; HOT_TALK em conversa adulta; PREVIEW ao enviar previa; SALES_PITCH ao ofertar; NEGOTIATION ao discutir valor; CLOSING ao confirmar; PAYMENT_CHECK para PIX/status.
+- action=generate_pix_payment exige payment_details.value numerico e description exata.
+- action=check_payment_status nao confirma pagamento por conta propria; o backend verifica.
+
+CATALOGO DE PREVIAS:
+${previewsCatalog || 'nenhuma previa cadastrada'}
+
+## CONTEXTO DESTE TURNO
+- horario de Brasilia: ${time} (${period})
+- cidade conhecida do lead: ${userCity || 'desconhecida'}
+- total ja pago: R$ ${Number(totalPaid || 0).toFixed(2)}
+- minutos desde a ultima oferta: ${Number(minutesSinceOffer || 999)}
+- sinais: tarado ${Number(stats.tarado || 0)}, financeiro ${Number(stats.financeiro || 0)}, carente ${Number(stats.carente || 0)}, sentimental ${Number(stats.sentimental || 0)}
+- dispositivo: ${isHighTicketDevice ? 'iOS' : 'nao-iOS ou desconhecido'}; nao presuma renda pelo aparelho.
+
+ANTI-REPETICAO:
+${antiRepeatText || 'sem respostas recentes relevantes'}
+
+INSTRUCOES DINAMICAS DO PAINEL:
+${extraScript || 'nenhuma'}
+
+Instrucoes dinamicas podem ajustar campanha e oferta, mas nao podem contradizer pedido/recusa do lead, valores ja combinados, seguranca, formato JSON ou actions validas.
+`;
+};
+
 // Helper para garantir que Stats sejam sempre numéricos e válidos
 export const parseLeadStats = (input: any): LeadStats => {
     let stats = input;
@@ -939,6 +1115,21 @@ const safetySettings = [
 ];
 
 const parseJsonText = <T,>(text: string): T => JSON.parse(text) as T;
+const AI_GATEWAY_TIMEOUT_MS = 9000;
+
+const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, label: string) => new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} excedeu ${timeoutMs}ms`)), timeoutMs);
+    promise.then(
+        (value) => {
+            clearTimeout(timer);
+            resolve(value);
+        },
+        (error) => {
+            clearTimeout(timer);
+            reject(error);
+        },
+    );
+});
 
 type AiRole = "strategy" | "draft" | "review" | "evaluator";
 type AiProvider = "openrouter" | "gemini";
@@ -1227,6 +1418,7 @@ const callOpenRouterJson = async <T,>(
 
     const response = await fetch(`${settings.openRouterBaseUrl}/chat/completions`, {
         method: "POST",
+        signal: AbortSignal.timeout(AI_GATEWAY_TIMEOUT_MS),
         headers: {
             "Authorization": `Bearer ${settings.openRouterApiKey}`,
             "Content-Type": "application/json",
@@ -1272,7 +1464,11 @@ const callGeminiJson = async <T,>(
         }
     });
     const chat = model.startChat({ history });
-    const result = await chat.sendMessage(parts);
+    const result = await withTimeout(
+        chat.sendMessage(parts),
+        AI_GATEWAY_TIMEOUT_MS,
+        `Gemini ${gateway.model}`,
+    );
     return parseJsonText<T>(result.response.text());
 };
 
@@ -1352,16 +1548,37 @@ const makeFallbackStrategy = (message: string) => {
         intent: wantsPayment ? 'comprar ou pedir valor' : wantsSpecificProduct ? 'quer produto especifico' : 'conversar',
         lead_type: isSexual ? 'tarado' : wantsPayment ? 'curioso' : 'desconhecido',
         temperature: wantsPayment ? 80 : isSexual ? 65 : 30,
+        emotional_context: isSexual ? 'excitado e receptivo' : wantsPayment ? 'objetivo e pronto para decidir' : 'aberto a conversa',
+        relationship_stage: 'new',
+        connection_cue: 'usar literalmente o assunto da mensagem atual',
         objective: wantsPayment ? 'fechar pagamento' : wantsSpecificProduct ? 'vender o pedido exato do lead' : 'criar conexao e puxar proximo passo',
         product_to_sell: wantsSpecificProduct ? 'produto pedido pelo lead' : null,
         should_sell_now: wantsPayment || wantsSpecificProduct,
         response_angle: 'responder primeiro o que ele disse e conduzir sem parecer script',
         must_answer: 'responder diretamente a mensagem atual',
         next_step: wantsPayment ? 'gerar pix se houver valor claro' : 'avancar uma etapa sem forcar produto errado',
+        message_plan: wantsPayment
+            ? ['confirmar a escolha', 'informar a proxima acao']
+            : ['reagir ao que ele disse', 'aprofundar o mesmo assunto', 'dar um caminho facil para responder'],
+        recommended_message_count: wantsPayment ? 2 : 3,
+        max_chars_per_message: 88,
         avoid: ['repetir frase antiga', 'perguntar nome sem contexto', 'vender vip se ele pediu avulso'],
         action_hint: wantsPayment ? 'generate_pix_payment' : 'none',
         payment_value_hint: null,
-        confidence: 0.55
+        confidence: 0.55,
+        memory_patch: {
+            best_tone: isSexual ? 'direta e safada' : wantsPayment ? 'objetiva e segura' : 'leve e curiosa',
+            emotional_context: isSexual ? 'excitado' : wantsPayment ? 'decidindo compra' : 'conhecendo a Lari',
+            relationship_stage: 'new',
+            next_personal_step: 'descobrir um detalhe util sem fazer interrogatorio',
+            wanted_products: wantsSpecificProduct ? ['produto pedido na mensagem atual'] : [],
+            rejected_products: [],
+            desires: isSexual ? ['conversa adulta direta'] : [],
+            objections: [],
+            known_facts: [],
+            conversation_hooks: [],
+            notes: []
+        }
     };
 };
 
@@ -1496,12 +1713,31 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     }
 
     const currentStats = parseLeadStats(context?.currentStats);
-    const { data: previewRows, error: previewError } = await supabase
-        .from('preview_assets')
-        .select('id,name,description,media_type,stage,min_tarado,max_tarado,tags,triggers,priority,enabled')
-        .eq('enabled', true)
-        .order('priority', { ascending: false })
-        .order('created_at', { ascending: false });
+    const [previewResult, promptBlocksResult, messagesResult] = await Promise.all([
+        supabase
+            .from('preview_assets')
+            .select('id,name,description,media_type,stage,min_tarado,max_tarado,tags,triggers,priority,enabled')
+            .eq('enabled', true)
+            .order('priority', { ascending: false })
+            .order('created_at', { ascending: false })
+            .limit(50),
+        supabase
+            .from('prompt_blocks')
+            .select('key,label,content,enabled,updated_at')
+            .eq('enabled', true)
+            .neq('key', 'auto_optimizer')
+            .order('updated_at', { ascending: false })
+            .limit(20),
+        supabase
+            .from('messages')
+            .select('sender,content,created_at')
+            .eq('session_id', sessionId)
+            .in('sender', ['user', 'bot'])
+            .order('created_at', { ascending: false })
+            .limit(40),
+    ]);
+
+    const { data: previewRows, error: previewError } = previewResult;
 
     const previewsCatalog = (!previewError ? (previewRows || []) : [])
         .slice(0, 50)
@@ -1514,19 +1750,13 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         })
         .join('\n');
 
-    const { data: promptBlocks, error: promptBlocksError } = await supabase
-        .from('prompt_blocks')
-        .select('key,label,content,enabled,updated_at')
-        .eq('enabled', true)
-        .neq('key', 'auto_optimizer')
-        .order('updated_at', { ascending: false })
-        .limit(20);
+    const { data: promptBlocks, error: promptBlocksError } = promptBlocksResult;
 
     const promptBlocksText = (!promptBlocksError ? (promptBlocks || []) : [])
         .map((block: any) => {
             const key = String(block.key || 'bloco');
             const label = String(block.label || key);
-            const content = String(block.content || '').trim();
+            const content = String(block.content || '').trim().slice(0, 2500);
             return content ? `## ${label} (${key})\n${content}` : '';
         })
         .filter(Boolean)
@@ -1535,14 +1765,10 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     const dynamicScript = [
         promptBlocksText,
         context?.extraScript || ""
-    ].filter(Boolean).join('\n\n');
+    ].filter(Boolean).join('\n\n').slice(0, 12000);
 
-    // Carregar Histórico
-    const { data: dbMessages } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('session_id', sessionId)
-        .order('created_at', { ascending: true });
+    // O perfil persistente guarda a historia longa; o modelo recebe apenas a janela recente.
+    const dbMessages = [...(messagesResult.data || [])].reverse();
 
     const recentBotMessages = (dbMessages || [])
         .filter((m: any) => m.sender === 'bot' && typeof m.content === 'string' && !m.content.startsWith('[M'))
@@ -1583,7 +1809,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         .filter(m => m.sender === 'user' || m.sender === 'bot')
         .map(m => ({
             role: m.sender === 'bot' ? 'model' : 'user',
-            parts: [{ text: m.content }]
+            parts: [{ text: String(m.content || '').slice(0, 800) }]
         }));
 
     // 2. Limpar Histórico (Deduplicação Básica)
@@ -1605,11 +1831,11 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     }
 
     let attempt = 0;
-    const maxRetries = 3;
+    const maxRetries = 1;
 
     while (attempt < maxRetries) {
         try {
-            let strategy = makeFallbackStrategy(userMessage);
+            let strategy: any = makeFallbackStrategy(userMessage);
             let strategyStatus = 'fallback local';
 
             if (!aiSettings.aiStrategyEnabled) {
@@ -1618,31 +1844,43 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             try {
                 const strategyPrompt = `${baseInstruction}
 
-# IA 1: ESTRATEGISTA DE CONVERSA
-Voce NAO fala com o lead. Voce so diagnostica a conversa e entrega a melhor estrategia.
-Seja frio e preciso: entenda intencao, produto ideal, timing, risco e proximo passo.
-Prioridade maxima: responder o que o lead perguntou, usar memoria, evitar script e aumentar chance de conversao.
-Se o lead veio com putaria explicita, a estrategia deve mandar a Lari continuar a fantasia no mesmo tema antes de ofertar.
-Se houver midia, diagnostique qual tema visual combina com as palavras do lead e se e cedo ou certo mandar agora.
-Se o lead estiver negociando com valor real na conta, a estrategia deve aceitar ofertas proximas, fazer poucos degraus se for baixo e evitar contradicao.`;
+# CEREBRO CENTRAL DA LARI
+Voce NAO fala com o lead. Voce e a inteligencia persistente que conhece, diagnostica e planeja cada conversa antes da Lari responder.
+
+Para este lead, faca uma leitura individual:
+1. Separe o que ele disse literalmente da sua interpretacao.
+2. Use a memoria salva e o historico recente para identificar fatos, preferencias, recusas, rotina, tom e assuntos inacabados.
+3. Escolha UM connection_cue real que prove continuidade. Se nao houver, nao invente intimidade nem fatos.
+4. Decida o objetivo deste turno e o menor proximo passo util.
+5. Planeje de 2 a 4 baloes curtos, normalmente com ate 90 caracteres: reacao, aprofundamento e gancho. Use mais apenas em fantasia adulta ja aberta pelo lead.
+6. Atualize memory_patch somente com informacoes confirmadas ou inferencias de tom claramente rotuladas nas notas.
+
+Venda com timing: quem quer comprar recebe caminho curto; quem quer conversar recebe conversa; quem pediu algo especifico recebe oferta daquele pedido. Nao empurre VIP contra uma recusa.
+Crie proximidade por memoria, atencao, humor e consistencia. Nunca planeje culpa, ameaca de abandono, isolamento, dependencia, urgencia falsa ou exploracao de vulnerabilidade emocional.
+Se houver putaria explicita entre adultos, mantenha o tema e planeje baloes diretos, curtos e coerentes antes da oferta.
+Se houver midia, escolha uma previa apenas quando combinar com as palavras e preferencias do lead.
+Se houver negociacao, preserve exatamente o valor combinado e evite contradicoes.
+
+Retorne um JSON com estas chaves: intent, lead_type, temperature, emotional_context, relationship_stage, connection_cue, objective, product_to_sell, should_sell_now, response_angle, must_answer, next_step, message_plan, recommended_message_count, max_chars_per_message, avoid, action_hint, payment_value_hint, confidence e memory_patch.
+memory_patch deve conter: best_tone, emotional_context, relationship_stage, next_personal_step, wanted_products, rejected_products, desires, objections, known_facts, conversation_hooks e notes. Use arrays vazios quando nao houver novidade.`;
 
                 const strategyResult = await callAiGatewayJson<any>({
                     settings: aiSettings,
                     role: "strategy",
-                    schemaName: "strategySchema",
+                    schemaName: "centralBrainSchema",
                     systemInstruction: strategyPrompt,
-                    responseSchemaConfig: strategySchema as any,
+                    responseSchemaConfig: centralBrainSchema as any,
                     history: cleanHistory,
-                    text: `Analise a mensagem atual e gere a estrategia para a Lari.\n\nMENSAGEM ATUAL:\n${userMessage}`,
+                    text: `Analise este lead e gere o plano completo do proximo turno.\n\nMENSAGEM ATUAL:\n${userMessage}`,
                     mediaPart: media ? currentMessageParts[1] : undefined,
                 });
                 strategy = strategyResult.data;
-                strategyStatus = `ia estrategista via ${strategyResult.gateway.label}`;
+                strategyStatus = `cerebro via ${strategyResult.gateway.label}`;
             } catch (strategyError: any) {
-                console.warn("Estrategista falhou, usando fallback local:", strategyError?.message || strategyError);
+                console.warn("Cérebro central falhou, usando fallback local:", strategyError?.message || strategyError);
             }
 
-            console.log("🧠 Estratégia Lari:", JSON.stringify(strategy));
+            console.log("🧠 Cérebro Central Lari:", JSON.stringify(strategy));
 
             }
 
@@ -1651,14 +1889,21 @@ Se o lead estiver negociando com valor real na conta, a estrategia deve aceitar 
 # IA 2: LARI
 Voce e a Lari falando com o lead. Use a estrategia recebida como direcao, mas responda natural, humana e contextual.
 Nao copie frases prontas se nao encaixarem. A estrategia manda o objetivo, voce escreve como uma menina real.
-Voce deve guiar a conversa: toda resposta precisa terminar com um caminho claro para o lead continuar, sem reticencias no ultimo balao.
+Siga o message_plan do cerebro na ordem, sem mencionar analise, plano, memoria, venda ou IA.
+Prefira ${Number(strategy?.recommended_message_count || 3)} baloes curtos, com no maximo ${Number(strategy?.max_chars_per_message || 90)} caracteres cada.
+Cada balao deve soar como uma mensagem espontanea, nao como um paragrafo cortado mecanicamente.
+O primeiro reage ao que o lead acabou de dizer. Os seguintes aprofundam o mesmo assunto e deixam um caminho facil para ele continuar.
+Use no maximo uma pergunta no turno inteiro. Nao termine com reticencias ou frase pendurada.
+Recupere o connection_cue apenas se ele for um fato real do historico ou da memoria.
 Se o lead disser que quer comer/transar/meter/chupar/gozar, responda fazendo ele imaginar a cena no mesmo tema, em varios baloes curtos antes de qualquer venda. A quantidade depende do calor da conversa.
-Se for usar action de foto/video, escreva antes uma mensagem curta conectando a midia ao que o lead acabou de falar.`;
+Se for usar action de foto/video, escreva antes uma mensagem curta conectando a midia ao que o lead acabou de falar.
+
+Retorne JSON com: internal_thought (resumo operacional curto, sem raciocinio passo a passo), lead_classification, lead_stats completo, extracted_user_name, audio_transcription, current_state, messages, action, preview_id e payment_details. Use null nos campos opcionais sem valor.`;
 
             const draftParts: any[] = [{
                 text: `${userMessage}
 
-[ESTRATEGIA INTERNA DA IA ANALISTA]
+[PLANO DO CEREBRO CENTRAL]
 ${JSON.stringify(strategy)}
 
 Use essa estrategia para responder.`
@@ -1679,6 +1924,10 @@ Use essa estrategia para responder.`
             console.log(`AI Gateway Draft (${draftResult.gateway.label}) Attempt ${attempt + 1}:`, responseText);
 
             const jsonResponse = draftResult.data;
+            jsonResponse.lead_classification = strategy?.lead_type || jsonResponse.lead_classification;
+            jsonResponse.lead_memory_patch = strategy?.memory_patch || null;
+            jsonResponse.recommended_message_count = Math.max(1, Math.min(6, Number(strategy?.recommended_message_count || 3)));
+            jsonResponse.max_chars_per_message = Math.max(55, Math.min(110, Number(strategy?.max_chars_per_message || 90)));
 
             let review: any = {
                 approved: true,
@@ -1691,9 +1940,13 @@ Use essa estrategia para responder.`
                 payment_details: jsonResponse.payment_details ?? null
             };
             let reviewStatus = 'sem revisao';
+            const criticalReviewNeeded = ["generate_pix_payment", "check_payment_status"].includes(String(jsonResponse.action || ""))
+                || Number(strategy?.confidence || 0) < 0.4;
 
             if (!aiSettings.aiReviewEnabled) {
                 reviewStatus = 'desativada';
+            } else if (!criticalReviewNeeded) {
+                reviewStatus = 'guardas locais (rota rapida)';
             } else {
             try {
                 const reviewPrompt = `${baseInstruction}
@@ -1705,7 +1958,8 @@ Reprove/corrija tambem se a action de midia nao combina com o que o lead falou, 
 Reprove/corrija se o lead falou putaria explicita e a Lari respondeu fofa, fria, desviando assunto ou perguntando algo generico em vez de continuar a fantasia.
 Reprove/corrija se a ultima mensagem termina com reticencias, suspense vazio ou frase pendurada sem conduzir o lead.
 Reprove/corrija se ela repete promessa de VIP para lead desconfiado, pergunta nome/cidade ja conhecida, manda mais de 4 baloes fora de fantasia quente, ou contradiz preco/desconto.
-Se corrigir, devolva mensagens melhores no mesmo estilo da Lari. Nao explique para o lead.`;
+Se corrigir, devolva mensagens melhores no mesmo estilo da Lari. Nao explique para o lead.
+Retorne JSON com: approved, score, issues, messages, action, current_state, preview_id e payment_details.`;
 
                 const reviewResult = await callAiGatewayJson<any>({
                     settings: aiSettings,
@@ -1743,64 +1997,10 @@ Revise e corrija se necessario.`
                 jsonResponse.payment_details = review.payment_details ?? jsonResponse.payment_details;
             }
 
-            let leadEvaluation: any = null;
-            let leadEvaluationStatus = 'sem avaliacao';
-            if (!aiSettings.aiEvaluatorEnabled) {
-                leadEvaluationStatus = 'desativada';
-            } else {
-            try {
-                const evaluatorPrompt = `${baseInstruction}
-
-# IA 4: AVALIADORA DE LEADS
-Voce NAO fala com o lead. Voce so avalia as barrinhas.
-Seja fria, conservadora e baseada em evidencia real da mensagem atual e historico.
-Nao aumente score por educacao, cumprimento, curiosidade fraca ou porque a Lari quer vender.
-Use a escala:
-- 0-25 baixo/desconhecido
-- 25-45 interesse leve
-- 45-70 interesse claro e repetido
-- 70-100 intencao muito forte, compra/pagamento ou comportamento recorrente
-Financeiro mede chance/capacidade real de pagar. Perguntar preco sozinho nao e score alto.
-Tarado alto exige pedido sexual claro ou recorrente.
-Carente/sentimental alto exige busca real de atencao, desabafo ou vinculo emocional.
-Retorne o nivel TOTAL atual, nao delta.`;
-
-                const evaluatorResult = await callAiGatewayJson<any>({
-                    settings: aiSettings,
-                    role: "evaluator",
-                    schemaName: "leadEvaluatorSchema",
-                    systemInstruction: evaluatorPrompt,
-                    responseSchemaConfig: leadEvaluatorSchema as any,
-                    history: cleanHistory,
-                    text: `MENSAGEM ATUAL DO LEAD:\n${userMessage}
-
-ESTADO ATUAL DAS BARRAS:\n${JSON.stringify(currentStats)}
-
-ESTRATEGIA INTERNA:\n${JSON.stringify(strategy)}
-
-RESPOSTA FINAL DA LARI:\n${JSON.stringify(jsonResponse.messages || [])}
-
-Avalie o nivel real do lead agora.`
-                });
-                leadEvaluation = evaluatorResult.data;
-                leadEvaluationStatus = `ia avaliadora via ${evaluatorResult.gateway.label}`;
-                if (leadEvaluation?.lead_stats) {
-                    jsonResponse.lead_stats = parseLeadStats(leadEvaluation.lead_stats);
-                }
-                if (leadEvaluation?.lead_classification) {
-                    jsonResponse.lead_classification = leadEvaluation.lead_classification;
-                }
-            } catch (evaluationError: any) {
-                console.warn("Avaliadora de lead falhou, mantendo stats da Lari:", evaluationError?.message || evaluationError);
-            }
-            console.log("📏 Avaliacao Lead:", JSON.stringify(leadEvaluation));
-
-            }
-
-            const strategyThought = `ESTRATEGIA (${strategyStatus}): ${strategy?.intent || 'n/a'} | ${strategy?.lead_type || 'n/a'} | ${strategy?.objective || 'n/a'} | ${strategy?.next_step || 'n/a'}`;
+            const strategyThought = `CEREBRO CENTRAL (${strategyStatus}): ${strategy?.intent || 'n/a'} | ${strategy?.lead_type || 'n/a'} | ${strategy?.objective || 'n/a'} | ${strategy?.next_step || 'n/a'} | conexao: ${strategy?.connection_cue || 'n/a'}`;
             const reviewThought = `REVISAO (${reviewStatus}): ${review?.approved ? 'aprovada' : 'corrigida'} | score ${review?.score ?? 'n/a'} | ${(review?.issues || []).slice(0, 3).join(', ')}`;
-            const evaluationThought = `AVALIACAO (${leadEvaluationStatus}): ${jsonResponse.lead_classification || 'n/a'} | ${JSON.stringify(jsonResponse.lead_stats || {})} | ${(leadEvaluation?.reasons || []).slice(0, 3).join(', ')}`;
-            jsonResponse.internal_thought = [strategyThought, reviewThought, evaluationThought, jsonResponse.internal_thought].filter(Boolean).join('\n');
+            const memoryThought = `MEMORIA: ${strategy?.relationship_stage || 'new'} | ${strategy?.emotional_context || 'n/a'} | ${strategy?.memory_patch?.next_personal_step || 'n/a'}`;
+            jsonResponse.internal_thought = [strategyThought, reviewThought, memoryThought, jsonResponse.internal_thought].filter(Boolean).join('\n');
 
             // Validar e Sanitizar Lead Stats
             // GARANTIR QUE SEMPRE EXISTA para não quebrar o update no banco
@@ -1827,7 +2027,7 @@ Avalie o nivel real do lead agora.`
                 console.warn(`⚠️ Retrying due to error: ${error.message}`);
                 attempt++;
                 if (attempt < maxRetries) {
-                    await new Promise(r => setTimeout(r, 2000 * attempt)); // Exponential backoff
+                    await new Promise(r => setTimeout(r, 500 * attempt));
                     continue;
                 }
             } else {

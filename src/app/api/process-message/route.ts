@@ -1,9 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini } from '@/lib/gemini';
-import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode } from '@/lib/telegram';
+import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode, sendTelegramVoice } from '@/lib/telegram';
 import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
 import { calculateLeadScore, markLeadPaid, toStoredLeadScore } from '@/lib/leadScoring';
+import { shapeConversationBubbles } from '@/lib/conversationBubbles';
+import {
+    mergeLeadMemoryPatch,
+    mergeUniqueLeadMemoryValues as mergeUnique,
+    normalizeLeadMemory,
+} from '@/lib/leadMemory';
+import {
+    buildExpressiveSpeech,
+    DEFAULT_FISH_AUDIO_SETTINGS,
+    generateFishAudio,
+    normalizeFishAudioSettings,
+    shouldUseFishAudio,
+} from '@/lib/fishAudio';
 
 export const maxDuration = 60;
 
@@ -27,50 +40,6 @@ const detectCityFromText = (input: string): string | null => {
 
     const parts = city.split(/\s+/).slice(0, 3);
     return parts.join(' ');
-};
-
-const normalizeLeadMemory = (input: any) => {
-    let memory = input;
-    if (typeof memory === 'string') {
-        try {
-            memory = JSON.parse(memory);
-        } catch {
-            memory = {};
-        }
-    }
-    if (!memory || typeof memory !== 'object' || Array.isArray(memory)) memory = {};
-    const metadata = memory.metadata && typeof memory.metadata === 'object' && !Array.isArray(memory.metadata) ? memory.metadata : {};
-    const list = (value: any, key?: string) => {
-        const items = Array.isArray(value)
-            ? Array.from(new Set(value.map((v: any) => String(v || '').trim()).filter(Boolean)))
-            : [];
-        if (key === 'wanted_products' && metadata.evaluation_requested !== true) {
-            return items.filter((item: string) =>
-                item.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim() !== 'avaliacao'
-            ).slice(0, 12);
-        }
-        return items.slice(0, 12);
-    };
-    return {
-        dominant_type: String(memory.dominant_type || 'desconhecido'),
-        best_tone: String(memory.best_tone || ''),
-        wanted_products: list(memory.wanted_products, 'wanted_products'),
-        rejected_products: list(memory.rejected_products),
-        desires: list(memory.desires),
-        objections: list(memory.objections),
-        price_sensitivity: String(memory.price_sensitivity || ''),
-        last_offer: String(memory.last_offer || ''),
-        notes: list(memory.notes),
-        metadata,
-        updated_at: memory.updated_at || null
-    };
-};
-
-const mergeUnique = (base: string[], additions: string[], limit = 12) => {
-    const normalized = [...base, ...additions]
-        .map(v => String(v || '').toLowerCase().trim())
-        .filter(Boolean);
-    return Array.from(new Set(normalized)).slice(0, limit);
 };
 
 const detectLeadMemorySignals = (userText: string, botTexts: string[], aiResponse: any, currentMemory: any) => {
@@ -130,13 +99,19 @@ const detectLeadMemorySignals = (userText: string, botTexts: string[], aiRespons
         const product = wanted[0] || (bot.includes('vip') ? 'vip' : 'produto');
         return `${product} R$ ${lastPrice}`;
     })();
+    const wantedThisTurn = new Set(wanted.map((item) => item.toLowerCase()));
+    const rejectedThisTurn = new Set(rejected.map((item) => item.toLowerCase()));
+    const wantedProducts = mergeUnique(memory.wanted_products, wanted)
+        .filter((item) => !rejectedThisTurn.has(item));
+    const rejectedProducts = mergeUnique(memory.rejected_products, rejected)
+        .filter((item) => !wantedThisTurn.has(item) || rejectedThisTurn.has(item));
 
     return {
         ...memory,
         dominant_type: aiResponse?.lead_classification || memory.dominant_type || 'desconhecido',
         best_tone,
-        wanted_products: mergeUnique(memory.wanted_products, wanted),
-        rejected_products: mergeUnique(memory.rejected_products, rejected),
+        wanted_products: wantedProducts,
+        rejected_products: rejectedProducts,
         desires: mergeUnique(memory.desires, desires),
         objections: mergeUnique(memory.objections, objections),
         price_sensitivity,
@@ -606,38 +581,49 @@ export async function POST(req: NextRequest) {
 
     console.log(`[PROCESSADOR] Iniciado para sessão ${sessionId}`);
 
-    // Buscar Dados da Sessão e Token CEDO para ativar indicador de digitando
-    const { data: session } = await supabase.from('sessions').select('*').eq('id', sessionId).single();
+    // Buscar sessão e token em paralelo para ativar o indicador o quanto antes.
+    const [sessionResult, botConfigResult] = await Promise.all([
+        supabase.from('sessions').select('*').eq('id', sessionId).single(),
+        supabase
+            .from('bot_settings')
+            .select('key,value')
+            .in('key', [
+                'telegram_bot_token',
+                'fish_audio_api_key',
+                'fish_audio_enabled',
+                'fish_audio_voice_id',
+                'fish_audio_model',
+                'fish_audio_frequency_percent',
+                'fish_audio_cooldown_minutes',
+                'fish_audio_max_chars',
+            ]),
+    ]);
+    const session = sessionResult.data;
     if (!session) return NextResponse.json({ error: 'Sessão não encontrada' });
 
     if (!force && session.status && session.status !== 'active') {
         return NextResponse.json({ status: 'paused' });
     }
 
-    const { data: tokenData } = await supabase
-        .from('bot_settings')
-        .select('value')
-        .eq('key', 'telegram_bot_token')
-        .single();
-
-    const botToken = tokenData?.value;
+    const botConfig = Object.fromEntries((botConfigResult.data || []).map((item: any) => [item.key, item.value || ''])) as Record<string, string>;
+    const botToken = botConfig.telegram_bot_token;
     if (!botToken) return NextResponse.json({ error: 'Sem token' });
     const chatId = session.telegram_chat_id;
+    const fishAudioSettings = normalizeFishAudioSettings({
+        apiKey: botConfig.fish_audio_api_key || process.env.FISH_AUDIO_API_KEY || '',
+        enabled: botConfig.fish_audio_enabled === 'true',
+        voiceId: botConfig.fish_audio_voice_id || DEFAULT_FISH_AUDIO_SETTINGS.voiceId,
+        model: botConfig.fish_audio_model || DEFAULT_FISH_AUDIO_SETTINGS.model,
+        frequencyPercent: Number(botConfig.fish_audio_frequency_percent || DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent),
+        cooldownMinutes: Number(botConfig.fish_audio_cooldown_minutes || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes),
+        maxChars: Number(botConfig.fish_audio_max_chars || DEFAULT_FISH_AUDIO_SETTINGS.maxChars),
+    });
 
-    // CONFIG: Tempo Total de Espera 3000ms (Debounce para Agrupamento)
-    // Estratégia: Esperar 1s -> Enviar Digitando -> Esperar 2s -> Processar
-    // Isso garante que se o lead mandar várias mensagens seguidas, a gente agrupe.
-
-    // 1. Primeira Espera (1s)
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // 2. Enviar Ação Digitando
+    // Debounce curto: mostra atividade imediatamente e ainda agrupa mensagens seguidas.
     await sendTelegramAction(botToken, chatId, 'typing');
+    await new Promise(resolve => setTimeout(resolve, 850));
 
-    // 3. Segunda Espera (2s)
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // 4. Verificar mensagens mais recentes (Lógica de Substituição)
+    // Verificar mensagens mais recentes (Lógica de Substituição)
     // Verificamos se há alguma mensagem MAIS NOVA que a que disparou este worker.
     // Se passamos `triggerMessageId`, usamos ele.
 
@@ -668,16 +654,27 @@ export async function POST(req: NextRequest) {
     // 5. Contexto e Lógica
 
 
-    // Identificar Contexto (Mensagens Não Respondidas)
-    // Encontrar tempo da última mensagem do bot
-    const { data: lastBotMsg } = await supabase
-        .from('messages')
-        .select('created_at, content')
-        .eq('session_id', sessionId)
-        .eq('sender', 'bot')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+    // Identificar contexto e a ultima oferta em paralelo.
+    const [lastBotResult, lastOfferResult] = await Promise.all([
+        supabase
+            .from('messages')
+            .select('created_at, content')
+            .eq('session_id', sessionId)
+            .eq('sender', 'bot')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single(),
+        supabase
+            .from('messages')
+            .select('created_at')
+            .eq('session_id', sessionId)
+            .or("content.ilike.%[M?DIA:% ,content.ilike.%PIX GENERATED%")
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single(),
+    ]);
+    const lastBotMsg = lastBotResult.data;
+    const lastOfferMsg = lastOfferResult.data;
 
     const cutoffTime = lastBotMsg ? lastBotMsg.created_at : new Date(0).toISOString();
 
@@ -715,15 +712,6 @@ export async function POST(req: NextRequest) {
         .at(-1) || new Date().toISOString();
     const repetition = detectRepetition(filteredGroupMessages);
     console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
-
-    const { data: lastOfferMsg } = await supabase
-        .from('messages')
-        .select('created_at')
-        .eq('session_id', sessionId)
-        .or("content.ilike.%[M?DIA:% ,content.ilike.%PIX GENERATED%")
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
 
     const lastOfferAt = lastOfferMsg?.created_at ? new Date(lastOfferMsg.created_at).getTime() : null;
     const minutesSinceOffer = lastOfferAt ? Math.floor((Date.now() - lastOfferAt) / 60000) : 999;
@@ -791,7 +779,8 @@ ${combinedText}
 Leia todas as mensagens acima como uma fala agrupada do lead, com visao geral da conversa.
 Nao responda linha por linha.
 Responda principalmente a ultima intencao do lead, usando o contexto das mensagens anteriores.
-Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se houver fantasia sexual explicita, negociacao ou pagamento.`;
+Em conversa normal, prefira 2-4 baloes curtos e naturais, como mensagens seguidas no Telegram.
+Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas se houver fantasia sexual explicita ja aberta pelo lead.`;
     let mediaData = undefined;
 
     // Detectar Audio
@@ -923,7 +912,7 @@ Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se hou
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead repetiu a mesma mensagem ${repetition.repeats}x ("${repetition.last}"). Responda diferente, quebre o loop e puxe o assunto com algo novo e humano. Nao repita a mesma frase.]`;
     }
     if (hasExplicitSexualFantasyTrigger(userOnlyText)) {
-        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead abriu putaria explicita. Antes de vender ou perguntar outra coisa, continue a fantasia no mesmo tema que ele trouxe. Faca ele imaginar a cena em varios baloes curtos, explicitos e naturais. Se a conversa estiver muito quente, pode usar 4-7 baloes; se estiver menos quente, use menos. Depois puxe para uma previa/oferta coerente se couber.]`;
+        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead abriu putaria explicita. Antes de vender ou perguntar outra coisa, continue a fantasia no mesmo tema que ele trouxe. Faca ele imaginar a cena em varios baloes curtos, explicitos e naturais. Se a conversa estiver muito quente, pode usar 4-6 baloes; se estiver menos quente, use menos. Depois puxe para uma previa/oferta coerente se couber.]`;
     }
     if (cityQuestion && hasCity) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou onde voce mora. Voce mora na MESMA cidade do lead: "${userCity}". Responda no PRIMEIRO BALAO de forma humana, curta e natural: "sou de ${userCity} amor, e vc?". NAO diga "cidade vizinha", NAO diga "daqui" e NAO responda seco.]`;
@@ -937,7 +926,17 @@ Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se hou
         groupedMessages: filteredGroupMessages.length,
         hasMedia: Boolean(mediaData),
     });
-    const aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
+    const typingHeartbeat = setInterval(() => {
+        void sendTelegramAction(botToken, chatId, 'typing').catch((error: any) => {
+            console.warn('[PROCESSADOR] Falha ao renovar digitando:', error?.message || error);
+        });
+    }, 4000);
+    let aiResponse: Awaited<ReturnType<typeof sendMessageToGemini>>;
+    try {
+        aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
+    } finally {
+        clearInterval(typingHeartbeat);
+    }
     console.log("[PROCESSADOR] Resposta gerada", {
         sessionId: session.id,
         messages: Array.isArray(aiResponse.messages) ? aiResponse.messages.length : 0,
@@ -992,7 +991,7 @@ Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se hou
         aiResponse,
         session.lead_memory
     );
-    const updatedLeadMemory = detectedLeadMemory;
+    const updatedLeadMemory = mergeLeadMemoryPatch(detectedLeadMemory, aiResponse.lead_memory_patch);
 
     const updatePayload: any = {
         lead_score: aiResponse.lead_stats,
@@ -1123,7 +1122,7 @@ Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se hou
             const norm = normalizeLoopText(msg);
             return !/(cidade vizinha|daqui|de onde vc|de onde voce|de onde você)/i.test(norm);
         });
-        safeMessages = [forcedCityAnswer, ...withoutGenericCity.filter((msg: string) => normalizeLoopText(msg) !== normalizeLoopText(forcedCityAnswer))].slice(0, 3);
+        safeMessages = [forcedCityAnswer, ...withoutGenericCity.filter((msg: string) => normalizeLoopText(msg) !== normalizeLoopText(forcedCityAnswer))];
     }
 
     if (contextualMedia) {
@@ -1133,9 +1132,25 @@ Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se hou
             return norm.includes('essa') || norm.includes('foto') || norm.includes('video') || norm.includes('olha') || norm.includes(introNorm);
         });
         if (!alreadyPrepared) {
-            safeMessages = [contextualMedia.intro, ...safeMessages].slice(0, 3);
+            safeMessages = [contextualMedia.intro, ...safeMessages];
         }
     }
+
+    const stage = String(aiResponse.current_state || '').toUpperCase();
+    const explicitFantasy = hasExplicitSexualFantasyTrigger(userOnlyText);
+    const maxMessagesForTurn = (() => {
+        if (explicitFantasy) return 6;
+        if (stage === 'PAYMENT_CHECK' || aiResponse.action === 'generate_pix_payment') return 3;
+        if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 4;
+        if (trustObjectionRequested(userOnlyText)) return 3;
+        return 4;
+    })();
+
+    safeMessages = shapeConversationBubbles(safeMessages, {
+        preferredCount: aiResponse.recommended_message_count || 3,
+        maxBubbles: maxMessagesForTurn,
+        maxChars: aiResponse.max_chars_per_message || 90,
+    });
 
     const normLastBot = normalizeLoopText(lastBotContent);
     const normFirstOut = normalizeLoopText(safeMessages[0] || '');
@@ -1143,16 +1158,30 @@ Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se hou
         safeMessages[0] = `ei amor ${safeMessages[0]}`;
     }
 
-    const stage = String(aiResponse.current_state || '').toUpperCase();
-    const explicitFantasy = hasExplicitSexualFantasyTrigger(userOnlyText);
-    const maxMessagesForTurn = (() => {
-        if (explicitFantasy) return 5;
-        if (stage === 'PAYMENT_CHECK' || aiResponse.action === 'generate_pix_payment') return 2;
-        if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 2;
-        if (trustObjectionRequested(userOnlyText)) return 2;
-        return 1;
-    })();
-    const outgoingToSend = safeMessages.slice(0, maxMessagesForTurn);
+    const outgoingToSend = safeMessages;
+    const audioCooldownSince = new Date(Date.now() - fishAudioSettings.cooldownMinutes * 60_000).toISOString();
+    const { data: recentAudio } = fishAudioSettings.enabled
+        ? await supabase
+            .from('messages')
+            .select('id')
+            .eq('session_id', session.id)
+            .eq('sender', 'bot')
+            .eq('media_type', 'audio')
+            .gte('created_at', audioCooldownSince)
+            .limit(1)
+            .maybeSingle()
+        : { data: null };
+    const preferredAudioIndex = outgoingToSend.findIndex((message: string) =>
+        shouldUseFishAudio({
+            settings: fishAudioSettings,
+            seed: `${session.id}:${triggerMessageId || lastGroupedUserAt}:${message}`,
+            userText: userOnlyText,
+            messageText: message,
+            stage,
+            action: String(aiResponse.action || 'none'),
+            hasRecentAudio: Boolean(recentAudio),
+        })
+    );
 
     for (let i = 0; i < outgoingToSend.length; i++) {
         const msgText = outgoingToSend[i];
@@ -1172,12 +1201,42 @@ Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se hou
             return NextResponse.json({ status: 'superseded_during_send' });
         }
 
-        // Delay fixo entre 3 a 4 segundos (solicitado pelo usuário)
-        // Isso dá um tempo de leitura/digitação consistente para cada balão.
-        const delay = Math.floor(Math.random() * (4000 - 3000 + 1)) + 3000;
+        // A geracao da IA ja serviu como espera para o primeiro balao.
+        // Os seguintes chegam em sequencia curta, com uma pausa proporcional ao tamanho.
+        if (i > 0) {
+            const jitter = Math.floor(Math.random() * 181);
+            const delay = Math.min(900, Math.max(380, 260 + (msgText.length * 4) + jitter));
+            await sendTelegramAction(botToken, chatId, 'typing');
+            await new Promise(r => setTimeout(r, delay));
+        }
 
-        await sendTelegramAction(botToken, chatId, 'typing');
-        await new Promise(r => setTimeout(r, delay));
+        if (i === preferredAudioIndex) {
+            try {
+                await sendTelegramAction(botToken, chatId, 'record_voice');
+                const expressiveText = buildExpressiveSpeech({
+                    messageText: msgText,
+                    userText: userOnlyText,
+                    emotionalContext: String(session.lead_memory?.emotional_context || ''),
+                    maxChars: fishAudioSettings.maxChars,
+                });
+                const audio = await generateFishAudio({ settings: fishAudioSettings, text: expressiveText });
+                await sendTelegramVoice(botToken, chatId, audio);
+                await supabase.from('messages').insert({
+                    session_id: session.id,
+                    sender: 'bot',
+                    content: `🎤 Áudio da Lari: ${msgText}`,
+                    media_type: 'audio',
+                });
+                continue;
+            } catch (error: any) {
+                console.error('[FISH AUDIO] Falha, usando texto como fallback:', error?.message || error);
+                await supabase.from('messages').insert({
+                    session_id: session.id,
+                    sender: 'system',
+                    content: `[FISH AUDIO ERROR] ${String(error?.message || error).slice(0, 500)}`,
+                });
+            }
+        }
 
         await supabase.from('messages').insert({
             session_id: session.id,

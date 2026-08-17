@@ -5,6 +5,7 @@ import {
     DEFAULT_GEMINI_MODEL,
     normalizeGeminiModelName,
 } from "@/lib/aiModels";
+import { DEFAULT_FISH_AUDIO_SETTINGS } from "@/lib/fishAudio";
 
 const CONFIG_KEYS = [
     "openrouter_api_key",
@@ -30,6 +31,13 @@ const CONFIG_KEYS = [
     "gemini_evaluator_model",
     "ai_gateway_recent_events",
     "ai_gateway_stats",
+    "fish_audio_api_key",
+    "fish_audio_enabled",
+    "fish_audio_voice_id",
+    "fish_audio_model",
+    "fish_audio_frequency_percent",
+    "fish_audio_cooldown_minutes",
+    "fish_audio_max_chars",
 ];
 
 const DEFAULTS = {
@@ -102,6 +110,14 @@ export async function GET() {
                 geminiApiKeyMasked: maskSecret(readSecret(map.gemini_api_key) || readSecret(process.env.GEMINI_API_KEY)),
                 openrouterApiKeySaved: Boolean(readSecret(map.openrouter_api_key)),
                 geminiApiKeySaved: Boolean(readSecret(map.gemini_api_key)),
+                fishAudioApiKeyMasked: maskSecret(readSecret(map.fish_audio_api_key) || readSecret(process.env.FISH_AUDIO_API_KEY)),
+                fishAudioApiKeySaved: Boolean(readSecret(map.fish_audio_api_key)),
+                fishAudioEnabled: map.fish_audio_enabled === "true",
+                fishAudioVoiceId: map.fish_audio_voice_id || DEFAULT_FISH_AUDIO_SETTINGS.voiceId,
+                fishAudioModel: map.fish_audio_model || DEFAULT_FISH_AUDIO_SETTINGS.model,
+                fishAudioFrequencyPercent: Number(map.fish_audio_frequency_percent || DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent),
+                fishAudioCooldownMinutes: Number(map.fish_audio_cooldown_minutes || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes),
+                fishAudioMaxChars: Number(map.fish_audio_max_chars || DEFAULT_FISH_AUDIO_SETTINGS.maxChars),
                 openrouterBaseUrl: map.openrouter_base_url || DEFAULTS.openrouter_base_url,
                 openrouterReferer: map.openrouter_referer || DEFAULTS.openrouter_referer,
                 openrouterTitle: map.openrouter_title || DEFAULTS.openrouter_title,
@@ -153,12 +169,20 @@ export async function POST(req: NextRequest) {
             { key: "gemini_draft_model", value: normalizeGeminiModelName(body.geminiDraftModel, DEFAULTS.gemini_draft_model) },
             { key: "gemini_review_model", value: normalizeGeminiModelName(body.geminiReviewModel, DEFAULTS.gemini_review_model) },
             { key: "gemini_evaluator_model", value: normalizeGeminiModelName(body.geminiEvaluatorModel, DEFAULTS.gemini_evaluator_model) },
+            { key: "fish_audio_enabled", value: body.fishAudioEnabled === true ? "true" : "false" },
+            { key: "fish_audio_voice_id", value: String(body.fishAudioVoiceId || DEFAULT_FISH_AUDIO_SETTINGS.voiceId).trim() },
+            { key: "fish_audio_model", value: String(body.fishAudioModel || DEFAULT_FISH_AUDIO_SETTINGS.model).trim() },
+            { key: "fish_audio_frequency_percent", value: String(Math.min(100, Math.max(1, Number(body.fishAudioFrequencyPercent) || DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent))) },
+            { key: "fish_audio_cooldown_minutes", value: String(Math.min(1440, Math.max(1, Number(body.fishAudioCooldownMinutes) || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes))) },
+            { key: "fish_audio_max_chars", value: String(Math.min(500, Math.max(60, Number(body.fishAudioMaxChars) || DEFAULT_FISH_AUDIO_SETTINGS.maxChars))) },
         ];
 
         const openrouterApiKey = String(body.openrouterApiKey || "").trim();
         const geminiApiKey = String(body.geminiApiKey || "").trim();
+        const fishAudioApiKey = String(body.fishAudioApiKey || "").trim();
         if (openrouterApiKey && !openrouterApiKey.includes("*")) rows.push({ key: "openrouter_api_key", value: openrouterApiKey });
         if (geminiApiKey && !geminiApiKey.includes("*")) rows.push({ key: "gemini_api_key", value: geminiApiKey });
+        if (fishAudioApiKey && !fishAudioApiKey.includes("*")) rows.push({ key: "fish_audio_api_key", value: fishAudioApiKey });
 
         const { error } = await supabase.from("bot_settings").upsert(rows);
         if (error) throw error;

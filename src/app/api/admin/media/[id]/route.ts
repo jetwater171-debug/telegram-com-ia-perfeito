@@ -26,7 +26,7 @@ const contentTypeFor = (mediaType?: string | null) => {
 
 export async function GET(
     req: NextRequest,
-    { params }: { params: Promise<{ id: string }> | { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     const resolvedParams = await params;
     const messageId = resolvedParams.id;

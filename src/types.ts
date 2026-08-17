@@ -29,6 +29,20 @@ export interface PaymentDetails {
     description: string;
 }
 
+export interface LeadMemoryPatch {
+    best_tone?: string;
+    emotional_context?: string;
+    relationship_stage?: "new" | "familiar" | "engaged" | "buyer" | "returning";
+    next_personal_step?: string;
+    wanted_products?: string[];
+    rejected_products?: string[];
+    desires?: string[];
+    objections?: string[];
+    known_facts?: string[];
+    conversation_hooks?: string[];
+    notes?: string[];
+}
+
 export interface AIResponse {
     internal_thought: string;
     lead_classification: "carente" | "tarado" | "curioso" | "frio" | "desconhecido";
@@ -61,4 +75,7 @@ export interface AIResponse {
     ;
     payment_details?: PaymentDetails | null;
     preview_id?: string | null;
+    lead_memory_patch?: LeadMemoryPatch | null;
+    recommended_message_count?: number;
+    max_chars_per_message?: number;
 }
