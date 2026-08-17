@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+    DEFAULT_GEMINI_LITE_MODEL,
+    DEFAULT_GEMINI_MODEL,
+    GEMINI_MODEL_OPTIONS,
+} from "@/lib/aiModels";
 
 type ProviderKey = "openrouter" | "gemini";
 
@@ -54,10 +59,10 @@ const emptySettings: AiSettings = {
     openrouterDraftModel: "z-ai/glm-4.5-air:free",
     openrouterReviewModel: "openai/gpt-oss-120b:free",
     openrouterEvaluatorModel: "openai/gpt-oss-120b:free",
-    geminiStrategyModel: "gemini-2.5-flash-lite",
-    geminiDraftModel: "gemini-2.5-flash",
-    geminiReviewModel: "gemini-2.5-flash",
-    geminiEvaluatorModel: "gemini-2.5-flash-lite",
+    geminiStrategyModel: DEFAULT_GEMINI_LITE_MODEL,
+    geminiDraftModel: DEFAULT_GEMINI_MODEL,
+    geminiReviewModel: DEFAULT_GEMINI_MODEL,
+    geminiEvaluatorModel: DEFAULT_GEMINI_LITE_MODEL,
 };
 
 const providerLabels: Record<ProviderKey, string> = {
@@ -84,10 +89,10 @@ const PRESETS = {
             evaluator: "openai/gpt-oss-120b:free",
         },
         gemini: {
-            draft: "gemini-2.5-flash",
-            strategy: "gemini-2.5-flash-lite",
-            review: "gemini-2.5-flash",
-            evaluator: "gemini-2.5-flash-lite",
+            draft: DEFAULT_GEMINI_MODEL,
+            strategy: DEFAULT_GEMINI_LITE_MODEL,
+            review: DEFAULT_GEMINI_MODEL,
+            evaluator: DEFAULT_GEMINI_LITE_MODEL,
         },
     },
     fullGemini: {
@@ -101,10 +106,10 @@ const PRESETS = {
             evaluator: "openai/gpt-oss-120b:free",
         },
         gemini: {
-            draft: "gemini-2.5-flash",
-            strategy: "gemini-2.5-flash",
-            review: "gemini-2.5-flash",
-            evaluator: "gemini-2.5-flash-lite",
+            draft: DEFAULT_GEMINI_MODEL,
+            strategy: DEFAULT_GEMINI_MODEL,
+            review: DEFAULT_GEMINI_MODEL,
+            evaluator: DEFAULT_GEMINI_LITE_MODEL,
         },
     },
 };
@@ -116,12 +121,7 @@ const openRouterOptions = [
     "openrouter/free",
 ];
 
-const geminiOptions = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-];
+const geminiOptions = [...GEMINI_MODEL_OPTIONS];
 
 const inputClass = "rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-300/60";
 

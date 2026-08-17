@@ -38,7 +38,7 @@ AI_EVALUATOR_MODEL_ORDER=openrouter,gemini
 
 # Modelos usados dentro de cada provedor.
 OPENROUTER_DRAFT_MODEL=z-ai/glm-4.5-air:free
-GEMINI_DRAFT_MODEL=gemini-2.5-flash
+GEMINI_DRAFT_MODEL=gemini-3.6-flash
 ```
 
 Padrao sem variaveis de ordem:

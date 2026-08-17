@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer as supabase } from "@/lib/supabaseServer";
+import {
+    DEFAULT_GEMINI_LITE_MODEL,
+    DEFAULT_GEMINI_MODEL,
+    normalizeGeminiModelName,
+} from "@/lib/aiModels";
 
 const CONFIG_KEYS = [
     "openrouter_api_key",
@@ -36,10 +41,10 @@ const DEFAULTS = {
     openrouter_draft_model: process.env.OPENROUTER_DRAFT_MODEL || "z-ai/glm-4.5-air:free",
     openrouter_review_model: process.env.OPENROUTER_REVIEW_MODEL || "openai/gpt-oss-120b:free",
     openrouter_evaluator_model: process.env.OPENROUTER_EVALUATOR_MODEL || "openai/gpt-oss-120b:free",
-    gemini_strategy_model: process.env.GEMINI_STRATEGY_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash",
-    gemini_draft_model: process.env.GEMINI_DRAFT_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash",
-    gemini_review_model: process.env.GEMINI_REVIEW_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash",
-    gemini_evaluator_model: process.env.GEMINI_EVALUATOR_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    gemini_strategy_model: normalizeGeminiModelName(process.env.GEMINI_STRATEGY_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_LITE_MODEL),
+    gemini_draft_model: normalizeGeminiModelName(process.env.GEMINI_DRAFT_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_MODEL),
+    gemini_review_model: normalizeGeminiModelName(process.env.GEMINI_REVIEW_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_MODEL),
+    gemini_evaluator_model: normalizeGeminiModelName(process.env.GEMINI_EVALUATOR_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_LITE_MODEL),
 };
 
 const maskSecret = (value?: string | null) => {
@@ -112,10 +117,10 @@ export async function GET() {
                 openrouterDraftModel: map.openrouter_draft_model || DEFAULTS.openrouter_draft_model,
                 openrouterReviewModel: map.openrouter_review_model || DEFAULTS.openrouter_review_model,
                 openrouterEvaluatorModel: map.openrouter_evaluator_model || DEFAULTS.openrouter_evaluator_model,
-                geminiStrategyModel: map.gemini_strategy_model || DEFAULTS.gemini_strategy_model,
-                geminiDraftModel: map.gemini_draft_model || DEFAULTS.gemini_draft_model,
-                geminiReviewModel: map.gemini_review_model || DEFAULTS.gemini_review_model,
-                geminiEvaluatorModel: map.gemini_evaluator_model || DEFAULTS.gemini_evaluator_model,
+                geminiStrategyModel: normalizeGeminiModelName(map.gemini_strategy_model, DEFAULTS.gemini_strategy_model),
+                geminiDraftModel: normalizeGeminiModelName(map.gemini_draft_model, DEFAULTS.gemini_draft_model),
+                geminiReviewModel: normalizeGeminiModelName(map.gemini_review_model, DEFAULTS.gemini_review_model),
+                geminiEvaluatorModel: normalizeGeminiModelName(map.gemini_evaluator_model, DEFAULTS.gemini_evaluator_model),
             },
             recentEvents: parseJson(map.ai_gateway_recent_events || "[]", []),
             stats,
@@ -144,10 +149,10 @@ export async function POST(req: NextRequest) {
             { key: "openrouter_draft_model", value: String(body.openrouterDraftModel || DEFAULTS.openrouter_draft_model).trim() },
             { key: "openrouter_review_model", value: String(body.openrouterReviewModel || DEFAULTS.openrouter_review_model).trim() },
             { key: "openrouter_evaluator_model", value: String(body.openrouterEvaluatorModel || DEFAULTS.openrouter_evaluator_model).trim() },
-            { key: "gemini_strategy_model", value: String(body.geminiStrategyModel || DEFAULTS.gemini_strategy_model).trim() },
-            { key: "gemini_draft_model", value: String(body.geminiDraftModel || DEFAULTS.gemini_draft_model).trim() },
-            { key: "gemini_review_model", value: String(body.geminiReviewModel || DEFAULTS.gemini_review_model).trim() },
-            { key: "gemini_evaluator_model", value: String(body.geminiEvaluatorModel || DEFAULTS.gemini_evaluator_model).trim() },
+            { key: "gemini_strategy_model", value: normalizeGeminiModelName(body.geminiStrategyModel, DEFAULTS.gemini_strategy_model) },
+            { key: "gemini_draft_model", value: normalizeGeminiModelName(body.geminiDraftModel, DEFAULTS.gemini_draft_model) },
+            { key: "gemini_review_model", value: normalizeGeminiModelName(body.geminiReviewModel, DEFAULTS.gemini_review_model) },
+            { key: "gemini_evaluator_model", value: normalizeGeminiModelName(body.geminiEvaluatorModel, DEFAULTS.gemini_evaluator_model) },
         ];
 
         const openrouterApiKey = String(body.openrouterApiKey || "").trim();

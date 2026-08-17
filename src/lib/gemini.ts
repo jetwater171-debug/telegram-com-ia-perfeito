@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { AIResponse, LeadStats } from "@/types";
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
+import { DEFAULT_GEMINI_MODEL, normalizeGeminiModelName } from '@/lib/aiModels';
 
 const readSecret = (value?: string) => {
     const secret = String(value || "").trim();
@@ -15,7 +16,7 @@ const defaultOpenRouterReferer = process.env.OPENROUTER_REFERER || process.env.N
 const defaultOpenRouterTitle = process.env.OPENROUTER_TITLE || "Lari Telegram Bot";
 
 
-// Schema para Gemini 2.5 Flash
+// Schema de resposta estruturada do Gemini.
 // Note: @google/generative-ai uses a specific schema format.
 const responseSchema = {
     type: "OBJECT", // Use string literal for simplicity with new SDK
@@ -1016,7 +1017,7 @@ const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
     evaluator: "openai/gpt-oss-120b:free",
 };
 
-const getGeminiModelName = () => process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const getGeminiModelName = () => normalizeGeminiModelName(process.env.GEMINI_MODEL, DEFAULT_GEMINI_MODEL);
 
 const getBotSettingsMap = async (keys: string[]) => {
     const { data, error } = await supabase
@@ -1052,10 +1053,10 @@ const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
         openRouterDraftModel: settings.openrouter_draft_model || process.env.OPENROUTER_DRAFT_MODEL || DEFAULT_OPENROUTER_MODELS.draft,
         openRouterReviewModel: settings.openrouter_review_model || process.env.OPENROUTER_REVIEW_MODEL || DEFAULT_OPENROUTER_MODELS.review,
         openRouterEvaluatorModel: settings.openrouter_evaluator_model || process.env.OPENROUTER_EVALUATOR_MODEL || DEFAULT_OPENROUTER_MODELS.evaluator,
-        geminiStrategyModel: settings.gemini_strategy_model || process.env.GEMINI_STRATEGY_MODEL || getGeminiModelName(),
-        geminiDraftModel: settings.gemini_draft_model || process.env.GEMINI_DRAFT_MODEL || getGeminiModelName(),
-        geminiReviewModel: settings.gemini_review_model || process.env.GEMINI_REVIEW_MODEL || getGeminiModelName(),
-        geminiEvaluatorModel: settings.gemini_evaluator_model || process.env.GEMINI_EVALUATOR_MODEL || getGeminiModelName(),
+        geminiStrategyModel: normalizeGeminiModelName(settings.gemini_strategy_model || process.env.GEMINI_STRATEGY_MODEL, getGeminiModelName()),
+        geminiDraftModel: normalizeGeminiModelName(settings.gemini_draft_model || process.env.GEMINI_DRAFT_MODEL, getGeminiModelName()),
+        geminiReviewModel: normalizeGeminiModelName(settings.gemini_review_model || process.env.GEMINI_REVIEW_MODEL, getGeminiModelName()),
+        geminiEvaluatorModel: normalizeGeminiModelName(settings.gemini_evaluator_model || process.env.GEMINI_EVALUATOR_MODEL, getGeminiModelName()),
     };
 };
 
