@@ -3,6 +3,7 @@ import { supabaseServer as supabase } from "@/lib/supabaseServer";
 import {
     DEFAULT_GEMINI_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
+    DEFAULT_OPENROUTER_MODEL,
     normalizeGeminiModelName,
 } from "@/lib/aiModels";
 import { DEFAULT_FISH_AUDIO_SETTINGS } from "@/lib/fishAudio";
@@ -45,10 +46,10 @@ const DEFAULTS = {
     openrouter_referer: process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
     openrouter_title: "Lari Telegram Bot",
     provider_order: "openrouter,gemini",
-    openrouter_strategy_model: process.env.OPENROUTER_STRATEGY_MODEL || "z-ai/glm-4.5-air:free",
-    openrouter_draft_model: process.env.OPENROUTER_DRAFT_MODEL || "z-ai/glm-4.5-air:free",
-    openrouter_review_model: process.env.OPENROUTER_REVIEW_MODEL || "openai/gpt-oss-120b:free",
-    openrouter_evaluator_model: process.env.OPENROUTER_EVALUATOR_MODEL || "openai/gpt-oss-120b:free",
+    openrouter_strategy_model: process.env.OPENROUTER_STRATEGY_MODEL || DEFAULT_OPENROUTER_MODEL,
+    openrouter_draft_model: process.env.OPENROUTER_DRAFT_MODEL || DEFAULT_OPENROUTER_MODEL,
+    openrouter_review_model: process.env.OPENROUTER_REVIEW_MODEL || DEFAULT_OPENROUTER_MODEL,
+    openrouter_evaluator_model: process.env.OPENROUTER_EVALUATOR_MODEL || DEFAULT_OPENROUTER_MODEL,
     gemini_strategy_model: normalizeGeminiModelName(process.env.GEMINI_STRATEGY_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_LITE_MODEL),
     gemini_draft_model: normalizeGeminiModelName(process.env.GEMINI_DRAFT_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_MODEL),
     gemini_review_model: normalizeGeminiModelName(process.env.GEMINI_REVIEW_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_MODEL),

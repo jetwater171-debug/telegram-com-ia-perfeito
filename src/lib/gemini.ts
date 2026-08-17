@@ -1,7 +1,8 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { AIResponse, LeadStats } from "@/types";
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
-import { DEFAULT_GEMINI_MODEL, normalizeGeminiModelName } from '@/lib/aiModels';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL, normalizeGeminiModelName } from '@/lib/aiModels';
+import { buildCleanAiHistory } from '@/lib/aiHistory';
 
 const readSecret = (value?: string) => {
     const secret = String(value || "").trim();
@@ -1202,10 +1203,10 @@ const ROLE_ENV_KEYS: Record<AiRole, string> = {
 
 const DEFAULT_PROVIDER_ORDER = "openrouter,gemini";
 const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
-    strategy: "z-ai/glm-4.5-air:free",
-    draft: "z-ai/glm-4.5-air:free",
-    review: "openai/gpt-oss-120b:free",
-    evaluator: "openai/gpt-oss-120b:free",
+    strategy: DEFAULT_OPENROUTER_MODEL,
+    draft: DEFAULT_OPENROUTER_MODEL,
+    review: DEFAULT_OPENROUTER_MODEL,
+    evaluator: DEFAULT_OPENROUTER_MODEL,
 };
 
 const getGeminiModelName = () => normalizeGeminiModelName(process.env.GEMINI_MODEL, DEFAULT_GEMINI_MODEL);
@@ -1805,18 +1806,8 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         antiRepeatText
     ) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.";
 
-    const history = (dbMessages || [])
-        .filter(m => m.sender === 'user' || m.sender === 'bot')
-        .map(m => ({
-            role: m.sender === 'bot' ? 'model' : 'user',
-            parts: [{ text: String(m.content || '').slice(0, 800) }]
-        }));
-
-    // 2. Limpar Histórico (Deduplicação Básica)
-    let cleanHistory = [...history];
-    while (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === 'user') {
-        cleanHistory.pop();
-    }
+    // Agrupa os varios baloes do mesmo turno e garante history valido para o SDK Gemini.
+    const cleanHistory = buildCleanAiHistory(dbMessages || []);
 
     // 3. Montar Mensagem Atual (Com ou sem mídia)
     const currentMessageParts: any[] = [{ text: userMessage }];

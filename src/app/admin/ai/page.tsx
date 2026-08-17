@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
     DEFAULT_GEMINI_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
+    DEFAULT_OPENROUTER_MODEL,
     GEMINI_MODEL_OPTIONS,
 } from "@/lib/aiModels";
 
@@ -63,10 +64,10 @@ const emptySettings: AiSettings = {
     aiStrategyEnabled: true,
     aiReviewEnabled: true,
     aiEvaluatorEnabled: true,
-    openrouterStrategyModel: "z-ai/glm-4.5-air:free",
-    openrouterDraftModel: "z-ai/glm-4.5-air:free",
-    openrouterReviewModel: "openai/gpt-oss-120b:free",
-    openrouterEvaluatorModel: "openai/gpt-oss-120b:free",
+    openrouterStrategyModel: DEFAULT_OPENROUTER_MODEL,
+    openrouterDraftModel: DEFAULT_OPENROUTER_MODEL,
+    openrouterReviewModel: DEFAULT_OPENROUTER_MODEL,
+    openrouterEvaluatorModel: DEFAULT_OPENROUTER_MODEL,
     geminiStrategyModel: DEFAULT_GEMINI_LITE_MODEL,
     geminiDraftModel: DEFAULT_GEMINI_MODEL,
     geminiReviewModel: DEFAULT_GEMINI_MODEL,
@@ -95,14 +96,14 @@ const roleLabels: Record<string, string> = {
 
 const PRESETS = {
     openrouterFree: {
-        label: "OpenRouter Free",
-        description: "Usa OpenRouter gratis primeiro e Gemini como reserva.",
+        label: "DeepSeek V4 Flash",
+        description: "Usa o DeepSeek barato primeiro e Gemini como reserva.",
         order: ["openrouter", "gemini"] as ProviderKey[],
         openrouter: {
-            draft: "z-ai/glm-4.5-air:free",
-            strategy: "z-ai/glm-4.5-air:free",
-            review: "openai/gpt-oss-120b:free",
-            evaluator: "openai/gpt-oss-120b:free",
+            draft: DEFAULT_OPENROUTER_MODEL,
+            strategy: DEFAULT_OPENROUTER_MODEL,
+            review: DEFAULT_OPENROUTER_MODEL,
+            evaluator: DEFAULT_OPENROUTER_MODEL,
         },
         gemini: {
             draft: DEFAULT_GEMINI_MODEL,
@@ -116,10 +117,10 @@ const PRESETS = {
         description: "Usa Gemini em tudo. OpenRouter fica desligado da prioridade.",
         order: ["gemini", "openrouter"] as ProviderKey[],
         openrouter: {
-            draft: "z-ai/glm-4.5-air:free",
-            strategy: "z-ai/glm-4.5-air:free",
-            review: "openai/gpt-oss-120b:free",
-            evaluator: "openai/gpt-oss-120b:free",
+            draft: DEFAULT_OPENROUTER_MODEL,
+            strategy: DEFAULT_OPENROUTER_MODEL,
+            review: DEFAULT_OPENROUTER_MODEL,
+            evaluator: DEFAULT_OPENROUTER_MODEL,
         },
         gemini: {
             draft: DEFAULT_GEMINI_MODEL,
@@ -131,6 +132,7 @@ const PRESETS = {
 };
 
 const openRouterOptions = [
+    DEFAULT_OPENROUTER_MODEL,
     "z-ai/glm-4.5-air:free",
     "openai/gpt-oss-120b:free",
     "google/gemma-4-31b-it:free",

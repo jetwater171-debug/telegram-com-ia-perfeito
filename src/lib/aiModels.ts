@@ -1,5 +1,6 @@
 export const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
 export const DEFAULT_GEMINI_LITE_MODEL = "gemini-3.5-flash-lite";
+export const DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4-flash";
 
 export const GEMINI_MODEL_OPTIONS = [
     DEFAULT_GEMINI_MODEL,
