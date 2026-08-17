@@ -1379,6 +1379,34 @@ const makeLocalFallbackResponse = (
     const isSexual = /(nude|pelada|bunda|peito|pau|buceta|gozar|tes[aã]o|safada|putaria|comer|chupar|meter)/i.test(text);
     const noMoney = /(caro|sem dinheiro|so tenho|só tenho|liso|desconto|faz por)/i.test(text);
 
+    if (/\/(?:start)\b/i.test(text)) {
+        return {
+            internal_thought: "Fallback local: boas-vindas sem provedor de IA configurado.",
+            lead_classification: "desconhecido",
+            lead_stats: stats,
+            current_state: "WELCOME",
+            messages: ["oii amor", "como vc ta?"],
+            action: "none",
+            extracted_user_name: null,
+            audio_transcription: null,
+            payment_details: null
+        };
+    }
+
+    if (/\b(oi|ola|olá|oie|eai|e ai|bom dia|boa tarde|boa noite)\b/i.test(text) && !wantsPrice && !wantsMedia && !isSexual) {
+        return {
+            internal_thought: "Fallback local: saudação sem provedor de IA configurado.",
+            lead_classification: "desconhecido",
+            lead_stats: stats,
+            current_state: "CONNECTION",
+            messages: ["oii amor", "tudo bem com vc?"],
+            action: "none",
+            extracted_user_name: null,
+            audio_transcription: null,
+            payment_details: null
+        };
+    }
+
     if (hasImage && paymentLike) {
         return {
             internal_thought: "Fallback local: imagem recebida com contexto de comprovante, verificar pagamento.",
@@ -1461,7 +1489,10 @@ const makeLocalFallbackResponse = (
 export const sendMessageToGemini = async (sessionId: string, userMessage: string, context?: { userCity?: string, isHighTicket?: boolean, totalPaid?: number, currentStats?: LeadStats | null, minutesSinceOffer?: number, extraScript?: string, leadMemory?: any }, media?: { mimeType: string, data: string }) => {
     const aiSettings = await getAiRuntimeSettings();
     initializeGenAI(aiSettings.geminiApiKey);
-    if (!aiSettings.openRouterApiKey && !aiSettings.geminiApiKey) throw new Error("No AI provider configured");
+    if (!aiSettings.openRouterApiKey && !aiSettings.geminiApiKey) {
+        console.warn("[AI Gateway] Nenhum provedor configurado; usando resposta local de emergência.", { sessionId });
+        return makeLocalFallbackResponse(userMessage, context, media);
+    }
 
     const currentStats = parseLeadStats(context?.currentStats);
     const { data: previewRows, error: previewError } = await supabase

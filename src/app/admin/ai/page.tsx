@@ -253,6 +253,8 @@ export default function AdminAiPage() {
         return warnings;
     }, [recentEvents]);
 
+    const hasConfiguredProvider = Boolean(settings.openrouterApiKeyMasked || settings.geminiApiKeyMasked);
+
     return (
         <div className="min-h-screen bg-[#080b10] text-slate-100">
             <header className="border-b border-white/10 bg-[#080b10]">
@@ -267,6 +269,14 @@ export default function AdminAiPage() {
 
             <main className="mx-auto grid w-full max-w-5xl gap-5 px-4 py-6 lg:grid-cols-[1.1fr_0.9fr]">
                 <section className="space-y-5">
+                    {!hasConfiguredProvider && (
+                        <div role="alert" className="rounded-lg border border-rose-400/40 bg-rose-400/10 p-4 text-rose-50">
+                            <p className="font-semibold">Bot sem provedor de IA</p>
+                            <p className="mt-1 text-sm text-rose-100/80">
+                                Nenhuma chave está configurada. O Telegram usa respostas locais de emergência até você salvar uma chave Gemini ou OpenRouter abaixo.
+                            </p>
+                        </div>
+                    )}
                     <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
                         <div className="flex items-center justify-between gap-3">
                             <div>

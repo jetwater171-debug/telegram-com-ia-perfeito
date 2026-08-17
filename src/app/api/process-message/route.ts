@@ -5,6 +5,8 @@ import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegram
 import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
 import { calculateLeadScore, markLeadPaid, toStoredLeadScore } from '@/lib/leadScoring';
 
+export const maxDuration = 60;
+
 // Esta rota atua como um worker em segundo plano.
 // Ela aguarda, verifica mensagens mais recentes (debounce), e então processa a resposta.
 // É chamada pelo Webhook principal mas NÃO DEVE atrasar a resposta do webhook.
@@ -622,18 +624,18 @@ export async function POST(req: NextRequest) {
     if (!botToken) return NextResponse.json({ error: 'Sem token' });
     const chatId = session.telegram_chat_id;
 
-    // CONFIG: Tempo Total de Espera 8000ms (Debounce para Agrupamento)
-    // Estratégia: Esperar 2s -> Enviar Digitando -> Esperar 6s -> Processar
+    // CONFIG: Tempo Total de Espera 3000ms (Debounce para Agrupamento)
+    // Estratégia: Esperar 1s -> Enviar Digitando -> Esperar 2s -> Processar
     // Isso garante que se o lead mandar várias mensagens seguidas, a gente agrupe.
 
-    // 1. Primeira Espera (2s)
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // 1. Primeira Espera (1s)
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     // 2. Enviar Ação Digitando
     await sendTelegramAction(botToken, chatId, 'typing');
 
-    // 3. Segunda Espera (6s)
-    await new Promise(resolve => setTimeout(resolve, 6000));
+    // 3. Segunda Espera (2s)
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     // 4. Verificar mensagens mais recentes (Lógica de Substituição)
     // Verificamos se há alguma mensagem MAIS NOVA que a que disparou este worker.
@@ -930,7 +932,18 @@ Em conversa normal, mande 1 balao curto e natural. So mande varios baloes se hou
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou sua cidade, mas voce AINDA NAO sabe a cidade dele. Pergunte primeiro "de onde vc e anjo?" e NAO diga sua cidade agora.]`;
     }
 
+    console.log("[PROCESSADOR] Iniciando geração da resposta", {
+        sessionId: session.id,
+        groupedMessages: filteredGroupMessages.length,
+        hasMedia: Boolean(mediaData),
+    });
     const aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
+    console.log("[PROCESSADOR] Resposta gerada", {
+        sessionId: session.id,
+        messages: Array.isArray(aiResponse.messages) ? aiResponse.messages.length : 0,
+        action: aiResponse.action,
+        state: aiResponse.current_state,
+    });
     const contextualMedia = resolveContextualMediaAction(userOnlyText, aiResponse.action);
     if (contextualMedia) {
         aiResponse.action = contextualMedia.action;
