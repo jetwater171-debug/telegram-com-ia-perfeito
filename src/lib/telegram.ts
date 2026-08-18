@@ -1,5 +1,32 @@
 import { Telegraf } from 'telegraf';
 
+const REMOTE_MEDIA_TIMEOUT_MS = 15_000;
+const MAX_TELEGRAM_MEDIA_BYTES = 49 * 1024 * 1024;
+
+const isHttpUrl = (value: string) => /^https?:\/\//i.test(String(value || '').trim());
+
+const downloadRemoteMedia = async (url: string, fallbackFilename: string) => {
+    const response = await fetch(url, { signal: AbortSignal.timeout(REMOTE_MEDIA_TIMEOUT_MS) });
+    if (!response.ok) throw new Error(`download da midia retornou HTTP ${response.status}`);
+
+    const declaredSize = Number(response.headers.get('content-length') || 0);
+    if (declaredSize > MAX_TELEGRAM_MEDIA_BYTES) {
+        throw new Error(`midia excede ${Math.floor(MAX_TELEGRAM_MEDIA_BYTES / 1024 / 1024)}MB`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length === 0) throw new Error('download da midia retornou arquivo vazio');
+    if (buffer.length > MAX_TELEGRAM_MEDIA_BYTES) {
+        throw new Error(`midia excede ${Math.floor(MAX_TELEGRAM_MEDIA_BYTES / 1024 / 1024)}MB`);
+    }
+
+    const pathname = (() => {
+        try { return new URL(url).pathname; } catch { return ''; }
+    })();
+    const filename = pathname.split('/').filter(Boolean).at(-1) || fallbackFilename;
+    return { source: buffer, filename };
+};
+
 export const sendTelegramMessage = async (token: string, chatId: string, text: string) => {
     if (!token) return;
     try {
@@ -11,28 +38,44 @@ export const sendTelegramMessage = async (token: string, chatId: string, text: s
 };
 
 export const sendTelegramPhoto = async (token: string, chatId: string, photoUrl: string, caption?: string) => {
-    if (!token) return;
+    if (!token) throw new Error('Telegram sem token');
+    const bot = new Telegraf(token);
     try {
-        const bot = new Telegraf(token);
         await bot.telegram.sendPhoto(chatId, photoUrl, { caption });
-    } catch (e) {
-        console.error("Failed to send photo to Telegram:", e);
+    } catch (firstError: any) {
+        if (isHttpUrl(photoUrl)) {
+            try {
+                const upload = await downloadRemoteMedia(photoUrl, 'preview.jpg');
+                await bot.telegram.sendPhoto(chatId, upload, { caption });
+                return;
+            } catch (uploadError: any) {
+                console.error('Failed to upload photo to Telegram:', uploadError);
+                throw new Error(`Telegram Photo Error: ${uploadError?.message || uploadError}; envio por URL: ${firstError?.message || firstError}`);
+            }
+        }
+        console.error('Failed to send photo to Telegram:', firstError);
+        throw new Error(`Telegram Photo Error: ${firstError?.message || JSON.stringify(firstError)}`);
     }
 };
 
 export const sendTelegramVideo = async (token: string, chatId: string, videoUrl: string, caption?: string) => {
-    if (!token) return;
+    if (!token) throw new Error('Telegram sem token');
+    const bot = new Telegraf(token);
     try {
-        const bot = new Telegraf(token);
-
-
-        // Envia o vídeo (URL ou File ID direto)
-        // Como estamos usando File IDs agora, a verificação de arquivo local foi removida para simplificar.
-
         await bot.telegram.sendVideo(chatId, videoUrl, { caption });
-    } catch (e: any) {
-        console.error("Failed to send video to Telegram:", e);
-        throw new Error(`Telegram Video Error: ${e.message || JSON.stringify(e)}`);
+    } catch (firstError: any) {
+        if (isHttpUrl(videoUrl)) {
+            try {
+                const upload = await downloadRemoteMedia(videoUrl, 'preview.mp4');
+                await bot.telegram.sendVideo(chatId, upload, { caption, supports_streaming: true });
+                return;
+            } catch (uploadError: any) {
+                console.error('Failed to upload video to Telegram:', uploadError);
+                throw new Error(`Telegram Video Error: ${uploadError?.message || uploadError}; envio por URL: ${firstError?.message || firstError}`);
+            }
+        }
+        console.error('Failed to send video to Telegram:', firstError);
+        throw new Error(`Telegram Video Error: ${firstError?.message || JSON.stringify(firstError)}`);
     }
 };
 

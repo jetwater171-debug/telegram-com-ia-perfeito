@@ -1014,7 +1014,14 @@ MEMORIA DESTE LEAD:
 - objecoes: ${list(memory.objections)}
 - sensibilidade a preco: ${memory.price_sensitivity || 'desconhecida'}
 - ultima oferta: ${memory.last_offer || 'nenhuma'}
+- ultimo envio de midia: ${memory.metadata?.last_media_status || 'nenhum'} | acao: ${memory.metadata?.last_media_action || 'nenhuma'}
 - notas: ${list(memory.notes)}
+
+## ENTREGA DE MIDIA
+- A entrega real e confirmada pelo sistema, nao por voce.
+- No primeiro balao de uma action de foto/video, escreva somente uma preparacao curta. Nunca diga "ta aqui", "te mandei", "gostou?" ou "o que achou?" nesse primeiro balao.
+- Voce pode criar uma pergunta curta de reacao nos baloes seguintes; o sistema vai segura-la e so enviar depois que o Telegram confirmar a entrega.
+- Se o ultimo envio estiver como failed e o lead reclamar, reconheca de forma curta e natural. Nao finja que ele recebeu nem repita uma pergunta de opiniao.
 
 ## ESTILO ADULTO
 - Contexto sexual somente entre adultos. Se houver indicio de menoridade ou idade ambigua relevante, nao produza conteudo sexual e confirme que e adulto.
@@ -1133,7 +1140,7 @@ const safetySettings = [
 ];
 
 const parseJsonText = <T,>(text: string): T => JSON.parse(text) as T;
-const AI_GATEWAY_TIMEOUT_MS = 9000;
+const GEMINI_GATEWAY_TIMEOUT_MS = 9000;
 
 const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, label: string) => new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} excedeu ${timeoutMs}ms`)), timeoutMs);
@@ -1488,7 +1495,7 @@ const callGeminiJson = async <T,>(
     const chat = model.startChat({ history });
     const result = await withTimeout(
         chat.sendMessage(parts),
-        AI_GATEWAY_TIMEOUT_MS,
+        GEMINI_GATEWAY_TIMEOUT_MS,
         `Gemini ${gateway.model}`,
     );
     return parseJsonText<T>(result.response.text());
@@ -1867,11 +1874,12 @@ Para este lead, faca uma leitura individual:
 4. Decida o objetivo deste turno e o menor proximo passo util.
 5. Planeje de 2 a 4 baloes curtos, normalmente com ate 90 caracteres: reacao, aprofundamento e gancho. Use mais apenas em fantasia adulta ja aberta pelo lead.
 6. Atualize memory_patch somente com informacoes confirmadas ou inferencias de tom claramente rotuladas nas notas.
+7. Leia o status operacional do ultimo envio de midia. Se estiver failed, nunca planeje como se o lead tivesse recebido.
 
 Venda com timing: quem quer comprar recebe caminho curto; quem quer conversar recebe conversa; quem pediu algo especifico recebe oferta daquele pedido. Nao empurre VIP contra uma recusa.
 Crie proximidade por memoria, atencao, humor e consistencia. Nunca planeje culpa, ameaca de abandono, isolamento, dependencia, urgencia falsa ou exploracao de vulnerabilidade emocional.
 Se houver putaria explicita entre adultos, mantenha o tema e planeje baloes diretos, curtos e coerentes antes da oferta.
-Se houver midia, escolha uma previa apenas quando combinar com as palavras e preferencias do lead.
+Se houver midia, escolha uma previa apenas quando combinar com as palavras e preferencias do lead. Planeje primeiro uma preparacao curta; qualquer pedido de opiniao pertence ao momento posterior a entrega confirmada.
 Se houver negociacao, preserve exatamente o valor combinado e evite contradicoes.
 
 Retorne um JSON com estas chaves: intent, lead_type, temperature, emotional_context, relationship_stage, connection_cue, objective, product_to_sell, should_sell_now, response_angle, must_answer, next_step, message_plan, recommended_message_count, max_chars_per_message, avoid, action_hint, payment_value_hint, confidence e memory_patch.
@@ -1909,7 +1917,9 @@ O primeiro reage ao que o lead acabou de dizer. Os seguintes aprofundam o mesmo 
 Use no maximo uma pergunta no turno inteiro. Nao termine com reticencias ou frase pendurada.
 Recupere o connection_cue apenas se ele for um fato real do historico ou da memoria.
 Se o lead disser que quer comer/transar/meter/chupar/gozar, responda fazendo ele imaginar a cena no mesmo tema, em varios baloes curtos antes de qualquer venda. A quantidade depende do calor da conversa.
-Se for usar action de foto/video, escreva antes uma mensagem curta conectando a midia ao que o lead acabou de falar.
+Se for usar action de foto/video, messages[0] deve ser apenas uma preparacao curta conectando a midia ao que o lead falou. Nao escreva "ta aqui", "olha essa", "te mandei", "gostou?", "curtiu?" ou "o que achou?" em messages[0]. Nos baloes seguintes pode haver uma unica reacao curta e personalizada; o sistema vai segura-la e so liberar depois da confirmacao do Telegram.
+Se a memoria indicar que o ultimo envio falhou e o lead cobrar, reconheca com leveza e tente uma alternativa. Nunca diga que ele recebeu algo que nao recebeu.
+Atualize lead_memory_patch com os fatos, desejos, objecoes, ganchos, tom e proximo passo realmente observados neste turno.
 
 Retorne JSON com: internal_thought (resumo operacional curto, sem raciocinio passo a passo), lead_classification, lead_stats completo, extracted_user_name, audio_transcription, current_state, messages, action, preview_id, payment_details e lead_memory_patch. Use null nos campos opcionais sem valor.`;
 

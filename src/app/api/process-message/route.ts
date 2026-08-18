@@ -32,6 +32,29 @@ const normalizeCityKey = (input: string) => {
         .trim();
 };
 
+const PROCESSING_LEASE_TTL_MS = 90_000;
+const PROCESSING_LEASE_WAIT_MS = 45_000;
+const PROCESSING_LEASE_POLL_MS = 750;
+
+const randomBetween = (min: number, max: number) => Math.floor(min + Math.random() * (max - min + 1));
+
+const humanTextDelayMs = (text: string, bubbleIndex: number) => {
+    const length = String(text || '').trim().length;
+    const punctuationPause = /[?!]$/.test(text) ? 180 : 0;
+    if (bubbleIndex === 0) {
+        const firstBubbleDelay = 520 + (length * 20) + punctuationPause + randomBetween(180, 620);
+        return Math.min(2_400, Math.max(850, firstBubbleDelay));
+    }
+
+    const betweenBubblesDelay = 1_650 + (length * 27) + punctuationPause + randomBetween(180, 650);
+    return Math.min(5_000, Math.max(2_000, betweenBubblesDelay));
+};
+
+const humanAudioRecordingDelayMs = (text: string) => {
+    const wordCount = String(text || '').trim().split(/\s+/).filter(Boolean).length;
+    return Math.min(5_000, Math.max(2_000, 1_650 + (wordCount * 210) + randomBetween(180, 650)));
+};
+
 const detectCityFromText = (input: string): string | null => {
     const match = input.match(/\b(?:sou|moro)\s+(?:de|do|da|em)\s+([\p{L}\s]{2,40})/iu);
     if (!match) return null;
@@ -619,9 +642,26 @@ export async function POST(req: NextRequest) {
         maxChars: Number(botConfig.fish_audio_max_chars || DEFAULT_FISH_AUDIO_SETTINGS.maxChars),
     });
 
-    // Debounce curto: mostra atividade imediatamente e ainda agrupa mensagens seguidas.
-    await sendTelegramAction(botToken, chatId, 'typing');
-    await new Promise(resolve => setTimeout(resolve, 850));
+    const waitWithChatAction = async (
+        action: Parameters<typeof sendTelegramAction>[2],
+        durationMs: number,
+    ) => {
+        await sendTelegramAction(botToken, chatId, action);
+        const heartbeat = durationMs > 4_000
+            ? setInterval(() => {
+                void sendTelegramAction(botToken, chatId, action);
+            }, 4_000)
+            : null;
+        try {
+            await new Promise((resolve) => setTimeout(resolve, durationMs));
+        } finally {
+            if (heartbeat) clearInterval(heartbeat);
+        }
+    };
+
+    // Pequena pausa de leitura antes de começar a digitar; também agrupa mensagens seguidas.
+    await new Promise((resolve) => setTimeout(resolve, randomBetween(450, 900)));
+    await waitWithChatAction('typing', randomBetween(450, 800));
 
     // Verificar mensagens mais recentes (Lógica de Substituição)
     // Verificamos se há alguma mensagem MAIS NOVA que a que disparou este worker.
@@ -645,6 +685,68 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ status: 'superseded' });
         }
     }
+
+    // Uma conversa por vez. Leads diferentes continuam processando em paralelo,
+    // mas dois workers da mesma sessão nunca geram resposta/pagamento duplicado.
+    const workerToken = crypto.randomUUID();
+    let leaseEnabled = true;
+    let leaseClaimed = false;
+    const releaseProcessingLease = async () => {
+        if (!leaseEnabled || !leaseClaimed) return;
+        await supabase
+            .from('sessions')
+            .update({ processing_token: null, processing_started_at: null })
+            .eq('id', sessionId)
+            .eq('processing_token', workerToken);
+        leaseClaimed = false;
+    };
+    const tryClaimProcessingLease = async () => {
+        const leaseCutoff = new Date(Date.now() - PROCESSING_LEASE_TTL_MS).toISOString();
+        const { data, error } = await supabase
+            .from('sessions')
+            .update({ processing_token: workerToken, processing_started_at: new Date().toISOString() })
+            .eq('id', sessionId)
+            .or(`processing_token.is.null,processing_started_at.is.null,processing_started_at.lt.${leaseCutoff}`)
+            .select('id');
+
+        if (error) {
+            const message = String(error.message || '').toLowerCase();
+            if (String((error as any).code || '') === '42703' || message.includes('processing_started_at') || message.includes('processing_token')) {
+                console.warn('[PROCESSADOR] Colunas de lease ainda não existem; seguindo com debounce antigo.');
+                leaseEnabled = false;
+                return true;
+            }
+            throw error;
+        }
+        leaseClaimed = Boolean(data?.length);
+        return leaseClaimed;
+    };
+
+    const leaseDeadline = Date.now() + PROCESSING_LEASE_WAIT_MS;
+    while (!(await tryClaimProcessingLease())) {
+        if (Date.now() >= leaseDeadline) {
+            console.warn(`[PROCESSADOR] Sessão ${sessionId} continua ocupada; o worker mais novo será reprocessado pelo próximo evento.`);
+            return NextResponse.json({ status: 'session_busy' }, { status: 202 });
+        }
+        await new Promise((resolve) => setTimeout(resolve, PROCESSING_LEASE_POLL_MS));
+    }
+
+    try {
+        // O worker pode ter esperado outro turno terminar. Confere novamente se
+        // ainda representa a mensagem mais nova antes de gastar uma chamada de IA.
+        if (leaseEnabled && triggerMessageId) {
+            const { data: latestAfterLease } = await supabase
+                .from('messages')
+                .select('id')
+                .eq('session_id', sessionId)
+                .eq('sender', 'user')
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .single();
+            if (latestAfterLease && String(latestAfterLease.id) !== String(triggerMessageId)) {
+                return NextResponse.json({ status: 'superseded_after_wait' });
+            }
+        }
 
     // Se chegamos aqui, DEVEMOS manter o status digitando ativo se o processamento demorar?
     // Digitando no Telegram dura ~5s. Pode ter expirado ou estar perto. 
@@ -1158,7 +1260,71 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         safeMessages[0] = `ei amor ${safeMessages[0]}`;
     }
 
-    const outgoingToSend = safeMessages;
+    const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));
+    const mediaDeliveryClaim = /(ta aqui|t[aá] aqui|olha essa|acabei de (te )?mandar|te mandei|gostou|curtiu|o que achou|do que viu)/i;
+    const firstGeneratedMessage = safeMessages[0] || '';
+    const naturalMediaSetup = (firstGeneratedMessage && !mediaDeliveryClaim.test(firstGeneratedMessage) ? firstGeneratedMessage : '')
+        || contextualMedia?.intro
+        || 'pera ai, separei uma coisinha que combina com vc';
+    const mediaReactionMessage = safeMessages.find((message: string) =>
+        /(gostou|curtiu|o que achou|me fala o que achou|do que viu)/i.test(message)
+    ) || 'agora me fala o que achou';
+
+    // Em turnos com mídia, nunca alegamos que o arquivo chegou antes do Telegram confirmar.
+    // Um único balão prepara o envio; a reação só sai depois da entrega bem-sucedida.
+    const deferredMediaMessages = isMediaDeliveryTurn ? [mediaReactionMessage] : [];
+    const outgoingToSend = isMediaDeliveryTurn ? [naturalMediaSetup] : safeMessages;
+    let operationalLeadMemory = updatedLeadMemory;
+    const persistMediaDeliveryStatus = async (
+        status: 'delivered' | 'recovered' | 'failed',
+        details: { mediaType?: string; mediaUrl?: string } = {},
+    ) => {
+        operationalLeadMemory = {
+            ...operationalLeadMemory,
+            metadata: {
+                ...(operationalLeadMemory.metadata || {}),
+                last_media_status: status,
+                last_media_action: String(aiResponse.action || 'none'),
+                last_media_type: details.mediaType || null,
+                last_media_url: details.mediaUrl || null,
+                last_media_at: new Date().toISOString(),
+            },
+            updated_at: new Date().toISOString(),
+        };
+        const { error } = await supabase
+            .from('sessions')
+            .update({ lead_memory: operationalLeadMemory })
+            .eq('id', session.id);
+        if (error) console.warn('[MÍDIA] Falha ao salvar status operacional:', error.message);
+    };
+
+    const findNewerUserMessage = async () => {
+        const { data } = await supabase
+            .from('messages')
+            .select('id, created_at')
+            .eq('session_id', session.id)
+            .eq('sender', 'user')
+            .gt('created_at', lastGroupedUserAt)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        return data;
+    };
+
+    const sendDeferredMediaReaction = async () => {
+        for (const message of deferredMediaMessages) {
+            if (await findNewerUserMessage()) return;
+
+            await waitWithChatAction('typing', humanTextDelayMs(message, 1));
+            if (await findNewerUserMessage()) return;
+            await sendTelegramMessage(botToken, chatId, message);
+            await supabase.from('messages').insert({
+                session_id: session.id,
+                sender: 'bot',
+                content: message,
+            });
+        }
+    };
     const audioCooldownSince = new Date(Date.now() - fishAudioSettings.cooldownMinutes * 60_000).toISOString();
     const { data: recentAudio } = fishAudioSettings.enabled
         ? await supabase
@@ -1182,45 +1348,51 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             hasRecentAudio: Boolean(recentAudio),
         })
     );
+    const preparedAudioPromise = preferredAudioIndex >= 0
+        ? (() => {
+            const messageText = outgoingToSend[preferredAudioIndex];
+            const expressiveText = buildExpressiveSpeech({
+                messageText,
+                userText: userOnlyText,
+                emotionalContext: String(session.lead_memory?.emotional_context || ''),
+                maxChars: fishAudioSettings.maxChars,
+            });
+            return generateFishAudio({ settings: fishAudioSettings, text: expressiveText })
+                .then((audio) => ({ audio, expressiveText, error: null as unknown }))
+                .catch((error: unknown) => ({ audio: null, expressiveText, error }));
+        })()
+        : null;
 
     for (let i = 0; i < outgoingToSend.length; i++) {
         const msgText = outgoingToSend[i];
 
-        const { data: newerUserMsg } = await supabase
-            .from('messages')
-            .select('id, created_at')
-            .eq('session_id', session.id)
-            .eq('sender', 'user')
-            .gt('created_at', lastGroupedUserAt)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+        const newerUserMsg = await findNewerUserMessage();
 
         if (newerUserMsg) {
             console.log(`[PROCESSADOR] Abortando envio. Lead mandou mensagem nova depois do pacote processado: ${newerUserMsg.id}`);
             return NextResponse.json({ status: 'superseded_during_send' });
         }
 
-        // A geracao da IA ja serviu como espera para o primeiro balao.
-        // Os seguintes chegam em sequencia curta, com uma pausa proporcional ao tamanho.
-        if (i > 0) {
-            const jitter = Math.floor(Math.random() * 181);
-            const delay = Math.min(900, Math.max(380, 260 + (msgText.length * 4) + jitter));
-            await sendTelegramAction(botToken, chatId, 'typing');
-            await new Promise(r => setTimeout(r, delay));
-        }
-
         if (i === preferredAudioIndex) {
             try {
-                await sendTelegramAction(botToken, chatId, 'record_voice');
+                if (!preparedAudioPromise) throw new Error('audio nao preparado');
                 const expressiveText = buildExpressiveSpeech({
                     messageText: msgText,
                     userText: userOnlyText,
                     emotionalContext: String(session.lead_memory?.emotional_context || ''),
                     maxChars: fishAudioSettings.maxChars,
                 });
-                const audio = await generateFishAudio({ settings: fishAudioSettings, text: expressiveText });
-                await sendTelegramVoice(botToken, chatId, audio);
+                const [preparedAudio] = await Promise.all([
+                    preparedAudioPromise,
+                    waitWithChatAction('record_voice', humanAudioRecordingDelayMs(expressiveText)),
+                ]);
+                if (preparedAudio.error || !preparedAudio.audio) throw preparedAudio.error || new Error('audio vazio');
+                const interruptedDuringRecording = await findNewerUserMessage();
+                if (interruptedDuringRecording) {
+                    console.log(`[PROCESSADOR] Áudio cancelado porque o lead enviou uma mensagem nova: ${interruptedDuringRecording.id}`);
+                    return NextResponse.json({ status: 'superseded_during_recording' });
+                }
+                await sendTelegramVoice(botToken, chatId, preparedAudio.audio);
                 await supabase.from('messages').insert({
                     session_id: session.id,
                     sender: 'bot',
@@ -1236,6 +1408,13 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     content: `[FISH AUDIO ERROR] ${String(error?.message || error).slice(0, 500)}`,
                 });
             }
+        }
+
+        await waitWithChatAction('typing', humanTextDelayMs(msgText, i));
+        const interruptedDuringTyping = await findNewerUserMessage();
+        if (interruptedDuringTyping) {
+            console.log(`[PROCESSADOR] Texto cancelado porque o lead enviou uma mensagem nova: ${interruptedDuringTyping.id}`);
+            return NextResponse.json({ status: 'superseded_during_typing' });
         }
 
         await supabase.from('messages').insert({
@@ -1276,9 +1455,32 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         const SHOWER_PHOTO = "https://i.ibb.co/dwf177Kc/download.jpg";
         const LINGERIE_PHOTO = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
         const WET_PHOTO = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
-        const VIDEO_PREVIEW = "BAACAgEAAxkBAAIHMmllipghQzttsno99r2_C_8jpAIiAAL9BQACaHUxR4HU9Y9IirkLOAQ";
-        const HOT_PREVIEW_VIDEO = "BAACAgEAAxkBAAIJ52ll0E_2iOfBZnzMe34rOr6Mi5hjAAIsBQACWoUoR8dO8XUHmuEwOAQ";
-        const ASS_PHOTO_PREVIEW_ID = "AgACAgEAAxkBAAIJ7mll03HJtLdhDpZIFFYsOAuZ52UdAAIYDmsbWoUoR5pkHZDTJ9f0AQADAgADeQADOAQ";
+        const configuredOrigin = process.env.APP_URL || process.env.NEXT_PUBLIC_SITE_URL || '';
+        const forwardedHost = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
+        const forwardedProto = req.headers.get('x-forwarded-proto') || 'https';
+        const requestOrigin = forwardedHost ? `${forwardedProto}://${forwardedHost}` : req.nextUrl.origin;
+        const configuredOriginIsPublic = /^https?:\/\//i.test(configuredOrigin)
+            && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(configuredOrigin);
+        const publicOrigin = configuredOriginIsPublic ? configuredOrigin : requestOrigin;
+        const VIDEO_PREVIEW = new URL('/videos/lari.mp4', publicOrigin).toString();
+
+        const getRegisteredPreview = async (mediaType?: 'image' | 'video', excludeUrls: string[] = []) => {
+            let query = supabase
+                .from('preview_assets')
+                .select('id,name,media_url,media_type,priority')
+                .eq('enabled', true)
+                .order('priority', { ascending: false })
+                .order('created_at', { ascending: false })
+                .limit(20);
+            if (mediaType) query = query.eq('media_type', mediaType);
+            const { data, error } = await query;
+            if (error) {
+                console.warn('[MÍDIA] Falha ao procurar prévia cadastrada:', error.message);
+                return null;
+            }
+            const excluded = new Set(excludeUrls.map((url) => String(url || '')));
+            return (data || []).find((item: any) => item.media_url && !excluded.has(String(item.media_url))) || null;
+        };
 
         let mediaUrl = null;
         let mediaType = null;
@@ -1299,14 +1501,32 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     caption = "";
                 }
             }
+            if (!mediaUrl) {
+                const requestedType = /video|vídeo/i.test(userOnlyText) ? 'video' : undefined;
+                const fallbackPreview = await getRegisteredPreview(requestedType);
+                if (fallbackPreview) {
+                    mediaUrl = fallbackPreview.media_url;
+                    mediaType = fallbackPreview.media_type;
+                }
+            }
         } else {
             switch (aiResponse.action) {
                 case 'send_shower_photo': mediaUrl = SHOWER_PHOTO; mediaType = 'image'; caption = ""; break;
                 case 'send_lingerie_photo': mediaUrl = LINGERIE_PHOTO; mediaType = 'image'; break;
                 case 'send_wet_finger_photo': mediaUrl = WET_PHOTO; mediaType = 'image'; break;
-                case 'send_ass_photo_preview': mediaUrl = ASS_PHOTO_PREVIEW_ID; mediaType = 'image'; break;
-                case 'send_video_preview': mediaUrl = VIDEO_PREVIEW; mediaType = 'video'; break;
-                case 'send_hot_video_preview': mediaUrl = HOT_PREVIEW_VIDEO; mediaType = 'video'; break;
+                case 'send_ass_photo_preview': {
+                    const registered = await getRegisteredPreview('image');
+                    mediaUrl = registered?.media_url || SHOWER_PHOTO;
+                    mediaType = 'image';
+                    break;
+                }
+                case 'send_video_preview':
+                case 'send_hot_video_preview': {
+                    const registered = await getRegisteredPreview('video');
+                    mediaUrl = registered?.media_url || VIDEO_PREVIEW;
+                    mediaType = 'video';
+                    break;
+                }
                 case 'check_payment_status':
                 // Verificar se o último pagamento foi pago
                 try {
@@ -1571,54 +1791,164 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         }
 
         if (mediaUrl) {
+            const sendResolvedMedia = async (type: string, url: string) => {
+                if (type === 'image') {
+                    await sendTelegramAction(botToken, chatId, 'upload_photo');
+                    const heartbeat = setInterval(() => {
+                        void sendTelegramAction(botToken, chatId, 'upload_photo');
+                    }, 4_000);
+                    try {
+                        await sendTelegramPhoto(botToken, chatId, url, caption);
+                    } finally {
+                        clearInterval(heartbeat);
+                    }
+                    return;
+                }
+                if (type === 'video') {
+                    await sendTelegramAction(botToken, chatId, 'upload_video');
+                    const heartbeat = setInterval(() => {
+                        void sendTelegramAction(botToken, chatId, 'upload_video');
+                    }, 4_000);
+                    try {
+                        await sendTelegramVideo(botToken, chatId, url, caption);
+                    } finally {
+                        clearInterval(heartbeat);
+                    }
+                    return;
+                }
+                throw new Error(`tipo de midia invalido: ${type}`);
+            };
+
+            const userAskedRepeatMedia = /(de novo|manda de novo|reenviar|envia de novo|outra vez)/i.test(userOnlyText);
+            const { data: recentMediaRows } = !userAskedRepeatMedia
+                ? await supabase
+                    .from('messages')
+                    .select('media_url')
+                    .eq('session_id', session.id)
+                    .eq('sender', 'bot')
+                    .not('media_url', 'is', null)
+                    .order('created_at', { ascending: false })
+                    .limit(8)
+                : { data: [] };
+            const recentUrls = new Set((recentMediaRows || []).map((row: any) => String(row.media_url || '')).filter(Boolean));
+
+            if (recentUrls.has(String(mediaUrl))) {
+                const alternative = await getRegisteredPreview(
+                    mediaType === 'image' || mediaType === 'video' ? mediaType : undefined,
+                    [...recentUrls, String(mediaUrl)],
+                );
+                if (alternative) {
+                    mediaUrl = alternative.media_url;
+                    mediaType = alternative.media_type;
+                } else if (mediaType === 'video' && !recentUrls.has(VIDEO_PREVIEW)) {
+                    mediaUrl = VIDEO_PREVIEW;
+                }
+            }
+
+            let deliveredUrl = String(mediaUrl);
+            let deliveredType = String(mediaType || '');
+            const deliveryErrors: string[] = [];
+            let deliveryRecovered = false;
+
             try {
-                const userAskedRepeatMedia = /(de novo|manda de novo|reenviar|envia de novo|outra vez)/i.test(userOnlyText);
-                if (!userAskedRepeatMedia) {
-                    const { data: recentMediaRows } = await supabase
-                        .from('messages')
-                        .select('content, media_url')
-                        .eq('session_id', session.id)
-                        .eq('sender', 'bot')
-                        .not('media_url', 'is', null)
-                        .order('created_at', { ascending: false })
-                        .limit(8);
+                await sendResolvedMedia(deliveredType, deliveredUrl);
+            } catch (primaryError: any) {
+                deliveryErrors.push(`principal ${deliveredType}:${deliveredUrl} -> ${primaryError?.message || primaryError}`);
+                console.error('[MÍDIA] Ativo principal falhou, tentando fallback:', primaryError);
 
-                    const repeatedMedia = (recentMediaRows || []).some((row: any) => {
-                        if (mediaUrl && row.media_url && String(row.media_url) === String(mediaUrl)) return true;
-                        return String(row.content || '').includes(String(aiResponse.action || ''));
-                    });
+                const excludedUrls = [...recentUrls, deliveredUrl];
+                const registeredSameType = await getRegisteredPreview(
+                    deliveredType === 'image' || deliveredType === 'video' ? deliveredType : undefined,
+                    excludedUrls,
+                );
+                const registeredAnyType = await getRegisteredPreview(undefined, [
+                    ...excludedUrls,
+                    String(registeredSameType?.media_url || ''),
+                ]);
+                const fallbackCandidates = [
+                    registeredSameType && { url: String(registeredSameType.media_url), type: String(registeredSameType.media_type) },
+                    deliveredType === 'video' && deliveredUrl !== VIDEO_PREVIEW && !recentUrls.has(VIDEO_PREVIEW)
+                        ? { url: VIDEO_PREVIEW, type: 'video' }
+                        : null,
+                    registeredAnyType && { url: String(registeredAnyType.media_url), type: String(registeredAnyType.media_type) },
+                    deliveredUrl !== SHOWER_PHOTO && !recentUrls.has(SHOWER_PHOTO)
+                        ? { url: SHOWER_PHOTO, type: 'image' }
+                        : null,
+                ].filter((candidate): candidate is { url: string; type: string } => Boolean(candidate?.url));
 
-                    if (repeatedMedia) {
-                        await sendTelegramMessage(botToken, chatId, "essa eu ja tinha te mandado amor, vou separar outra coisa pra vc");
-                        await supabase.from('messages').insert({
-                            session_id: session.id,
-                            sender: 'bot',
-                            content: "essa eu ja tinha te mandado amor, vou separar outra coisa pra vc"
-                        });
-                        return NextResponse.json({ success: true, skippedRepeatedMedia: true });
+                let recovered = false;
+                for (const candidate of fallbackCandidates) {
+                    try {
+                        await sendResolvedMedia(candidate.type, candidate.url);
+                        deliveredUrl = candidate.url;
+                        deliveredType = candidate.type;
+                        recovered = true;
+                        deliveryRecovered = true;
+                        break;
+                    } catch (fallbackError: any) {
+                        deliveryErrors.push(`fallback ${candidate.type}:${candidate.url} -> ${fallbackError?.message || fallbackError}`);
                     }
                 }
 
-                if (mediaType === 'image') await sendTelegramPhoto(botToken, chatId, mediaUrl, caption);
-                if (mediaType === 'video') await sendTelegramVideo(botToken, chatId, mediaUrl, caption);
+                if (!recovered) {
+                    await supabase.from('messages').insert({
+                        session_id: session.id,
+                        sender: 'system',
+                        content: `[DEBUG: ERRO MÍDIA] ${deliveryErrors.join(' | ').slice(0, 1800)}`
+                    });
+                    await persistMediaDeliveryStatus('failed');
+                    const recoveryMessages = [
+                        'essa travou bem na hora de subir kkk',
+                        'quer que eu tente uma foto ou um video curtinho?',
+                    ];
+                    for (let recoveryIndex = 0; recoveryIndex < recoveryMessages.length; recoveryIndex++) {
+                        const recoveryMessage = recoveryMessages[recoveryIndex];
+                        await waitWithChatAction('typing', humanTextDelayMs(recoveryMessage, recoveryIndex));
+                        if (await findNewerUserMessage()) {
+                            return NextResponse.json({ status: 'superseded_during_media_recovery' });
+                        }
+                        await sendTelegramMessage(botToken, chatId, recoveryMessage);
+                        await supabase.from('messages').insert({
+                            session_id: session.id,
+                            sender: 'bot',
+                            content: recoveryMessage,
+                        });
+                    }
+                    return NextResponse.json({ success: false, mediaError: true });
+                }
 
                 await supabase.from('messages').insert({
                     session_id: session.id,
-                    sender: 'bot',
-                    content: `[MÍDIA: ${aiResponse.action}]`,
-                    media_url: mediaUrl,
-                    media_type: mediaType
-                });
-            } catch (err: any) {
-                console.error("Erro ao enviar mídia:", err);
-                await supabase.from('messages').insert({
-                    session_id: session.id,
                     sender: 'system',
-                    content: `[DEBUG: ERRO MÍDIA] ${err.message}`
+                    content: `[MÍDIA RECUPERADA] ${deliveryErrors[0].slice(0, 900)} | fallback: ${deliveredType}:${deliveredUrl}`
                 });
-                // Fallback: Avisar usuário se falhar vídeo
-                await sendTelegramMessage(botToken, chatId, "(amor tive um erro pra enviar o video... tenta de novo?)");
             }
+
+            await supabase.from('messages').insert({
+                session_id: session.id,
+                sender: 'bot',
+                content: `[MÍDIA: ${aiResponse.action}]`,
+                media_url: deliveredUrl,
+                media_type: deliveredType
+            });
+            await persistMediaDeliveryStatus(deliveryRecovered ? 'recovered' : 'delivered', {
+                mediaType: deliveredType,
+                mediaUrl: deliveredUrl,
+            });
+            await sendDeferredMediaReaction();
+        } else if (isMediaDeliveryTurn) {
+            await persistMediaDeliveryStatus('failed');
+            const noAssetMessage = 'essa nao carregou aqui, vou pegar outra pra vc';
+            await waitWithChatAction('typing', humanTextDelayMs(noAssetMessage, 0));
+            if (await findNewerUserMessage()) {
+                return NextResponse.json({ status: 'superseded_during_media_recovery' });
+            }
+            await sendTelegramMessage(botToken, chatId, noAssetMessage);
+            await supabase.from('messages').insert({
+                session_id: session.id,
+                sender: 'bot',
+                content: noAssetMessage,
+            });
         }
     }
 
@@ -1627,4 +1957,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         debug_stats: aiResponse.lead_stats,
         debug_funnel: nextStep
     });
+    } finally {
+        await releaseProcessingLease();
+    }
 }
