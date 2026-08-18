@@ -4,6 +4,7 @@ export const DEFAULT_GEMINI_LITE_MODEL = "gemini-3.5-flash-lite";
 export const OPENROUTER_MODEL_FALLBACK_ORDER = [
     "deepseek/deepseek-v4-flash-0731",
     "deepseek/deepseek-v4-flash",
+    "qwen/qwen3.7-flash",
     "nvidia/nemotron-3-ultra-550b-a55b",
 ] as const;
 

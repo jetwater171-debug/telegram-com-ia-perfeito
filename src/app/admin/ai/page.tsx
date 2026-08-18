@@ -98,7 +98,7 @@ const roleLabels: Record<string, string> = {
 const PRESETS = {
     openrouterFree: {
         label: "DeepSeek 0731 + reservas",
-        description: "Usa 0731, depois 0423 e Nemotron 3 Ultra antes do Gemini.",
+        description: "Usa 0731, 0423, Qwen 3.7 Flash e Nemotron 3 Ultra antes do Gemini.",
         order: ["openrouter", "gemini"] as ProviderKey[],
         openrouter: {
             draft: DEFAULT_OPENROUTER_MODEL,
