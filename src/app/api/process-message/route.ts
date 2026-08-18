@@ -18,6 +18,7 @@ import {
     shouldUseFishAudio,
 } from '@/lib/fishAudio';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
+import { analyzeMissingPhotoRequest } from '@/lib/previewRequestAnalyzer';
 
 export const maxDuration = 120;
 
@@ -545,6 +546,37 @@ const inferRequestedPreviewSpec = (userText: string, action?: string) => {
     };
 };
 
+const registerMissingPhotoRequest = async (input: {
+    userText: string;
+    description?: string;
+    tags?: string[];
+    action?: string;
+    photoHint?: boolean;
+    sessionId: string;
+}) => {
+    const analysis = await analyzeMissingPhotoRequest({
+        requestText: input.userText,
+        description: input.description,
+        tags: input.tags,
+        action: input.action,
+        photoHint: input.photoHint,
+    });
+    if (analysis.media_kind !== 'photo') {
+        console.log('[PREVIAS] Pedido fora da fila de fotos:', analysis.media_kind);
+        return null;
+    }
+    return upsertMissingPreviewRequest({
+        description: analysis.title,
+        tags: analysis.tags,
+        examplePhrase: input.userText,
+        sessionId: input.sessionId,
+        canonicalKey: analysis.canonical_key,
+        adminBrief: analysis.production_brief,
+        analysis,
+        mediaType: 'photo',
+    });
+};
+
 const randNormal = (): number => {
     let u = 0, v = 0;
     while (u === 0) u = Math.random();
@@ -1069,24 +1101,25 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         action: aiResponse.action,
         state: aiResponse.current_state,
     });
-    const contextualMedia = aiResponse.preview_request
+    const contextualMedia = aiResponse.preview_request?.media_type === 'photo'
         ? null
         : resolveContextualMediaAction(userOnlyText, aiResponse.action);
     if (contextualMedia) {
         aiResponse.action = contextualMedia.action;
         aiResponse.current_state = ACTION_STAGE_MAP[contextualMedia.action] || aiResponse.current_state;
     }
+    let pendingPhotoRequestAnalysis: Promise<unknown> | null = null;
     if (aiResponse.preview_request?.description) {
-        try {
-            await upsertMissingPreviewRequest({
-                description: aiResponse.preview_request.description,
-                tags: aiResponse.preview_request.tags || [],
-                examplePhrase: userOnlyText,
-                sessionId: session.id,
-            });
-        } catch (error: any) {
+        pendingPhotoRequestAnalysis = registerMissingPhotoRequest({
+            userText: userOnlyText,
+            description: aiResponse.preview_request.description,
+            tags: aiResponse.preview_request.tags || [],
+            action: aiResponse.preview_request.media_type === 'video' ? 'send_video_preview' : 'none',
+            photoHint: aiResponse.preview_request.media_type === 'photo',
+            sessionId: session.id,
+        }).catch((error: any) => {
             console.warn('[PREVIAS] Falha ao registrar ideia sugerida pelo lead:', error?.message || error);
-        }
+        });
     } else if (aiResponse.action === 'none' && /(manda|mostra|quero ver|tem foto|tem video|tem vídeo|foto|video|vídeo|previa|prévia)/i.test(userOnlyText)) {
         try {
             const requestedSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
@@ -1101,11 +1134,14 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 scorePreviewForContext(asset, userOnlyText, requestedSpec.tags)
             ));
             if (bestScore < 4) {
-                await upsertMissingPreviewRequest({
+                pendingPhotoRequestAnalysis = registerMissingPhotoRequest({
+                    userText: userOnlyText,
                     description: requestedSpec.description,
                     tags: requestedSpec.tags,
-                    examplePhrase: requestedSpec.examplePhrase,
+                    action: aiResponse.action,
                     sessionId: session.id,
+                }).catch((error: any) => {
+                    console.warn('[PREVIAS] Falha ao analisar lacuna do catalogo:', error?.message || error);
                 });
             }
         } catch (error: any) {
@@ -2012,10 +2048,11 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             await sendDeferredMediaReaction();
         } else if (isMediaDeliveryTurn) {
             await persistMediaDeliveryStatus('failed');
-            await upsertMissingPreviewRequest({
+            await registerMissingPhotoRequest({
+                userText: userOnlyText,
                 description: requestedPreviewSpec.description,
                 tags: requestedPreviewSpec.tags,
-                examplePhrase: requestedPreviewSpec.examplePhrase,
+                action: aiResponse.action,
                 sessionId: session.id,
             });
             const noAssetMessage = 'essa eu ainda nao tenho exatamente desse jeito, vou guardar a ideia';
@@ -2031,6 +2068,10 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             });
         }
     }
+
+    // A análise pode usar outra IA, mas nunca segura os balões: só aguardamos a
+    // persistência depois que a resposta ao lead já foi entregue.
+    if (pendingPhotoRequestAnalysis) await pendingPhotoRequestAnalysis;
 
     return NextResponse.json({
         success: true,

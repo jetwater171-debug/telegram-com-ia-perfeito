@@ -30,6 +30,23 @@ type PreviewRequest = {
     request_count: number;
     priority: number;
     status: "pending" | "fulfilled" | "dismissed";
+    media_type?: "photo" | "video";
+    admin_brief?: string | null;
+    analysis_model?: string | null;
+    request_analysis?: {
+        title?: string;
+        production_brief?: string;
+        pose?: string;
+        outfit?: string;
+        accessories?: string[];
+        setting?: string;
+        framing?: string;
+        expression?: string;
+        explicitness?: string;
+        body_focus?: string[];
+        props?: string[];
+        confidence?: number;
+    } | null;
     last_requested_at?: string | null;
 };
 
@@ -74,7 +91,7 @@ export default function AdminPreviewsPage() {
         return () => window.clearTimeout(timer);
     }, [loadData]);
 
-    const pendingRequests = useMemo(() => requests.filter((item) => item.status === "pending"), [requests]);
+    const pendingRequests = useMemo(() => requests.filter((item) => item.status === "pending" && item.media_type !== "video"), [requests]);
     const filteredAssets = useMemo(() => {
         const query = search.trim().toLowerCase();
         return assets.filter((asset) => {
@@ -165,6 +182,26 @@ export default function AdminPreviewsPage() {
         if (response.ok) setRequests((current) => current.map((item) => item.id === id ? { ...item, status } : item));
     };
 
+    const copyRequestBrief = async (request: PreviewRequest) => {
+        const analysis = request.request_analysis;
+        const lines = [
+            analysis?.title || request.requested_description,
+            request.admin_brief || analysis?.production_brief,
+            analysis?.pose && `Pose: ${analysis.pose}`,
+            analysis?.outfit && `Roupa: ${analysis.outfit}`,
+            analysis?.accessories?.length && `Acessórios: ${analysis.accessories.join(", ")}`,
+            analysis?.setting && `Cenário: ${analysis.setting}`,
+            analysis?.framing && `Enquadramento: ${analysis.framing}`,
+            analysis?.expression && `Expressão: ${analysis.expression}`,
+            analysis?.body_focus?.length && `Foco: ${analysis.body_focus.join(", ")}`,
+            analysis?.props?.length && `Objetos: ${analysis.props.join(", ")}`,
+            analysis?.explicitness && `Nível: ${analysis.explicitness}`,
+            request.example_phrase && `Pedido original: “${request.example_phrase}”`,
+        ].filter(Boolean).join("\n");
+        await navigator.clipboard.writeText(lines);
+        setMessage("briefing da foto copiado");
+    };
+
     const saveModels = async () => {
         const response = await fetch("/api/admin/previews", {
             method: "PATCH",
@@ -247,15 +284,36 @@ export default function AdminPreviewsPage() {
 
                     <div className="space-y-6">
                         <section className="rounded-3xl border border-fuchsia-300/15 bg-fuchsia-300/[0.04] p-5 lg:p-6">
-                            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="text-lg font-bold">Fotos pedidas pelos leads</h2><p className="mt-1 text-xs text-slate-500">Pedidos repetidos sobem automaticamente de prioridade.</p></div><span className="rounded-full bg-fuchsia-300/10 px-3 py-1 text-xs font-bold text-fuchsia-200">{pendingRequests.length} pendentes</span></div>
+                            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="text-lg font-bold">Fotos pedidas pelos leads</h2><p className="mt-1 text-xs leading-5 text-slate-500">Somente fotos faltantes. A IA transforma cada pedido em briefing e agrupa pedidos equivalentes automaticamente.</p></div><span className="rounded-full bg-fuchsia-300/10 px-3 py-1 text-xs font-bold text-fuchsia-200">{pendingRequests.length} pendentes</span></div>
                             <div className="mt-4 grid gap-3 md:grid-cols-2">
                                 {pendingRequests.slice(0, 12).map((request) => (
-                                    <div key={request.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                                        <div className="flex items-start justify-between gap-3"><p className="text-sm font-semibold leading-5">{request.requested_description}</p><span className="shrink-0 rounded-full bg-white/5 px-2 py-1 text-[10px] text-slate-400">{request.request_count}x</span></div>
-                                        {request.example_phrase && <p className="mt-2 text-xs italic text-slate-500">“{request.example_phrase}”</p>}
+                                    <article key={request.id} className="overflow-hidden rounded-2xl border border-fuchsia-300/15 bg-black/25">
+                                        <div className="border-b border-white/10 bg-gradient-to-r from-fuchsia-300/[0.08] to-transparent p-4">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div><span className="rounded-full bg-fuchsia-300/15 px-2 py-1 text-[9px] font-black uppercase tracking-[0.16em] text-fuchsia-200">foto analisada</span><h3 className="mt-3 text-sm font-bold leading-5">{request.request_analysis?.title || request.requested_description}</h3></div>
+                                                <span className="shrink-0 rounded-full bg-white/5 px-2 py-1 text-[10px] font-bold text-slate-300">{request.request_count} pedido{request.request_count === 1 ? "" : "s"}</span>
+                                            </div>
+                                            {(request.admin_brief || request.request_analysis?.production_brief) && <p className="mt-3 text-xs leading-5 text-slate-300">{request.admin_brief || request.request_analysis?.production_brief}</p>}
+                                        </div>
+                                        <div className="p-4">
+                                            {request.request_analysis && (
+                                                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                                    <BriefField label="Pose" value={request.request_analysis.pose} />
+                                                    <BriefField label="Roupa" value={request.request_analysis.outfit} />
+                                                    <BriefField label="Cenário" value={request.request_analysis.setting} />
+                                                    <BriefField label="Enquadramento" value={request.request_analysis.framing} />
+                                                    <BriefField label="Expressão" value={request.request_analysis.expression} />
+                                                    <BriefField label="Nível" value={request.request_analysis.explicitness} />
+                                                    <BriefField label="Acessórios" value={request.request_analysis.accessories?.join(", ")} />
+                                                    <BriefField label="Foco" value={request.request_analysis.body_focus?.join(", ")} />
+                                                </div>
+                                            )}
+                                        {request.example_phrase && <div className="mt-3 rounded-xl border border-white/5 bg-white/[0.03] p-3"><p className="text-[9px] font-bold uppercase tracking-wider text-slate-600">pedido original</p><p className="mt-1 text-xs italic leading-5 text-slate-500">“{request.example_phrase}”</p></div>}
                                         <div className="mt-3 flex flex-wrap gap-1">{(request.tags || []).map((tag) => <Tag key={tag}>{tag}</Tag>)}</div>
-                                        <div className="mt-4 flex gap-2"><button onClick={() => { setSelectedRequestId(request.id); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="rounded-xl bg-fuchsia-300 px-3 py-2 text-xs font-black text-slate-950">Produzir e enviar</button><button onClick={() => updateRequest(request.id, "dismissed")} className="rounded-xl border border-white/10 px-3 py-2 text-xs font-semibold text-slate-400">ignorar</button></div>
-                                    </div>
+                                        <div className="mt-4 flex flex-wrap gap-2"><button onClick={() => { setSelectedRequestId(request.id); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="rounded-xl bg-fuchsia-300 px-3 py-2 text-xs font-black text-slate-950">Produzir esta foto</button><button onClick={() => void copyRequestBrief(request)} className="rounded-xl border border-cyan-300/15 px-3 py-2 text-xs font-semibold text-cyan-200">copiar briefing</button><button onClick={() => updateRequest(request.id, "dismissed")} className="rounded-xl border border-white/10 px-3 py-2 text-xs font-semibold text-slate-400">ignorar</button></div>
+                                        {request.analysis_model && <p className="mt-3 truncate text-[9px] text-slate-700">analisado por {request.analysis_model}</p>}
+                                        </div>
+                                    </article>
                                 ))}
                                 {!loadingPage && pendingRequests.length === 0 && <Empty text="Nenhuma lacuna detectada. O catálogo está cobrindo os pedidos atuais." />}
                             </div>
@@ -297,6 +355,11 @@ function Metric({ label, value, accent = false }: { label: string; value: number
 
 function Tag({ children }: { children: React.ReactNode }) {
     return <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-400">{children}</span>;
+}
+
+function BriefField({ label, value }: { label: string; value?: string | null }) {
+    if (!value || /^n[aã]o especificad[oa]$/i.test(value)) return null;
+    return <div className="rounded-xl border border-white/5 bg-white/[0.025] p-2"><span className="block text-[9px] font-bold uppercase tracking-wider text-slate-600">{label}</span><span className="mt-1 block leading-4 text-slate-300">{value}</span></div>;
 }
 
 function Empty({ text }: { text: string }) {

@@ -76,6 +76,7 @@ export interface AIResponse {
     payment_details?: PaymentDetails | null;
     preview_id?: string | null;
     preview_request?: {
+        media_type: "photo" | "video";
         description: string;
         tags: string[];
         reason?: string | null;

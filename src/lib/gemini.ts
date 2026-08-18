@@ -66,11 +66,12 @@ const responseSchema = {
             type: "OBJECT",
             nullable: true,
             properties: {
+                media_type: { type: "STRING", enum: ["photo", "video"] },
                 description: { type: "STRING" },
                 tags: { type: "ARRAY", items: { type: "STRING" } },
                 reason: { type: "STRING", nullable: true }
             },
-            required: ["description", "tags"]
+            required: ["media_type", "description", "tags"]
         },
         payment_details: {
             type: "OBJECT",
@@ -1083,7 +1084,8 @@ Actions validas: none, send_video_preview, send_hot_video_preview, send_ass_phot
 - Midia precisa nascer do pedido atual ou de preferencia real. Antes da action, escreva um balao curto que conecte a midia ao assunto.
 - Toda previa deve vir exclusivamente do catalogo abaixo. Use action=send_custom_preview e preview_id com o ID exato; nao use as actions legadas de foto/video quando nao houver um ID cadastrado.
 - Compare pedido, pose, roupa, acessorio, cenario, enquadramento e nivel de explicitness. Nao mande uma imagem apenas vagamente parecida.
-- Se o lead pedir uma imagem e nao existir correspondencia boa, use action=none, preview_id=null e preencha preview_request com descricao concreta, tags e motivo. Isso cria uma ideia pendente para o admin produzir.
+- Se o lead pedir uma FOTO e nao existir correspondencia boa, use action=none, preview_id=null e preencha preview_request com media_type=photo, descricao concreta, tags e motivo. Isso cria uma foto pendente para o admin produzir.
+- A fila do admin e exclusiva de fotos: para pedido de video sem correspondencia, mantenha preview_request=null. Nunca registre video, gravacao ou midia generica como foto pendente.
 - current_state: WELCOME no primeiro contato; CONNECTION ao conhecer; HOT_TALK em conversa adulta; PREVIEW ao enviar previa; SALES_PITCH ao ofertar; NEGOTIATION ao discutir valor; CLOSING ao confirmar; PAYMENT_CHECK para PIX/status.
 - action=generate_pix_payment exige payment_details.value numerico e description exata.
 - action=check_payment_status nao confirma pagamento por conta propria; o backend verifica.
@@ -1974,7 +1976,7 @@ Se o lead disser que quer comer/transar/meter/chupar/gozar, responda fazendo ele
 Se for usar action de foto/video, messages[0] deve ser apenas uma preparacao curta conectando a midia ao que o lead falou. Nao escreva "ta aqui", "olha essa", "te mandei", "gostou?", "curtiu?" ou "o que achou?" em messages[0]. Nos baloes seguintes pode haver uma unica reacao curta e personalizada; o sistema vai segura-la e so liberar depois da confirmacao do Telegram.
 Se a memoria indicar que o ultimo envio falhou e o lead cobrar, reconheca com leveza e tente uma alternativa. Nunca diga que ele recebeu algo que nao recebeu.
 Atualize lead_memory_patch com os fatos, desejos, objecoes, ganchos, tom e proximo passo realmente observados neste turno.
-Se o lead pedir uma imagem especifica sem correspondencia exata no catalogo, nao improvise outra: action=none, preview_id=null e preview_request={description,tags,reason}. Se houver correspondencia, preview_request=null.
+Se o lead pedir uma FOTO especifica sem correspondencia exata no catalogo, nao improvise outra: action=none, preview_id=null e preview_request={media_type:"photo",description,tags,reason}. Para pedido de video faltante ou se houver correspondencia, preview_request=null.
 
 Retorne JSON com: internal_thought (resumo operacional curto, sem raciocinio passo a passo), lead_classification, lead_stats completo, extracted_user_name, audio_transcription, current_state, messages, action, preview_id, preview_request, payment_details e lead_memory_patch. Use null nos campos opcionais sem valor.`;
 

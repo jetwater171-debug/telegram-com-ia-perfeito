@@ -186,11 +186,18 @@ CREATE TABLE IF NOT EXISTS preview_requests (
     priority INTEGER DEFAULT 0 NOT NULL,
     status TEXT DEFAULT 'pending' NOT NULL,
     source_session_id UUID,
-    matched_preview_id UUID REFERENCES preview_assets(id) ON DELETE SET NULL
+    matched_preview_id UUID REFERENCES preview_assets(id) ON DELETE SET NULL,
+    media_type TEXT DEFAULT 'photo' NOT NULL,
+    admin_brief TEXT,
+    request_analysis JSONB,
+    analysis_model TEXT,
+    analyzed_at TIMESTAMP WITH TIME ZONE
 );
 
 CREATE INDEX IF NOT EXISTS preview_requests_status_priority_idx
     ON preview_requests (status, priority DESC, request_count DESC, last_requested_at DESC);
+CREATE INDEX IF NOT EXISTS preview_requests_photo_queue_idx
+    ON preview_requests (media_type, status, priority DESC, request_count DESC, last_requested_at DESC);
 
 ALTER TABLE preview_requests ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Enable read/write for all" ON preview_requests FOR ALL USING (true) WITH CHECK (true);
