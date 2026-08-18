@@ -18,7 +18,7 @@ import {
     shouldUseFishAudio,
 } from '@/lib/fishAudio';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
-import { analyzeMissingPhotoRequest } from '@/lib/previewRequestAnalyzer';
+import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
 
 export const maxDuration = 120;
 
@@ -491,9 +491,9 @@ const MEDIA_ACTIONS = new Set([
 const resolveContextualMediaAction = (userText: string, currentAction?: string) => {
     const t = (userText || '').toLowerCase();
     const action = currentAction || 'none';
-    const actionIsMedia = MEDIA_ACTIONS.has(action);
-    const askedForMedia = /(manda|mostra|quero ver|deixa eu ver|tem foto|tem video|tem vídeo|foto|video|vídeo|previa|prévia)/i.test(t);
-    if (!actionIsMedia && !askedForMedia) return null;
+    const askedForMedia = /\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|previa|prévia|video|vídeo)\b/i.test(t)
+        || /\b(manda|mostra|envia|quero ver|deixa ver)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo)\b/i.test(t);
+    if (!askedForMedia) return null;
     if (action === 'send_custom_preview') return null;
 
     if (/(de 4|quatro|costas|bunda|rab[ao]|empinad|por tras|por trás)/i.test(t)) {
@@ -1101,7 +1101,20 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         action: aiResponse.action,
         state: aiResponse.current_state,
     });
-    const contextualMedia = aiResponse.preview_request?.media_type === 'photo'
+    const userMediaKind = classifyRequestedMediaLocally(userOnlyText);
+    const userAskedPhoto = userMediaKind === 'photo';
+    const userAskedMedia = userMediaKind !== 'not_media'
+        || /\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|video|vídeo|previa|prévia)\b/i.test(userOnlyText)
+        || /\b(manda|mostra|envia|quero ver|deixa ver)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo)\b/i.test(userOnlyText);
+
+    // Se o lead não pediu mídia e a ação não é uma prévia válida apontada pelo catálogo, cancela action de mídia espúria
+    if (!userAskedMedia && aiResponse.action !== 'send_custom_preview') {
+        if (MEDIA_ACTIONS.has(String(aiResponse.action || ''))) {
+            aiResponse.action = 'none';
+        }
+    }
+
+    const contextualMedia = userAskedPhoto
         ? null
         : resolveContextualMediaAction(userOnlyText, aiResponse.action);
     if (contextualMedia) {
@@ -1109,18 +1122,18 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         aiResponse.current_state = ACTION_STAGE_MAP[contextualMedia.action] || aiResponse.current_state;
     }
     let pendingPhotoRequestAnalysis: Promise<unknown> | null = null;
-    if (aiResponse.preview_request?.description) {
+    if (aiResponse.preview_request?.description && userAskedPhoto) {
         pendingPhotoRequestAnalysis = registerMissingPhotoRequest({
             userText: userOnlyText,
             description: aiResponse.preview_request.description,
             tags: aiResponse.preview_request.tags || [],
             action: aiResponse.preview_request.media_type === 'video' ? 'send_video_preview' : 'none',
-            photoHint: aiResponse.preview_request.media_type === 'photo',
+            photoHint: true,
             sessionId: session.id,
         }).catch((error: any) => {
             console.warn('[PREVIAS] Falha ao registrar ideia sugerida pelo lead:', error?.message || error);
         });
-    } else if (aiResponse.action === 'none' && /(manda|mostra|quero ver|tem foto|tem video|tem vídeo|foto|video|vídeo|previa|prévia)/i.test(userOnlyText)) {
+    } else if (aiResponse.action === 'none' && userAskedPhoto) {
         try {
             const requestedSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
             let query = supabase
@@ -1128,7 +1141,6 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 .select('id,name,description,triggers,tags,priority,media_type')
                 .eq('enabled', true)
                 .limit(1000);
-            if (/video|vídeo/i.test(userOnlyText)) query = query.eq('media_type', 'video');
             const { data: candidates } = await query;
             const bestScore = Math.max(0, ...(candidates || []).map((asset: any) =>
                 scorePreviewForContext(asset, userOnlyText, requestedSpec.tags)
@@ -1358,7 +1370,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         safeMessages[0] = `ei amor ${safeMessages[0]}`;
     }
 
-    const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));
+    const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none')) && (userAskedMedia || aiResponse.action === 'send_custom_preview');
     const mediaDeliveryClaim = /(ta aqui|t[aá] aqui|olha essa|acabei de (te )?mandar|te mandei|gostou|curtiu|o que achou|do que viu)/i;
     const firstGeneratedMessage = safeMessages[0] || '';
     const naturalMediaSetup = (firstGeneratedMessage && !mediaDeliveryClaim.test(firstGeneratedMessage) ? firstGeneratedMessage : '')
@@ -2046,16 +2058,20 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 mediaUrl: deliveredUrl,
             });
             await sendDeferredMediaReaction();
-        } else if (isMediaDeliveryTurn) {
+        } else if (isMediaDeliveryTurn && userAskedMedia) {
             await persistMediaDeliveryStatus('failed');
-            await registerMissingPhotoRequest({
-                userText: userOnlyText,
-                description: requestedPreviewSpec.description,
-                tags: requestedPreviewSpec.tags,
-                action: aiResponse.action,
-                sessionId: session.id,
-            });
-            const noAssetMessage = 'essa eu ainda nao tenho exatamente desse jeito, vou guardar a ideia';
+            if (userAskedPhoto) {
+                await registerMissingPhotoRequest({
+                    userText: userOnlyText,
+                    description: requestedPreviewSpec.description,
+                    tags: requestedPreviewSpec.tags,
+                    action: aiResponse.action,
+                    sessionId: session.id,
+                });
+            }
+            const noAssetMessage = userAskedPhoto
+                ? 'essa eu ainda nao tenho exatamente desse jeito, vou guardar a ideia'
+                : 'esse video eu ainda nao tenho gravado amor, vou pedir pra gravarem';
             await waitWithChatAction('typing', humanTextDelayMs(noAssetMessage, 0));
             if (await findNewerUserMessage()) {
                 return NextResponse.json({ status: 'superseded_during_media_recovery' });

@@ -64,15 +64,15 @@ const clamp = (value: unknown, min: number, max: number, fallback: number) => {
     return Number.isFinite(numeric) ? Math.min(max, Math.max(min, numeric)) : fallback;
 };
 
-const PHOTO_WORDS = /\b(foto|fotinha|selfie|imagem|retrato|nude|nudes|pelada|nua|sem roupa)\b/i;
-const VIDEO_WORDS = /\b(video|vídeo|filmagem|gravacao|gravação|gravado|rebolando|dancando|dançando)\b/i;
-const PHOTO_ACTIONS = new Set([
-    'send_shower_photo', 'send_lingerie_photo', 'send_wet_finger_photo', 'send_ass_photo_preview',
-]);
+const PHOTO_WORDS = /\b(foto|fotinha|fotos|selfie|selfies|imagem|imagens|retrato|retratos|nude|nudes|pelada|nua|sem roupa)\b/i;
+const PHOTO_PHRASES = /\b(manda|mostra|envia|quero ver|deixa ver|posta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia)\b/i;
+const VIDEO_WORDS = /\b(video|vídeo|videos|vídeos|filmagem|gravacao|gravação|gravado|rebolando|dancando|dançando)\b/i;
 
-export const classifyRequestedMediaLocally = (text: string, action?: string) => {
-    const hasPhoto = PHOTO_WORDS.test(text) || PHOTO_ACTIONS.has(String(action || ''));
-    const hasVideo = VIDEO_WORDS.test(text) || /video/i.test(String(action || ''));
+export const classifyRequestedMediaLocally = (text: string, _action?: string) => {
+    const raw = String(text || '').trim();
+    if (!raw) return 'not_media' as const;
+    const hasPhoto = PHOTO_WORDS.test(raw) || PHOTO_PHRASES.test(raw);
+    const hasVideo = VIDEO_WORDS.test(raw);
     if (hasVideo && !hasPhoto) return 'video' as const;
     if (hasPhoto) return 'photo' as const;
     return 'not_media' as const;
@@ -95,7 +95,7 @@ const localAnalysis = (input: { requestText: string; description?: string; tags?
     const tagList = Array.from(tags).filter((tag) => tag !== 'foto' && tag !== 'video').slice(0, 20);
     const explicitness = /(pelada|nua|nude|sem roupa)/i.test(normalized) ? 'nude' : 'unspecified';
     const locallyClassified = classifyRequestedMediaLocally(input.requestText, input.action);
-    const mediaKind = locallyClassified === 'not_media' && input.photoHint ? 'photo' : locallyClassified;
+    const mediaKind = locallyClassified;
     const titleTokens = tagList.slice(0, 4);
     const title = titleTokens.length ? `Foto ${titleTokens.join(' · ')}` : 'Foto personalizada pedida pelo lead';
     const canonicalKey = ['photo', ...tagList.sort()].join('-').replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 180);
@@ -162,9 +162,8 @@ export const analyzeMissingPhotoRequest = async (input: {
 }) => {
     const fallback = localAnalysis(input);
 
-    // Regra estrutural: pedido exclusivamente de vídeo nunca chega à fila de fotos.
-    if (fallback.media_kind === 'video') return fallback;
-    if (fallback.media_kind === 'not_media' && !input.description) return fallback;
+    // Regra estrutural: somente pedidos reais de fotos chegam à fila e gastam análise da IA.
+    if (fallback.media_kind !== 'photo') return fallback;
 
     const settings = await getPreviewVisionSettings();
     if (!settings.apiKey) return fallback;

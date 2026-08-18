@@ -62,6 +62,40 @@ const saveFallbackRequests = async (items: MissingPreviewRequest[]) => {
     });
 };
 
+const SEMANTIC_CLUSTERS: Record<string, string[]> = {
+    coelho: ['coelhinha', 'coelho', 'orelha', 'orelhas', 'bunny', 'fantasia'],
+    cama: ['cama', 'deitada', 'lencol', 'lençol', 'travesseiro', 'colchao'],
+    bunda: ['bunda', 'de quatro', 'costas', 'rabao', 'empinada', 'por tras', 'por trás', 'bumbum'],
+    banho: ['banho', 'chuveiro', 'molhada', 'toalha', 'box', 'espuma', 'ensaboada'],
+    lingerie: ['lingerie', 'calcinha', 'sutia', 'sutiã', 'conjunto', 'renda', 'body'],
+    nua: ['nua', 'pelada', 'nude', 'sem roupa', 'sem nada', 'completa'],
+    peitos: ['peitos', 'peito', 'seios', 'seio', 'teta', 'tetas', 'decote', 'top'],
+    pes: ['pes', 'pezinho', 'pezinhos', 'solas', 'podolatria'],
+    selfie: ['selfie', 'rosto', 'carinha', 'sorriso', 'olhar'],
+};
+
+const getClusters = (tokens: Set<string>) => {
+    const matchedClusters = new Set<string>();
+    for (const [cluster, words] of Object.entries(SEMANTIC_CLUSTERS)) {
+        if (words.some((w) => tokens.has(normalize(w)))) {
+            matchedClusters.add(cluster);
+        }
+    }
+    return matchedClusters;
+};
+
+const isValidPhotoRequestItem = (item: MissingPreviewRequest) => {
+    if (item.media_type === 'video') return false;
+    const fullText = `${item.requested_description || ''} ${item.example_phrase || ''} ${(item.tags || []).join(' ')} ${item.admin_brief || ''}`;
+    const norm = normalize(fullText);
+    if (norm.includes('to bem e voce') || norm.includes('como vc ta') || norm.includes('oii amor') || norm.includes('tudo bem')) {
+        const hasPhotoWord = /\b(foto|fotinha|fotos|selfie|nude|nudes|pelada|nua|sem roupa|lingerie|calcinha|chuveiro|banho|coelhinha|bunda|peitos|pezinho)\b/i.test(fullText);
+        if (!hasPhotoWord) return false;
+    }
+    const hasPhotoIntent = /\b(foto|fotinha|fotos|selfie|selfies|imagem|retrato|nude|nudes|pelada|nua|sem roupa|coelhinha|bunny|lingerie|calcinha|chuveiro|banho|bunda|peitos|pezinho|pes|deitada|cama)\b/i.test(fullText);
+    return hasPhotoIntent;
+};
+
 export const loadMissingPreviewRequests = async (): Promise<MissingPreviewRequest[]> => {
     const { data, error } = await supabase
         .from('preview_requests')
@@ -81,12 +115,24 @@ export const loadMissingPreviewRequests = async (): Promise<MissingPreviewReques
             analysis_model: item.analysis_model || fallbackByKey.get(item.normalized_key)?.analysis_model || null,
         }))
         : fallback;
-    return items.filter((item) => {
-        if (item.media_type === 'video') return false;
-        const legacyText = `${item.requested_description || ''} ${(item.tags || []).join(' ')}`;
-        return !(/\b(video|vídeo|filmagem|gravacao|gravação)\b/i.test(legacyText)
-            && !/\b(foto|fotinha|selfie|imagem|nude|pelada|nua)\b/i.test(legacyText));
-    });
+
+    const validItems = items.filter(isValidPhotoRequestItem);
+
+    // Consolidação semântica em memória para evitar qualquer duplicata no painel
+    const consolidated: MissingPreviewRequest[] = [];
+    for (const item of validItems) {
+        const equiv = findEquivalentRequest(consolidated, item.normalized_key, item.tags || []);
+        if (equiv) {
+            equiv.request_count = Number(equiv.request_count || 1) + Number(item.request_count || 1);
+            equiv.priority = Math.max(Number(equiv.priority || 0), Number(item.priority || 0));
+            equiv.tags = Array.from(new Set([...(equiv.tags || []), ...(item.tags || [])])).slice(0, 20);
+            if (!equiv.admin_brief && item.admin_brief) equiv.admin_brief = item.admin_brief;
+            if (!equiv.request_analysis && item.request_analysis) equiv.request_analysis = item.request_analysis;
+        } else {
+            consolidated.push({ ...item });
+        }
+    }
+    return consolidated.sort((a, b) => (Number(b.priority || 0) - Number(a.priority || 0)) || (Number(b.request_count || 0) - Number(a.request_count || 0)));
 };
 
 export const upsertMissingPreviewRequest = async (input: {
@@ -269,19 +315,35 @@ const similarityTokens = (key: string, tags: string[]) => new Set(
 const findEquivalentRequest = (items: MissingPreviewRequest[], key: string, tags: string[]) => {
     const incoming = similarityTokens(key.replace(/-/g, ' '), tags);
     if (incoming.size === 0) return null;
+    const incomingClusters = getClusters(incoming);
+
     let winner: MissingPreviewRequest | null = null;
     let winnerScore = 0;
     for (const item of items) {
         if (item.media_type === 'video') continue;
+        if (item.status === 'fulfilled' || item.status === 'dismissed') continue;
+        if (item.normalized_key === key) return item;
+
         const existing = similarityTokens(item.normalized_key.replace(/-/g, ' '), item.tags || []);
+        const existingClusters = getClusters(existing);
         const intersection = [...incoming].filter((token) => existing.has(token)).length;
-        const score = (2 * intersection) / (incoming.size + existing.size || 1);
-        if (score > winnerScore) {
+        const diceScore = (2 * intersection) / (incoming.size + existing.size || 1);
+
+        let clusterBonus = 0;
+        if (incomingClusters.size > 0 && existingClusters.size > 0) {
+            const clusterIntersection = [...incomingClusters].filter((c) => existingClusters.has(c)).length;
+            if (clusterIntersection > 0) {
+                clusterBonus = 0.3 * (clusterIntersection / Math.max(incomingClusters.size, existingClusters.size));
+            }
+        }
+
+        const totalScore = diceScore + clusterBonus;
+        if (totalScore > winnerScore) {
             winner = item;
-            winnerScore = score;
+            winnerScore = totalScore;
         }
     }
-    return winnerScore >= 0.78 ? winner : null;
+    return winnerScore >= 0.45 ? winner : null;
 };
 
 export const updateMissingPreviewRequest = async (
