@@ -1735,14 +1735,14 @@ const makeLocalFallbackResponse = (
 
     return {
         internal_thought: hasAudio
-            ? "Fallback local: audio recebido mas IA falhou, pedir resumo sem parecer erro tecnico."
-            : "Fallback local: manter conversa natural sem resposta aleatoria.",
+            ? "Fallback local: audio recebido, responder com entusiasmo e sensualidade."
+            : "Fallback local: manter conversa natural, quente e humana.",
         lead_classification: "desconhecido",
         lead_stats: stats,
         current_state: "CONNECTION",
         messages: hasAudio
-            ? ["ouvi aqui meio cortado amor", "me fala em texto rapidinho?"]
-            : ["entendi amor", "me fala uma coisa rapidinho", "vc quer mais carinho ou mais safadeza?"],
+            ? ["ouvi sua voz aqui", "adorei o seu jeitinho de falar comigo", "me deixou com água na boca"]
+            : ["hummm gostei de ver", "vc me deixa bem soltinha quando fala assim", "quero ver se vc aguenta mesmo"],
         action: "none",
         extracted_user_name: null,
         audio_transcription: null,

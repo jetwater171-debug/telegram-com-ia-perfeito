@@ -14,8 +14,10 @@ import {
     buildExpressiveSpeech,
     DEFAULT_FISH_AUDIO_SETTINGS,
     generateFishAudio,
+    isUnsafeForVoice,
     normalizeFishAudioSettings,
     shouldUseFishAudio,
+    userAskedForAudio,
 } from '@/lib/fishAudio';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
@@ -1383,7 +1385,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     // Em turnos com mídia, nunca alegamos que o arquivo chegou antes do Telegram confirmar.
     // Um único balão prepara o envio; a reação só sai depois da entrega bem-sucedida.
     const deferredMediaMessages = isMediaDeliveryTurn ? [mediaReactionMessage] : [];
-    const outgoingToSend = isMediaDeliveryTurn ? [naturalMediaSetup] : safeMessages;
+    let outgoingToSend = isMediaDeliveryTurn ? [naturalMediaSetup] : safeMessages;
     let operationalLeadMemory = updatedLeadMemory;
     const persistMediaDeliveryStatus = async (
         status: 'delivered' | 'recovered' | 'failed',
@@ -1447,7 +1449,8 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             .limit(1)
             .maybeSingle()
         : { data: null };
-    const preferredAudioIndex = outgoingToSend.findIndex((message: string) =>
+    const userWantsAudio = userAskedForAudio(userOnlyText);
+    let preferredAudioIndex = outgoingToSend.findIndex((message: string) =>
         shouldUseFishAudio({
             settings: fishAudioSettings,
             seed: `${session.id}:${triggerMessageId || lastGroupedUserAt}:${message}`,
@@ -1458,11 +1461,23 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             hasRecentAudio: Boolean(recentAudio),
         })
     );
-    const preparedAudioPromise = preferredAudioIndex >= 0
+
+    let audioSpokenText = '';
+    if (userWantsAudio && fishAudioSettings.enabled && fishAudioSettings.apiKey && fishAudioSettings.voiceId && !recentAudio) {
+        const combined = outgoingToSend.join('. ').slice(0, fishAudioSettings.maxChars);
+        if (combined.length >= 15 && !isUnsafeForVoice(combined)) {
+            outgoingToSend = [combined];
+            preferredAudioIndex = 0;
+            audioSpokenText = combined;
+        }
+    } else if (preferredAudioIndex >= 0) {
+        audioSpokenText = outgoingToSend[preferredAudioIndex];
+    }
+
+    const preparedAudioPromise = preferredAudioIndex >= 0 && audioSpokenText
         ? (() => {
-            const messageText = outgoingToSend[preferredAudioIndex];
             const expressiveText = buildExpressiveSpeech({
-                messageText,
+                messageText: audioSpokenText,
                 userText: userOnlyText,
                 emotionalContext: String(session.lead_memory?.emotional_context || ''),
                 maxChars: fishAudioSettings.maxChars,

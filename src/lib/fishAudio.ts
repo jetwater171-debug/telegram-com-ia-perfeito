@@ -64,7 +64,7 @@ export const shouldUseFishAudio = ({
     hasRecentAudio: boolean;
 }) => {
     if (!settings.enabled || !settings.apiKey || !settings.voiceId || hasRecentAudio) return false;
-    if (!messageText.trim() || messageText.length > settings.maxChars || messageText.length < 12) return false;
+    if (!messageText.trim() || messageText.length > settings.maxChars || messageText.length < 25) return false;
     if (isUnsafeForVoice(messageText)) return false;
     if (action !== "none" || /^(PAYMENT_CHECK|CLOSING)$/i.test(stage)) return false;
     if (userAskedForAudio(userText)) return true;
@@ -106,8 +106,9 @@ export const cleanTextForSpeech = (input: string, maxChars = 320) => {
         .replace(/\bobg\b/giu, "obrigada");
 
     text = text.slice(0, maxChars).trim();
-    // Suaviza pontuação para dar pausas respiratórias mais naturais
+    // Suaviza pontuação para criar pausas respiratórias e sensuais realistas
     text = text.replace(/([,;])\s*/g, "$1 ... ");
+    text = text.replace(/([.!?])\s*/g, "$1 ... ");
     if (text && !/[.!?…]$/u.test(text)) text += "...";
     return text;
 };
@@ -126,26 +127,26 @@ export const buildExpressiveSpeech = ({
     const speech = cleanTextForSpeech(messageText, maxChars);
     const context = `${userText} ${emotionalContext} ${messageText}`.toLowerCase();
 
-    // Tags acústicas expressivas e sensuais para o Fish Audio dar voz aveludada, ofegante e íntima
+    // Tags acústicas expressivas, ofegantes e com textura humana
     let cues = "[whispering][sensual][breathing][soft tone]";
     let prefixVocal = "hummm... ";
 
-    if (/(putaria|goz|tes[aã]o|fud|met|chup|safad|pelad|nude|molhad|calcinha|peit|bunda|delic|pau)/iu.test(context)) {
+    if (/(putaria|goz|tes[aã]o|fud|met|chup|safad|pelad|nude|molhad|calcinha|peit|bunda|delic|pau|gostos)/iu.test(context)) {
         cues = "[whispering][sensual][moaning softly][breathing]";
-        prefixVocal = "ai amor... ";
-    } else if (/(triste|sozinh|carente|carinho|abraç|chamego|dengo|amor|vida|saudade)/iu.test(context)) {
+        prefixVocal = "ai... ";
+    } else if (/(triste|sozinh|carente|carinho|abraç|chamego|dengo|saudade)/iu.test(context)) {
         cues = "[whispering][soft tone][warm and playful]";
-        prefixVocal = "vem cá amor... ";
+        prefixVocal = "vem cá... ";
     } else if (/(segredo|ningu[eé]m|escondid|só nosso|noite|cama)/iu.test(context)) {
         cues = "[whispering][sensual][mysterious]";
         prefixVocal = "fala baixinho... ";
     } else if (/(kkk|haha|engraç|rir|brinc)/iu.test(context)) {
         cues = "[whispering][chuckling][warm and teasing]";
-        prefixVocal = "kkk... ";
+        prefixVocal = "olha... ";
     }
 
-    // Se o texto já começa com saudação/interjeição, ajusta o prefixo para soar perfeitamente natural
-    if (/^(oi|oii|eai|olá|hum|ai|vem|amor)/i.test(speech)) {
+    // Evita duplicar introduções se a frase já começa naturalmente com interjeição
+    if (/^(oi|oii|eai|olá|hum|ai|vem|amor|nossa|olha|sabe)/i.test(speech)) {
         return `${cues} ${speech}`.trim();
     }
 
