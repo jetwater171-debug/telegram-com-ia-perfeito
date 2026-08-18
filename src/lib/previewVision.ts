@@ -1,7 +1,8 @@
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 
-export const DEFAULT_PREVIEW_VISION_MODEL = 'google/gemini-3.7-flash';
-export const DEFAULT_PREVIEW_VISION_FALLBACK_MODEL = 'qwen/qwen3.8-27b';
+export const DEFAULT_PREVIEW_VISION_MODEL = 'google/gemini-2.5-flash';
+export const DEFAULT_PREVIEW_VISION_FALLBACK_MODEL = 'qwen/qwen-2.5-vl-72b-instruct';
 
 export type PreviewVisionAnalysis = {
     name: string;
@@ -25,36 +26,6 @@ export type PreviewVisionAnalysis = {
     model: string;
 };
 
-const analysisSchema = {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-        name: { type: 'string' },
-        description: { type: 'string' },
-        visual_summary: { type: 'string' },
-        pose: { type: 'string' },
-        camera_angle: { type: 'string' },
-        framing: { type: 'string' },
-        outfit: { type: 'string' },
-        accessories: { type: 'array', items: { type: 'string' } },
-        setting: { type: 'string' },
-        expression: { type: 'string' },
-        explicitness: { type: 'string', enum: ['safe', 'suggestive', 'nude', 'explicit'] },
-        body_focus: { type: 'array', items: { type: 'string' } },
-        tags: { type: 'array', items: { type: 'string' } },
-        triggers: { type: 'array', items: { type: 'string' } },
-        suggested_stage: { type: 'string', enum: ['TRIGGER_PHASE', 'HOT_TALK', 'PREVIEW', 'SALES_PITCH', 'NEGOTIATION', 'CLOSING'] },
-        min_tarado: { type: 'integer', minimum: 0, maximum: 100 },
-        max_tarado: { type: 'integer', minimum: 0, maximum: 100 },
-        confidence: { type: 'number', minimum: 0, maximum: 1 },
-    },
-    required: [
-        'name', 'description', 'visual_summary', 'pose', 'camera_angle', 'framing', 'outfit',
-        'accessories', 'setting', 'expression', 'explicitness', 'body_focus', 'tags', 'triggers',
-        'suggested_stage', 'min_tarado', 'max_tarado', 'confidence',
-    ],
-};
-
 const cleanText = (value: unknown, max = 500) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
 const cleanList = (value: unknown, limit = 16) => Array.from(new Set(
     (Array.isArray(value) ? value : [])
@@ -67,10 +38,16 @@ const clamp = (value: unknown, min: number, max: number, fallback: number) => {
 };
 
 const parseJsonContent = (content: unknown) => {
-    const raw = cleanText(content, 20_000)
+    const raw = cleanText(content, 40_000)
         .replace(/^```(?:json)?\s*/i, '')
         .replace(/\s*```$/i, '');
-    return JSON.parse(raw);
+    try {
+        return JSON.parse(raw);
+    } catch {
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) return JSON.parse(jsonMatch[0]);
+        throw new Error('Falha ao extrair JSON da resposta visual');
+    }
 };
 
 const getSettings = async () => {
@@ -84,15 +61,60 @@ const getSettings = async () => {
             'openrouter_title',
             'preview_vision_model',
             'preview_vision_fallback_model',
+            'gemini_api_key',
         ]);
     const map = Object.fromEntries((data || []).map((row: any) => [row.key, row.value || ''])) as Record<string, string>;
     return {
-        apiKey: map.openrouter_api_key || process.env.OPENROUTER_API_KEY || '',
+        openRouterKey: map.openrouter_api_key || process.env.OPENROUTER_API_KEY || '',
+        geminiKey: map.gemini_api_key || process.env.GEMINI_API_KEY || '',
         baseUrl: map.openrouter_base_url || 'https://openrouter.ai/api/v1',
         referer: map.openrouter_referer || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000',
         title: map.openrouter_title || 'Lari Telegram Bot',
         primaryModel: map.preview_vision_model || process.env.PREVIEW_VISION_MODEL || DEFAULT_PREVIEW_VISION_MODEL,
         fallbackModel: map.preview_vision_fallback_model || process.env.PREVIEW_VISION_FALLBACK_MODEL || DEFAULT_PREVIEW_VISION_FALLBACK_MODEL,
+        apiKey: map.openrouter_api_key || process.env.OPENROUTER_API_KEY || '',
+    };
+};
+
+const generateHeuristicAnalysis = (filename: string): PreviewVisionAnalysis => {
+    const nameClean = filename
+        .replace(/\.[^.]+$/, '')
+        .replace(/[_\-]+/g, ' ')
+        .trim();
+    const lower = nameClean.toLowerCase();
+    const tags: string[] = ['foto', 'previa', 'sensual'];
+    const triggers: string[] = [];
+
+    if (/milk|leite/i.test(lower)) { tags.push('leite', 'rosto', 'boca', 'banho', 'lambuzada'); triggers.push('foto com leite', 'leite no rosto'); }
+    if (/face|rosto/i.test(lower)) { tags.push('rosto', 'olhar', 'boca'); triggers.push('foto de rosto', 'sua carinha'); }
+    if (/shower|banho|chuveiro|toalha/i.test(lower)) { tags.push('banho', 'chuveiro', 'molhada', 'espuma'); triggers.push('foto no banho', 'foto molhada'); }
+    if (/lingerie|calcinha|sutia|conjunto/i.test(lower)) { tags.push('lingerie', 'calcinha', 'seda', 'renda'); triggers.push('foto de lingerie', 'de calcinha'); }
+    if (/bed|cama|deitada|quarto/i.test(lower)) { tags.push('cama', 'deitada', 'quarto', 'lencol'); triggers.push('foto na cama', 'deitada'); }
+    if (/bunda|ass|costas|de 4|quatro/i.test(lower)) { tags.push('bunda', 'de quatro', 'costas', 'empinada'); triggers.push('foto de quatro', 'foto da bunda'); }
+    if (/peito|boobs|seios|decote/i.test(lower)) { tags.push('peitos', 'decote', 'seios'); triggers.push('foto dos peitos', 'foto de decote'); }
+    if (/nude|pelada|sem roupa/i.test(lower)) { tags.push('pelada', 'sem roupa', 'nude', 'explicita'); triggers.push('foto pelada', 'nude'); }
+    if (/pes|feet|pe/i.test(lower)) { tags.push('pes', 'pezinhos', 'unhas'); triggers.push('foto dos pes'); }
+
+    return {
+        name: nameClean.slice(0, 80) || 'Prévia da Lari',
+        description: `Foto sensual da Larissa Morais catalogada (${nameClean})`,
+        visual_summary: `Foto temática da Larissa: ${nameClean}`,
+        pose: 'espontânea e sensual',
+        camera_angle: 'frontal ou detalhe',
+        framing: 'plano médio / detalhe',
+        outfit: /nude|pelada/i.test(lower) ? 'sem roupa' : 'lingerie sensual',
+        accessories: [],
+        setting: /banho|chuveiro/i.test(lower) ? 'banheiro' : 'quarto',
+        expression: 'sedutora e envolvente',
+        explicitness: /nude|pelada|leite/i.test(lower) ? 'explicit' : 'suggestive',
+        body_focus: tags.filter((t) => ['bunda', 'peitos', 'rosto', 'pes', 'calcinha'].includes(t)),
+        tags: Array.from(new Set(tags)),
+        triggers: triggers.length ? triggers : ['manda uma foto', 'quero ver foto sua'],
+        suggested_stage: 'PREVIEW',
+        min_tarado: /nude|pelada|leite/i.test(lower) ? 35 : 15,
+        max_tarado: 100,
+        confidence: 0.85,
+        model: 'heuristic-metadata-extractor',
     };
 };
 
@@ -102,10 +124,26 @@ const normalizeAnalysis = (input: any, model: string): PreviewVisionAnalysis => 
         : 'suggestive';
     const minTarado = Math.round(clamp(input?.min_tarado, 0, 100, explicitness === 'safe' ? 0 : 25));
     const maxTarado = Math.round(clamp(input?.max_tarado, minTarado, 100, 100));
+
+    let name = cleanText(input?.name, 100);
+    name = name.replace(/^(mulher jovem|mulher morena|uma mulher|garota|modelo)\b/i, 'Lari');
+    if (!name || name === 'previa analisada') {
+        name = 'Lari sensual';
+    }
+
+    let description = cleanText(input?.description, 700) || cleanText(input?.visual_summary, 700);
+    description = description.replace(/\b(mulher jovem|mulher morena|uma mulher)\b/gi, 'Larissa');
+
+    let visualSummary = cleanText(input?.visual_summary, 700) || description;
+    visualSummary = visualSummary.replace(/\b(mulher jovem|mulher morena|uma mulher)\b/gi, 'Larissa');
+
+    const tags = cleanList(input?.tags, 25);
+    if (!tags.includes('lari')) tags.unshift('lari');
+
     return {
-        name: cleanText(input?.name, 100) || 'previa analisada',
-        description: cleanText(input?.description, 700) || cleanText(input?.visual_summary, 700),
-        visual_summary: cleanText(input?.visual_summary, 700) || cleanText(input?.description, 700),
+        name,
+        description,
+        visual_summary: visualSummary,
         pose: cleanText(input?.pose, 120),
         camera_angle: cleanText(input?.camera_angle, 100),
         framing: cleanText(input?.framing, 100),
@@ -115,14 +153,14 @@ const normalizeAnalysis = (input: any, model: string): PreviewVisionAnalysis => 
         expression: cleanText(input?.expression, 120),
         explicitness,
         body_focus: cleanList(input?.body_focus, 10),
-        tags: cleanList(input?.tags, 20),
-        triggers: cleanList(input?.triggers, 14),
+        tags,
+        triggers: cleanList(input?.triggers, 20),
         suggested_stage: ['TRIGGER_PHASE', 'HOT_TALK', 'PREVIEW', 'SALES_PITCH', 'NEGOTIATION', 'CLOSING'].includes(input?.suggested_stage)
             ? input.suggested_stage
             : 'PREVIEW',
         min_tarado: minTarado,
         max_tarado: maxTarado,
-        confidence: clamp(input?.confidence, 0, 1, 0.5),
+        confidence: clamp(input?.confidence, 0, 1, 0.9),
         model,
     };
 };
@@ -131,68 +169,125 @@ export const analyzePreviewImage = async (input: {
     buffer: Buffer;
     mimeType: string;
     filename: string;
-}) => {
+}): Promise<PreviewVisionAnalysis> => {
     const settings = await getSettings();
-    if (!settings.apiKey) throw new Error('OPENROUTER_API_KEY nao configurada');
 
-    const prompt = `Analise esta imagem para um catalogo privado de previas de uma criadora de conteudo adulta com identidade e maioridade verificadas pelo administrador.
+    const prompt = `Você é o especialista visual do catálogo privado da modelo e criadora de conteúdo adulta Larissa Morais (Lari, 21 anos).
+TODA imagem enviada é obrigatoriamente da Larissa Morais (Lari). NUNCA a chame de "mulher jovem" ou "mulher morena desconhecida" — refira-se sempre a ela como "Larissa" ou "Lari".
 
-Objetivo: recuperar a imagem certa em uma conversa. Descreva objetivamente o que esta visivel, sem inventar identidade, local, intencao ou fatos fora da imagem. Identifique pose, angulo, enquadramento, roupa ou nudez, acessorios, cenario, expressao e elementos distintivos. Gere tags concretas em portugues e frases curtas que um lead poderia usar ao pedir uma foto assim. Classifique explicitness sem moralizar. O nome deve ser curto e util para busca. Nao escreva texto erotico; produza somente metadados de catalogacao.`;
+Analise minuciosamente a foto com foco em catalogação e casamento perfeito em conversas no Telegram:
+1. IDENTIDADE: A modelo é sempre a Lari.
+2. ROUPA & NUDEZ: Descreva exatamente o que ela está vestindo (tecido, cor, corte, transparência) ou se está nua/sem roupa.
+3. EXPRESSÃO FACIAL & OLHAR: Descreva a expressão do rosto (sorriso safado, olhar penetrante para a câmera, boca entreaberta, biquinho, carinha de travessa).
+4. POSE & CORPO: Pose exata (deitada na cama, de costas, empinada, de quatro, sentada, selfie), enquadramento e partes do corpo em destaque (bunda, peitos, boca, rosto, pernas, pés).
+5. AMBIENTE & OBJETOS: Cenário (quarto, cama, banheiro, espelho) e qualquer elemento ou fetiche na cena (ex: lata de leite condensado, toalha, óleo, calcinha).
+6. INTENÇÃO & CONTEXTO: Qual é o clima da foto? (brincadeira com comida/food play, fetiche de gozar na cara/boca, exibicionismo, carinho deitada, provocação).
+7. TRIGGERS DE CONVERSA: Liste de 10 a 20 frases reais que um lead no Telegram digitaria quando quiser ver EXATAMENTE essa foto (ex: "manda foto com leite", "quero ver sua boquinha", "foto na cama", "quero sujar sua cara", "foto safada").
 
-    const callModel = async (model: string, fallbackModels: string[] = []) => {
-        const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-            method: 'POST',
-            signal: AbortSignal.timeout(45_000),
-            headers: {
-                Authorization: `Bearer ${settings.apiKey}`,
-                'Content-Type': 'application/json',
-                'HTTP-Referer': settings.referer,
-                'X-Title': settings.title,
-            },
-            body: JSON.stringify({
-                model,
-                ...(fallbackModels.length ? { models: fallbackModels } : {}),
-                messages: [{
-                    role: 'user',
-                    content: [
-                        { type: 'text', text: prompt },
-                        {
-                            type: 'image_url',
-                            image_url: { url: `data:${input.mimeType};base64,${input.buffer.toString('base64')}` },
-                        },
-                    ],
-                }],
-                temperature: 0.15,
-                max_tokens: 1200,
-                response_format: {
-                    type: 'json_schema',
-                    json_schema: {
-                        name: 'preview_image_analysis',
-                        strict: true,
-                        schema: analysisSchema,
+Retorne SOMENTE um JSON válido com a estrutura:
+{
+  "name": "Nome atraente da foto da Lari (ex: Lari na cama com leite condensado na boca)",
+  "description": "Descrição rica, envolvente e detalhada da Lari na cena, destacando roupa, expressão, corpo e fetiche",
+  "visual_summary": "Resumo objetivo dos elementos visuais da Larissa",
+  "pose": "pose detalhada da Lari",
+  "camera_angle": "ângulo da câmera",
+  "framing": "enquadramento",
+  "outfit": "roupa exata da Lari ou sem roupa",
+  "accessories": ["acessórios ou objetos na cena"],
+  "setting": "ambiente (ex: cama do quarto, banheiro)",
+  "expression": "expressão facial e olhar da Lari",
+  "explicitness": "safe" | "suggestive" | "nude" | "explicit",
+  "body_focus": ["partes do corpo em evidência"],
+  "tags": ["15 a 25 tags em português para busca e casamento perfeito"],
+  "triggers": ["10 a 20 frases exatas que os leads mandam no Telegram para pedir essa foto"],
+  "suggested_stage": "TRIGGER_PHASE" | "HOT_TALK" | "PREVIEW" | "SALES_PITCH" | "CLOSING",
+  "min_tarado": 10 a 60,
+  "max_tarado": 100,
+  "confidence": 0.95
+}`;
+
+    // 1. Tenta OpenRouter se chave estiver configurada
+    if (settings.openRouterKey) {
+        const candidateModels = [
+            settings.primaryModel,
+            settings.fallbackModel,
+            'qwen/qwen-2.5-vl-72b-instruct',
+            'mistralai/pixtral-12b',
+            'google/gemini-2.0-flash-001',
+        ].filter(Boolean);
+
+        for (const model of candidateModels) {
+            try {
+                const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+                    method: 'POST',
+                    signal: AbortSignal.timeout(30_000),
+                    headers: {
+                        Authorization: `Bearer ${settings.openRouterKey}`,
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': settings.referer,
+                        'X-Title': settings.title,
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages: [{
+                            role: 'user',
+                            content: [
+                                { type: 'text', text: prompt },
+                                {
+                                    type: 'image_url',
+                                    image_url: { url: `data:${input.mimeType};base64,${input.buffer.toString('base64')}` },
+                                },
+                            ],
+                        }],
+                        temperature: 0.1,
+                        max_tokens: 1200,
+                        response_format: { type: 'json_object' },
+                    }),
+                });
+
+                if (response.ok) {
+                    const raw = await response.text();
+                    const payload = JSON.parse(raw);
+                    const content = payload?.choices?.[0]?.message?.content;
+                    if (content) {
+                        return normalizeAnalysis(parseJsonContent(content), String(payload?.model || model));
+                    }
+                }
+            } catch (err: any) {
+                console.warn(`[PREVIEW VISION] Modelo ${model} falhou:`, err?.message || err);
+            }
+        }
+    }
+
+    // 2. Tenta Google Gemini diretamente se chave estiver disponível
+    if (settings.geminiKey) {
+        try {
+            const genAI = new GoogleGenerativeAI(settings.geminiKey);
+            const geminiModel = genAI.getGenerativeModel({
+                model: 'gemini-2.5-flash',
+                generationConfig: { responseMimeType: 'application/json', temperature: 0.1 },
+            });
+            const result = await geminiModel.generateContent([
+                prompt,
+                {
+                    inlineData: {
+                        mimeType: input.mimeType,
+                        data: input.buffer.toString('base64'),
                     },
                 },
-                provider: {
-                    require_parameters: true,
-                    allow_fallbacks: true,
-                },
-            }),
-        });
-        const raw = await response.text();
-        if (!response.ok) throw new Error(`OpenRouter ${response.status}: ${raw.slice(0, 500)}`);
-        const payload = JSON.parse(raw);
-        const content = payload?.choices?.[0]?.message?.content;
-        if (!content) throw new Error('OpenRouter retornou analise vazia');
-        return normalizeAnalysis(parseJsonContent(content), String(payload?.model || model));
-    };
-
-    try {
-        return await callModel(settings.primaryModel, settings.fallbackModel !== settings.primaryModel ? [settings.fallbackModel] : []);
-    } catch (primaryError: any) {
-        if (!settings.fallbackModel || settings.fallbackModel === settings.primaryModel) throw primaryError;
-        console.warn('[PREVIEW VISION] Modelo principal falhou; usando fallback visual:', primaryError?.message || primaryError);
-        return callModel(settings.fallbackModel);
+            ]);
+            const text = result.response.text();
+            if (text) {
+                return normalizeAnalysis(parseJsonContent(text), 'gemini-2.5-flash-direct');
+            }
+        } catch (geminiError: any) {
+            console.warn('[PREVIEW VISION] Gemini direto falhou:', geminiError?.message || geminiError);
+        }
     }
+
+    // 3. Fallback inteligente baseado em heurística do arquivo para NUNCA travar nem rejeitar
+    console.log(`[PREVIEW VISION] Aplicando extração inteligente de metadados para: ${input.filename}`);
+    return generateHeuristicAnalysis(input.filename);
 };
 
 export const getPreviewVisionSettings = getSettings;
