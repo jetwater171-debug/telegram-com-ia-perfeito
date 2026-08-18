@@ -134,14 +134,10 @@ const PRESETS = {
 
 const openRouterOptions = [
     "deepseek/deepseek-chat",
-    "deepseek/deepseek-r1",
-    "deepseek/deepseek-v3",
     "qwen/qwen-2.5-72b-instruct",
     "qwen/qwen-2.5-32b-instruct",
-    "qwen/qwen-2.5-vl-72b-instruct",
-    "qwen/qwen-turbo",
-    "qwen/qwen-plus",
-    "qwen/qwen-max",
+    "qwen/qwen-2.5-coder-32b-instruct",
+    "deepseek/deepseek-r1",
 ];
 
 const geminiOptions = [...GEMINI_MODEL_OPTIONS];
