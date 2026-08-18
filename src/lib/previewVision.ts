@@ -1,8 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 
-export const DEFAULT_PREVIEW_VISION_MODEL = 'google/gemini-2.5-flash';
-export const DEFAULT_PREVIEW_VISION_FALLBACK_MODEL = 'qwen/qwen-2.5-vl-72b-instruct';
+export const DEFAULT_PREVIEW_VISION_MODEL = 'qwen/qwen-2.5-vl-72b-instruct';
+export const DEFAULT_PREVIEW_VISION_FALLBACK_MODEL = 'qwen/qwen-2.5-vl-72b-instruct:free';
 
 export type PreviewVisionAnalysis = {
     name: string;
@@ -206,15 +206,15 @@ Retorne SOMENTE um JSON válido com a estrutura:
   "confidence": 0.95
 }`;
 
-    // 1. Tenta OpenRouter se chave estiver configurada
+    // 1. Tenta OpenRouter exclusivamente com Qwen Vision se chave estiver configurada
     if (settings.openRouterKey) {
         const candidateModels = [
             settings.primaryModel,
             settings.fallbackModel,
             'qwen/qwen-2.5-vl-72b-instruct',
-            'mistralai/pixtral-12b',
-            'google/gemini-2.0-flash-001',
-        ].filter(Boolean);
+            'qwen/qwen-2.5-vl-72b-instruct:free',
+            'qwen/qwen-vl-plus',
+        ].filter((m) => m && m.toLowerCase().includes('qwen'));
 
         for (const model of candidateModels) {
             try {

@@ -97,8 +97,8 @@ const roleLabels: Record<string, string> = {
 
 const PRESETS = {
     openrouterFree: {
-        label: "DeepSeek 0731 + reservas",
-        description: "Usa 0731, 0423, Qwen 3.7 Flash e Nemotron 3 Ultra antes do Gemini.",
+        label: "DeepSeek + Qwen",
+        description: "Usa DeepSeek e Qwen no OpenRouter antes do fallback Gemini.",
         order: ["openrouter", "gemini"] as ProviderKey[],
         openrouter: {
             draft: DEFAULT_OPENROUTER_MODEL,
@@ -133,11 +133,15 @@ const PRESETS = {
 };
 
 const openRouterOptions = [
-    ...OPENROUTER_MODEL_FALLBACK_ORDER,
-    "z-ai/glm-4.5-air:free",
-    "openai/gpt-oss-120b:free",
-    "google/gemma-4-31b-it:free",
-    "openrouter/free",
+    "deepseek/deepseek-chat",
+    "deepseek/deepseek-r1",
+    "deepseek/deepseek-v3",
+    "qwen/qwen-2.5-72b-instruct",
+    "qwen/qwen-2.5-32b-instruct",
+    "qwen/qwen-2.5-vl-72b-instruct",
+    "qwen/qwen-turbo",
+    "qwen/qwen-plus",
+    "qwen/qwen-max",
 ];
 
 const geminiOptions = [...GEMINI_MODEL_OPTIONS];
