@@ -720,10 +720,10 @@ export async function POST(req: NextRequest) {
         durationMs: number,
     ) => {
         await sendTelegramAction(botToken, chatId, action);
-        const heartbeat = durationMs > 4_000
+        const heartbeat = durationMs > 3_000
             ? setInterval(() => {
                 void sendTelegramAction(botToken, chatId, action);
-            }, 4_000)
+            }, 3_000)
             : null;
         try {
             await new Promise((resolve) => setTimeout(resolve, durationMs));

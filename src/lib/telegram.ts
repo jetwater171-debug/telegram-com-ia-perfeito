@@ -106,7 +106,7 @@ export const sendTelegramCopyableCode = async (token: string, chatId: string, co
 export const sendTelegramVoice = async (token: string, chatId: string, audio: Buffer, caption?: string) => {
     if (!token) throw new Error('Telegram sem token');
     const bot = new Telegraf(token);
-    await bot.telegram.sendVoice(chatId, { source: audio, filename: 'lari.ogg' }, caption ? { caption } : undefined);
+    await bot.telegram.sendVoice(chatId, { source: audio, filename: 'lari.mp3' }, caption ? { caption } : undefined);
 };
 
 export const getTelegramFilePath = async (token: string, fileId: string): Promise<string | null> => {

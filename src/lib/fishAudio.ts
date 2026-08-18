@@ -63,11 +63,12 @@ export const shouldUseFishAudio = ({
     action: string;
     hasRecentAudio: boolean;
 }) => {
-    if (!settings.enabled || !settings.apiKey || !settings.voiceId || hasRecentAudio) return false;
-    if (!messageText.trim() || messageText.length > settings.maxChars || messageText.length < 35) return false;
+    if (!settings.enabled || !settings.apiKey || !settings.voiceId) return false;
     if (isUnsafeForVoice(messageText)) return false;
-    if (action !== "none" || /^(PAYMENT_CHECK|CLOSING|WELCOME)$/i.test(stage)) return false;
     if (userAskedForAudio(userText)) return true;
+    if (hasRecentAudio) return false;
+    if (!messageText.trim() || messageText.length > settings.maxChars || messageText.length < 15) return false;
+    if (action !== "none" || /^(PAYMENT_CHECK|CLOSING)$/i.test(stage)) return false;
     return deterministicPercent(seed) < settings.frequencyPercent;
 };
 
@@ -174,9 +175,7 @@ export const generateFishAudio = async ({
         body: JSON.stringify({
             text,
             reference_id: normalized.voiceId,
-            format: "opus",
-            sample_rate: 48000,
-            opus_bitrate: 48000,
+            format: "mp3",
             latency: "normal",
             temperature: 0.80,
             top_p: 0.80,
