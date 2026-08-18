@@ -89,7 +89,7 @@ const expandChatWriting = (text: string) => {
     return replacements.reduce((current, [pattern, replacement]) => current.replace(pattern, replacement), text);
 };
 
-export const cleanTextForSpeech = (input: string, maxChars = 280) => {
+export const cleanTextForSpeech = (input: string, maxChars = 320) => {
     let text = String(input || "")
         .replace(/https?:\/\/\S+/giu, "")
         .replace(/[*_`>#~]/g, "")
@@ -97,9 +97,18 @@ export const cleanTextForSpeech = (input: string, maxChars = 280) => {
         .replace(/\s+/g, " ")
         .trim();
     text = expandChatWriting(text);
-    text = text.replace(/\bkk{3,}\b/giu, "ha ha ha").replace(/\brsrs+\b/giu, "he he");
+    text = text
+        .replace(/\bkk{2,}\b/giu, "ha ha ha")
+        .replace(/\brsrs+\b/giu, "he he")
+        .replace(/\bvdd\b/giu, "verdade")
+        .replace(/\bbjs\b/giu, "beijos")
+        .replace(/\btd\b/giu, "tudo")
+        .replace(/\bobg\b/giu, "obrigada");
+
     text = text.slice(0, maxChars).trim();
-    if (text && !/[.!?…]$/u.test(text)) text += ".";
+    // Suaviza pontuação para dar pausas respiratórias mais naturais
+    text = text.replace(/([,;])\s*/g, "$1 ... ");
+    if (text && !/[.!?…]$/u.test(text)) text += "...";
     return text;
 };
 
@@ -107,7 +116,7 @@ export const buildExpressiveSpeech = ({
     messageText,
     userText = "",
     emotionalContext = "",
-    maxChars = 280,
+    maxChars = 320,
 }: {
     messageText: string;
     userText?: string;
@@ -117,22 +126,30 @@ export const buildExpressiveSpeech = ({
     const speech = cleanTextForSpeech(messageText, maxChars);
     const context = `${userText} ${emotionalContext} ${messageText}`.toLowerCase();
 
-    let cues = "[relaxed][soft tone]";
-    if (/(triste|chor|sozinh|mal|saudade|carente|desanim|machuc)/iu.test(context)) {
-        cues = "[empathetic][soft tone]";
-    } else if (/(kkkk|haha|rsrs|engraç|rir|rindo)/iu.test(context)) {
-        cues = "[happy][chuckling]";
-    } else if (/(amei|adorei|feliz|consegui|perfeito|maravilh|ansios)/iu.test(context)) {
-        cues = "[happy][warm and playful]";
-    } else if (/(segredo|baixinho|ningu[eé]m pode|só entre)/iu.test(context)) {
-        cues = "[mysterious][whispering]";
-    } else if (/(amor|carinho|saudade|gostoso|safad|tes[aã]o|beij)/iu.test(context)) {
-        cues = "[warm and teasing][soft tone]";
-    } else if (/[!?]{2,}|\b(?:agora|corre|rápido|rapido)\b/iu.test(context)) {
-        cues = "[excited]";
+    // Tags acústicas expressivas e sensuais para o Fish Audio dar voz aveludada, ofegante e íntima
+    let cues = "[whispering][sensual][breathing][soft tone]";
+    let prefixVocal = "hummm... ";
+
+    if (/(putaria|goz|tes[aã]o|fud|met|chup|safad|pelad|nude|molhad|calcinha|peit|bunda|delic|pau)/iu.test(context)) {
+        cues = "[whispering][sensual][moaning softly][breathing]";
+        prefixVocal = "ai amor... ";
+    } else if (/(triste|sozinh|carente|carinho|abraç|chamego|dengo|amor|vida|saudade)/iu.test(context)) {
+        cues = "[whispering][soft tone][warm and playful]";
+        prefixVocal = "vem cá amor... ";
+    } else if (/(segredo|ningu[eé]m|escondid|só nosso|noite|cama)/iu.test(context)) {
+        cues = "[whispering][sensual][mysterious]";
+        prefixVocal = "fala baixinho... ";
+    } else if (/(kkk|haha|engraç|rir|brinc)/iu.test(context)) {
+        cues = "[whispering][chuckling][warm and teasing]";
+        prefixVocal = "kkk... ";
     }
 
-    return `${cues} ${speech}`.trim();
+    // Se o texto já começa com saudação/interjeição, ajusta o prefixo para soar perfeitamente natural
+    if (/^(oi|oii|eai|olá|hum|ai|vem|amor)/i.test(speech)) {
+        return `${cues} ${speech}`.trim();
+    }
+
+    return `${cues} ${prefixVocal}${speech}`.trim();
 };
 
 export const generateFishAudio = async ({
@@ -158,16 +175,16 @@ export const generateFishAudio = async ({
             reference_id: normalized.voiceId,
             format: "opus",
             sample_rate: 48000,
-            opus_bitrate: 32000,
+            opus_bitrate: 48000,
             latency: "normal",
-            temperature: 0.72,
-            top_p: 0.72,
-            repetition_penalty: 1.15,
-            chunk_length: 200,
+            temperature: 0.80,
+            top_p: 0.80,
+            repetition_penalty: 1.12,
+            chunk_length: 220,
             normalize: true,
             condition_on_previous_chunks: true,
             prosody: {
-                speed: 0.98,
+                speed: 0.94,
                 volume: 0,
                 normalize_loudness: true,
             },
