@@ -718,30 +718,33 @@ export async function POST(req: NextRequest) {
         }
     };
 
-    // Pequena pausa de leitura antes de começar a digitar; também agrupa mensagens seguidas.
-    await new Promise((resolve) => setTimeout(resolve, randomBetween(450, 900)));
-    await waitWithChatAction('typing', randomBetween(450, 800));
+    // Debounce inteligente de 4.5s: espera o lead terminar de enviar múltiplas mensagens seguidas.
+    // Se o lead mandar mais uma mensagem enquanto espera, este worker aborta e passa o bastão para a mais nova.
+    const DEBOUNCE_WAIT_MS = 4500;
+    const pollIntervalMs = 500;
+    let waited = 0;
 
-    // Verificar mensagens mais recentes (Lógica de Substituição)
-    // Verificamos se há alguma mensagem MAIS NOVA que a que disparou este worker.
-    // Se passamos `triggerMessageId`, usamos ele.
+    while (waited < DEBOUNCE_WAIT_MS) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        waited += pollIntervalMs;
 
-    const { data: latestMsg } = await supabase
-        .from('messages')
-        .select('id')
-        .eq('session_id', sessionId)
-        .eq('sender', 'user')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        const { data: latestMsgCheck } = await supabase
+            .from('messages')
+            .select('id')
+            .eq('session_id', sessionId)
+            .eq('sender', 'user')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
 
-    if (latestMsg && triggerMessageId) {
-        const latestIdStr = String(latestMsg.id);
-        const triggerIdStr = String(triggerMessageId);
+        if (latestMsgCheck && triggerMessageId) {
+            const latestIdStr = String(latestMsgCheck.id);
+            const triggerIdStr = String(triggerMessageId);
 
-        if (latestIdStr !== triggerIdStr) {
-            console.log(`[PROCESSADOR] Abortando. Disparado por ${triggerIdStr} mas a última é ${latestIdStr}`);
-            return NextResponse.json({ status: 'superseded' });
+            if (latestIdStr !== triggerIdStr) {
+                console.log(`[PROCESSADOR] Debounce: lead enviou mensagem mais nova (${latestIdStr}). Abortando worker ${triggerIdStr}.`);
+                return NextResponse.json({ status: 'superseded_during_debounce' });
+            }
         }
     }
 
