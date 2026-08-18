@@ -1,6 +1,21 @@
 export const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
 export const DEFAULT_GEMINI_LITE_MODEL = "gemini-3.5-flash-lite";
-export const DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4-flash";
+
+export const OPENROUTER_MODEL_FALLBACK_ORDER = [
+    "deepseek/deepseek-v4-flash-0731",
+    "deepseek/deepseek-v4-flash",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+] as const;
+
+export const DEFAULT_OPENROUTER_MODEL = OPENROUTER_MODEL_FALLBACK_ORDER[0];
+
+export const normalizeOpenRouterPrimaryModel = (value?: string | null) => {
+    const model = String(value || "").trim();
+    if (!model || model === "deepseek/deepseek-v4-flash") {
+        return DEFAULT_OPENROUTER_MODEL;
+    }
+    return model;
+};
 
 export const GEMINI_MODEL_OPTIONS = [
     DEFAULT_GEMINI_MODEL,

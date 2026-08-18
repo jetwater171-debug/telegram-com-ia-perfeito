@@ -1,7 +1,13 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { AIResponse, LeadStats } from "@/types";
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
-import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL, normalizeGeminiModelName } from '@/lib/aiModels';
+import {
+    DEFAULT_GEMINI_MODEL,
+    DEFAULT_OPENROUTER_MODEL,
+    normalizeGeminiModelName,
+    normalizeOpenRouterPrimaryModel,
+    OPENROUTER_MODEL_FALLBACK_ORDER,
+} from '@/lib/aiModels';
 import { buildCleanAiHistory } from '@/lib/aiHistory';
 
 const readSecret = (value?: string) => {
@@ -1265,10 +1271,10 @@ const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
         aiStrategyEnabled: settings.ai_strategy_enabled !== "false",
         aiReviewEnabled: settings.ai_review_enabled !== "false",
         aiEvaluatorEnabled: settings.ai_evaluator_enabled !== "false",
-        openRouterStrategyModel: settings.openrouter_strategy_model || process.env.OPENROUTER_STRATEGY_MODEL || DEFAULT_OPENROUTER_MODELS.strategy,
-        openRouterDraftModel: settings.openrouter_draft_model || process.env.OPENROUTER_DRAFT_MODEL || DEFAULT_OPENROUTER_MODELS.draft,
-        openRouterReviewModel: settings.openrouter_review_model || process.env.OPENROUTER_REVIEW_MODEL || DEFAULT_OPENROUTER_MODELS.review,
-        openRouterEvaluatorModel: settings.openrouter_evaluator_model || process.env.OPENROUTER_EVALUATOR_MODEL || DEFAULT_OPENROUTER_MODELS.evaluator,
+        openRouterStrategyModel: normalizeOpenRouterPrimaryModel(settings.openrouter_strategy_model || process.env.OPENROUTER_STRATEGY_MODEL || DEFAULT_OPENROUTER_MODELS.strategy),
+        openRouterDraftModel: normalizeOpenRouterPrimaryModel(settings.openrouter_draft_model || process.env.OPENROUTER_DRAFT_MODEL || DEFAULT_OPENROUTER_MODELS.draft),
+        openRouterReviewModel: normalizeOpenRouterPrimaryModel(settings.openrouter_review_model || process.env.OPENROUTER_REVIEW_MODEL || DEFAULT_OPENROUTER_MODELS.review),
+        openRouterEvaluatorModel: normalizeOpenRouterPrimaryModel(settings.openrouter_evaluator_model || process.env.OPENROUTER_EVALUATOR_MODEL || DEFAULT_OPENROUTER_MODELS.evaluator),
         geminiStrategyModel: normalizeGeminiModelName(settings.gemini_strategy_model || process.env.GEMINI_STRATEGY_MODEL, getGeminiModelName()),
         geminiDraftModel: normalizeGeminiModelName(settings.gemini_draft_model || process.env.GEMINI_DRAFT_MODEL, getGeminiModelName()),
         geminiReviewModel: normalizeGeminiModelName(settings.gemini_review_model || process.env.GEMINI_REVIEW_MODEL, getGeminiModelName()),
@@ -1438,7 +1444,7 @@ const callOpenRouterJson = async <T,>(
     history: AiMessage[],
     userContent: string,
     mediaPart?: any,
-): Promise<T> => {
+): Promise<{ data: T; resolvedModel: string }> => {
     if (!settings.openRouterApiKey) throw new Error("OPENROUTER_API_KEY not configured");
 
     const response = await fetch(`${settings.openRouterBaseUrl}/chat/completions`, {
@@ -1450,7 +1456,7 @@ const callOpenRouterJson = async <T,>(
             "X-Title": settings.openRouterTitle,
         },
         body: JSON.stringify({
-            model: gateway.model,
+            models: [...OPENROUTER_MODEL_FALLBACK_ORDER],
             messages: toOpenRouterMessages(systemInstruction, history, userContent, mediaPart),
             temperature: role === "draft" ? 0.85 : 0.35,
             max_tokens: 1200,
@@ -1470,7 +1476,10 @@ const callOpenRouterJson = async <T,>(
     const payload = parseJsonText<any>(responseBody);
     const content = payload?.choices?.[0]?.message?.content;
     if (!content) throw new Error(`OpenRouter empty response from ${gateway.model}`);
-    return parseJsonText<T>(String(content));
+    return {
+        data: parseJsonText<T>(String(content)),
+        resolvedModel: String(payload?.model || gateway.model),
+    };
 };
 
 const callGeminiJson = async <T,>(
@@ -1531,7 +1540,7 @@ const callAiGatewayJson = async <T,>(options: {
                         continue;
                     }
                 }
-                const data = await callOpenRouterJson<T>(
+                const result = await callOpenRouterJson<T>(
                     options.settings,
                     gateway,
                     options.role,
@@ -1540,8 +1549,13 @@ const callAiGatewayJson = async <T,>(options: {
                     options.text,
                     options.mediaPart,
                 );
-                await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "success", durationMs: Date.now() - startedAt });
-                return { data, gateway, attempts };
+                const resolvedGateway = {
+                    ...gateway,
+                    model: result.resolvedModel,
+                    label: `${gateway.provider}:${result.resolvedModel}`,
+                };
+                await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: result.resolvedModel, status: "success", durationMs: Date.now() - startedAt });
+                return { data: result.data, gateway: resolvedGateway, attempts };
             }
 
             const parts: any[] = [{ text: options.text }];

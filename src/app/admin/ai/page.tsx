@@ -6,6 +6,7 @@ import {
     DEFAULT_GEMINI_MODEL,
     DEFAULT_OPENROUTER_MODEL,
     GEMINI_MODEL_OPTIONS,
+    OPENROUTER_MODEL_FALLBACK_ORDER,
 } from "@/lib/aiModels";
 
 type ProviderKey = "openrouter" | "gemini";
@@ -96,8 +97,8 @@ const roleLabels: Record<string, string> = {
 
 const PRESETS = {
     openrouterFree: {
-        label: "DeepSeek V4 Flash",
-        description: "Usa o DeepSeek barato primeiro e Gemini como reserva.",
+        label: "DeepSeek 0731 + reservas",
+        description: "Usa 0731, depois 0423 e Nemotron 3 Ultra antes do Gemini.",
         order: ["openrouter", "gemini"] as ProviderKey[],
         openrouter: {
             draft: DEFAULT_OPENROUTER_MODEL,
@@ -132,7 +133,7 @@ const PRESETS = {
 };
 
 const openRouterOptions = [
-    DEFAULT_OPENROUTER_MODEL,
+    ...OPENROUTER_MODEL_FALLBACK_ORDER,
     "z-ai/glm-4.5-air:free",
     "openai/gpt-oss-120b:free",
     "google/gemma-4-31b-it:free",
