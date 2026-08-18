@@ -43,20 +43,34 @@ const PROCESSING_LEASE_POLL_MS = 750;
 const randomBetween = (min: number, max: number) => Math.floor(min + Math.random() * (max - min + 1));
 
 const humanTextDelayMs = (text: string, bubbleIndex: number) => {
-    const length = String(text || '').trim().length;
-    const punctuationPause = /[?!]$/.test(text) ? 180 : 0;
+    const raw = String(text || '').trim();
+    const length = raw.length;
+    const wordCount = raw.split(/\s+/).filter(Boolean).length;
+    const punctuationBonus = /[?!…]$/.test(raw) ? 350 : 150;
+
+    // Digitação humana realista no celular: ~55ms por letra + ~120ms por palavra + variação natural
+    const typingTimeMs = (length * 55) + (wordCount * 120) + punctuationBonus + randomBetween(300, 900);
+
     if (bubbleIndex === 0) {
-        const firstBubbleDelay = 520 + (length * 20) + punctuationPause + randomBetween(180, 620);
-        return Math.min(2_400, Math.max(850, firstBubbleDelay));
+        // Primeiro balão: pausa humana de leitura/pensamento antes de digitar
+        const thinkingPauseMs = 1_200 + randomBetween(200, 700);
+        const total = thinkingPauseMs + typingTimeMs;
+        return Math.min(8_500, Math.max(1_800, total));
     }
 
-    const betweenBubblesDelay = 1_650 + (length * 27) + punctuationPause + randomBetween(180, 650);
-    return Math.min(5_000, Math.max(2_000, betweenBubblesDelay));
+    // Balões seguintes: intervalo entre envio de balões + tempo de digitação
+    const gapBetweenBubblesMs = 900 + randomBetween(200, 600);
+    const total = gapBetweenBubblesMs + typingTimeMs;
+    return Math.min(9_500, Math.max(2_200, total));
 };
 
 const humanAudioRecordingDelayMs = (text: string) => {
-    const wordCount = String(text || '').trim().split(/\s+/).filter(Boolean).length;
-    return Math.min(5_000, Math.max(2_000, 1_650 + (wordCount * 210) + randomBetween(180, 650)));
+    const raw = String(text || '').trim();
+    const wordCount = raw.split(/\s+/).filter(Boolean).length;
+    const length = raw.length;
+    // Tempo de fala e gravação de áudio real: ~320ms por palavra + preparação do microfone
+    const recordingTimeMs = 1_800 + (wordCount * 320) + (length * 20) + randomBetween(500, 1_200);
+    return Math.min(12_000, Math.max(3_000, recordingTimeMs));
 };
 
 const detectCityFromText = (input: string): string | null => {
