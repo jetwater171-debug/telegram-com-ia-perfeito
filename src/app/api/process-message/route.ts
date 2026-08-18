@@ -304,42 +304,6 @@ const removeDuplicateNormalizedMessages = (messages: string[]) => {
     });
 };
 
-const trustObjectionRequested = (text: string) => {
-    return /(prova|provar|real|fake|golpe|confio|confiar|certeza|medo|apaga|apagar|foto inteira|foto completa|por completo|ao vivo|chamada)/i.test(text || '');
-};
-
-const collapseTrustLoop = (messages: string[], userText: string) => {
-    if (!trustObjectionRequested(userText)) return messages;
-    const filtered = messages.filter((msg) => {
-        const norm = normalizeLoopText(msg);
-        const repeatsVipProof = /(unica forma|única forma|so no vip|só no vip|la no vip|lá no vip|vip secreto|tirar todas as suas duvidas|tirar todas as suas dúvidas)/i.test(msg);
-        return !repeatsVipProof && !norm.includes('juro de dedinho');
-    });
-    const base = filtered.length > 0 ? filtered : messages;
-    const compact = base.slice(0, 2);
-    if (compact.some((msg) => /entendo|sei|calma|medo|prova|real/i.test(msg))) return compact;
-    return [
-        'eu entendo vc ficar com receio',
-        'posso te mostrar uma previa aqui e o resto eu libero certinho no acesso'
-    ];
-};
-
-const removeDanglingFinalSuspense = (messages: string[]) => {
-    if (messages.length === 0) return messages;
-    const last = messages[messages.length - 1] || '';
-    const cleaned = last.replace(/\s*(?:\.{3,}|…)\s*$/u, '').trim();
-    if (!cleaned) return messages.slice(0, -1);
-    const dangling = /\b(se eu tivesse ai|se eu estivesse ai|se eu tivesse perto|se eu estivesse perto|agora|pertinho de voce|pertinho de você)$/iu.test(cleaned);
-    if (!dangling) {
-        return cleaned === last ? messages : [...messages.slice(0, -1), cleaned];
-    }
-    return [
-        ...messages.slice(0, -1),
-        cleaned,
-        'me fala uma coisa, vc e mais quietinho ou mais safado?'
-    ];
-};
-
 const applyConversationQualityGuards = (messages: string[], opts: {
     userText: string;
     sessionName: any;
@@ -353,10 +317,8 @@ const applyConversationQualityGuards = (messages: string[], opts: {
     out = removePrematureNameIntro(out, opts.userText, opts.extractedName);
     out = removeAnsweredNameQuestions(out, opts.userText, opts.sessionName);
     out = removeAnsweredCityQuestions(out, opts.hasCity, opts.userAskedCity);
-    out = collapseTrustLoop(out, opts.userText);
     out = reduceOpeningRepetition(out, opts.lastBotContent);
     out = removeDuplicateNormalizedMessages(out);
-    out = removeDanglingFinalSuspense(out);
     return out.length > 0 ? out : messages;
 };
 
@@ -1374,7 +1336,6 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         if (explicitFantasy) return 6;
         if (stage === 'PAYMENT_CHECK' || aiResponse.action === 'generate_pix_payment') return 3;
         if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 4;
-        if (trustObjectionRequested(userOnlyText)) return 3;
         return 4;
     })();
 
