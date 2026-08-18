@@ -1113,7 +1113,19 @@ const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-const parseJsonText = <T,>(text: string): T => JSON.parse(text) as T;
+const parseJsonText = <T,>(text: string): T => {
+    const raw = String(text || '').trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+    try {
+        return JSON.parse(raw) as T;
+    } catch {
+        const jsonMatch = raw.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+        if (jsonMatch) return JSON.parse(jsonMatch[0]) as T;
+        throw new Error(`Falha ao extrair JSON da resposta: ${raw.slice(0, 200)}`);
+    }
+};
 const GEMINI_GATEWAY_TIMEOUT_MS = 9000;
 
 const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, label: string) => new Promise<T>((resolve, reject) => {
@@ -1611,7 +1623,7 @@ const makeLocalFallbackResponse = (
 
     if (/\/(?:start)\b/i.test(text)) {
         return {
-            internal_thought: "Fallback local: boas-vindas sem provedor de IA configurado.",
+            internal_thought: "Fallback local: boas-vindas carinhosas e humanas.",
             lead_classification: "desconhecido",
             lead_stats: stats,
             current_state: "WELCOME",
@@ -1623,13 +1635,55 @@ const makeLocalFallbackResponse = (
         };
     }
 
-    if (/\b(oi|ola|olá|oie|eai|e ai|bom dia|boa tarde|boa noite|tudo bem|to bem|estou bem)\b/i.test(text) && !wantsPrice && !wantsMedia && !isSexual) {
+    if (/\b(nome|chama|chamo|quem e vc|quem é vc)\b/i.test(text)) {
         return {
-            internal_thought: "Fallback local: saudação/conversa casual sem provedor de IA configurado.",
+            internal_thought: "Fallback local: lead perguntou meu nome, responder Larissa / Lari.",
             lead_classification: "desconhecido",
             lead_stats: stats,
             current_state: "CONNECTION",
-            messages: ["oii amor", "tudo bem com vc?"],
+            messages: ["meu nome é Larissa amor", "mas pode me chamar de Lari", "e o seu lindo?"],
+            action: "none",
+            extracted_user_name: null,
+            audio_transcription: null,
+            payment_details: null
+        };
+    }
+
+    if (/\b(de onde|sua cidade|onde (vc|voce|você) mora)\b/i.test(text)) {
+        return {
+            internal_thought: "Fallback local: pergunta de localização da Lari.",
+            lead_classification: "desconhecido",
+            lead_stats: stats,
+            current_state: "CONNECTION",
+            messages: ["sou de sp amor", "moro aqui no centro", "e vc, fala de onde vida?"],
+            action: "none",
+            extracted_user_name: null,
+            audio_transcription: null,
+            payment_details: null
+        };
+    }
+
+    if (/\b(quantos anos|sua idade|idade)\b/i.test(text)) {
+        return {
+            internal_thought: "Fallback local: pergunta de idade da Lari.",
+            lead_classification: "desconhecido",
+            lead_stats: stats,
+            current_state: "CONNECTION",
+            messages: ["tenho 21 aninhos amor", "e vc, quantos anos tem?"],
+            action: "none",
+            extracted_user_name: null,
+            audio_transcription: null,
+            payment_details: null
+        };
+    }
+
+    if (/\b(oi|ola|olá|oie|eai|e ai|bom dia|boa tarde|boa noite|tudo bem|to bem|tô bem|estou bem|bem e voce|bem e vc)\b/i.test(text) && !wantsPrice && !wantsMedia && !isSexual) {
+        return {
+            internal_thought: "Fallback local: saudação/conversa casual calorosa e afetuosa.",
+            lead_classification: "desconhecido",
+            lead_stats: stats,
+            current_state: "CONNECTION",
+            messages: ["to bem amor", "tava aqui deitadinha descansando", "e vc, tá fazendo o que de bom?"],
             action: "none",
             extracted_user_name: null,
             audio_transcription: null,
@@ -1657,7 +1711,7 @@ const makeLocalFallbackResponse = (
             lead_classification: isSexual ? "tarado" : "curioso",
             lead_stats: { ...stats, tarado: isSexual ? Math.max(Number(stats.tarado || 0), 45) : Number(stats.tarado || 0) },
             current_state: isSexual ? "HOT_TALK" : "CONNECTION",
-            messages: ["vi a foto amor", isSexual ? "agora vc me deixou curiosa" : "me fala rapidinho o que vc quer que eu veja nela"],
+            messages: ["vi a foto amor", isSexual ? "agora vc me deixou curiosa" : "me fala o que vc quer que eu veja nela vida"],
             action: "none",
             extracted_user_name: null,
             audio_transcription: null,
@@ -1716,13 +1770,13 @@ const makeLocalFallbackResponse = (
     return {
         internal_thought: hasAudio
             ? "Fallback local: audio recebido, responder com entusiasmo e sensualidade."
-            : "Fallback local: manter conversa natural, quente e humana.",
+            : "Fallback local: manter conversa natural, carinhosa e humana.",
         lead_classification: "desconhecido",
         lead_stats: stats,
         current_state: "CONNECTION",
         messages: hasAudio
             ? ["ouvi sua voz aqui", "adorei o seu jeitinho de falar comigo", "me deixou com água na boca"]
-            : ["hummm gostei de ver", "vc me deixa bem soltinha quando fala assim", "quero ver se vc aguenta mesmo"],
+            : ["to adorando conversar com vc amor", "me conta mais de vc lindo"],
         action: "none",
         extracted_user_name: null,
         audio_transcription: null,

@@ -64,9 +64,9 @@ export const shouldUseFishAudio = ({
     hasRecentAudio: boolean;
 }) => {
     if (!settings.enabled || !settings.apiKey || !settings.voiceId || hasRecentAudio) return false;
-    if (!messageText.trim() || messageText.length > settings.maxChars || messageText.length < 25) return false;
+    if (!messageText.trim() || messageText.length > settings.maxChars || messageText.length < 35) return false;
     if (isUnsafeForVoice(messageText)) return false;
-    if (action !== "none" || /^(PAYMENT_CHECK|CLOSING)$/i.test(stage)) return false;
+    if (action !== "none" || /^(PAYMENT_CHECK|CLOSING|WELCOME)$/i.test(stage)) return false;
     if (userAskedForAudio(userText)) return true;
     return deterministicPercent(seed) < settings.frequencyPercent;
 };
