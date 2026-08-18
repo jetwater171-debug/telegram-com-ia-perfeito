@@ -75,6 +75,11 @@ export interface AIResponse {
     ;
     payment_details?: PaymentDetails | null;
     preview_id?: string | null;
+    preview_request?: {
+        description: string;
+        tags: string[];
+        reason?: string | null;
+    } | null;
     lead_memory_patch?: LeadMemoryPatch | null;
     recommended_message_count?: number;
     max_chars_per_message?: number;

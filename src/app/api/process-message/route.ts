@@ -17,6 +17,7 @@ import {
     normalizeFishAudioSettings,
     shouldUseFishAudio,
 } from '@/lib/fishAudio';
+import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 
 export const maxDuration = 120;
 
@@ -519,6 +520,29 @@ const resolveContextualMediaAction = (userText: string, currentAction?: string) 
         };
     }
     return null;
+};
+
+const inferRequestedPreviewSpec = (userText: string, action?: string) => {
+    const text = String(userText || '').trim();
+    const normalized = text.toLowerCase();
+    const tags = new Set<string>();
+    const add = (...values: string[]) => values.forEach((value) => tags.add(value));
+    if (/(coelh|orelha|bunny)/i.test(normalized)) add('coelhinha', 'orelhas de coelho', 'fantasia');
+    if (/(deitad|cama|len[cç]ol)/i.test(normalized)) add('deitada', 'cama');
+    if (/(de 4|quatro|costas|bunda|rab[ao]|empinad|por tras|por trás)/i.test(normalized)) add('bunda', 'de quatro', 'costas');
+    if (/(banho|chuveiro|molhad|toalha)/i.test(normalized)) add('banho', 'molhada', 'chuveiro');
+    if (/(lingerie|calcinha|suti[aã]|conjunto)/i.test(normalized)) add('lingerie');
+    if (/(pelada|nua|nude|sem roupa)/i.test(normalized)) add('nua', 'nude');
+    if (/(selfie|rosto|carinha)/i.test(normalized)) add('selfie', 'rosto');
+    if (/(peito|seio|teta)/i.test(normalized)) add('peitos');
+    if (/(p[eé]|pezinho)/i.test(normalized)) add('pes');
+    if (/(video|vídeo|rebol|dan[cç]|movimento)/i.test(normalized) || /video/i.test(String(action || ''))) add('video');
+    if (tags.size === 0) add(/video/i.test(String(action || '')) ? 'video' : 'foto');
+    return {
+        description: text ? `Larissa atendendo ao pedido: "${text.slice(0, 260)}"` : `Larissa em previa ${Array.from(tags).join(', ')}`,
+        tags: Array.from(tags),
+        examplePhrase: text.slice(0, 300),
+    };
 };
 
 const randNormal = (): number => {
@@ -1045,10 +1069,48 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         action: aiResponse.action,
         state: aiResponse.current_state,
     });
-    const contextualMedia = resolveContextualMediaAction(userOnlyText, aiResponse.action);
+    const contextualMedia = aiResponse.preview_request
+        ? null
+        : resolveContextualMediaAction(userOnlyText, aiResponse.action);
     if (contextualMedia) {
         aiResponse.action = contextualMedia.action;
         aiResponse.current_state = ACTION_STAGE_MAP[contextualMedia.action] || aiResponse.current_state;
+    }
+    if (aiResponse.preview_request?.description) {
+        try {
+            await upsertMissingPreviewRequest({
+                description: aiResponse.preview_request.description,
+                tags: aiResponse.preview_request.tags || [],
+                examplePhrase: userOnlyText,
+                sessionId: session.id,
+            });
+        } catch (error: any) {
+            console.warn('[PREVIAS] Falha ao registrar ideia sugerida pelo lead:', error?.message || error);
+        }
+    } else if (aiResponse.action === 'none' && /(manda|mostra|quero ver|tem foto|tem video|tem vídeo|foto|video|vídeo|previa|prévia)/i.test(userOnlyText)) {
+        try {
+            const requestedSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
+            let query = supabase
+                .from('preview_assets')
+                .select('id,name,description,triggers,tags,priority,media_type')
+                .eq('enabled', true)
+                .limit(1000);
+            if (/video|vídeo/i.test(userOnlyText)) query = query.eq('media_type', 'video');
+            const { data: candidates } = await query;
+            const bestScore = Math.max(0, ...(candidates || []).map((asset: any) =>
+                scorePreviewForContext(asset, userOnlyText, requestedSpec.tags)
+            ));
+            if (bestScore < 4) {
+                await upsertMissingPreviewRequest({
+                    description: requestedSpec.description,
+                    tags: requestedSpec.tags,
+                    examplePhrase: requestedSpec.examplePhrase,
+                    sessionId: session.id,
+                });
+            }
+        } catch (error: any) {
+            console.warn('[PREVIAS] Falha ao verificar lacuna do catalogo:', error?.message || error);
+        }
     }
 
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
@@ -1452,26 +1514,33 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
 
     // 7. Lidar com Mídia
     if (aiResponse.action !== 'none') {
-        const SHOWER_PHOTO = "https://i.ibb.co/dwf177Kc/download.jpg";
-        const LINGERIE_PHOTO = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
-        const WET_PHOTO = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
-        const configuredOrigin = process.env.APP_URL || process.env.NEXT_PUBLIC_SITE_URL || '';
-        const forwardedHost = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
-        const forwardedProto = req.headers.get('x-forwarded-proto') || 'https';
-        const requestOrigin = forwardedHost ? `${forwardedProto}://${forwardedHost}` : req.nextUrl.origin;
-        const configuredOriginIsPublic = /^https?:\/\//i.test(configuredOrigin)
-            && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(configuredOrigin);
-        const publicOrigin = configuredOriginIsPublic ? configuredOrigin : requestOrigin;
-        const VIDEO_PREVIEW = new URL('/videos/lari.mp4', publicOrigin).toString();
+        const requestedPreviewSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
+        const actionTags: Record<string, string[]> = {
+            send_shower_photo: ['banho', 'chuveiro', 'molhada'],
+            send_lingerie_photo: ['lingerie'],
+            send_wet_finger_photo: ['molhada', 'explicit'],
+            send_ass_photo_preview: ['bunda', 'de quatro', 'costas'],
+            send_video_preview: ['video'],
+            send_hot_video_preview: ['video', 'explicit'],
+        };
+        const preferredPreviewTags = Array.from(new Set([
+            ...(actionTags[String(aiResponse.action)] || []),
+            ...requestedPreviewSpec.tags,
+        ]));
 
-        const getRegisteredPreview = async (mediaType?: 'image' | 'video', excludeUrls: string[] = []) => {
+        const getRegisteredPreview = async (
+            mediaType?: 'image' | 'video',
+            excludeUrls: string[] = [],
+            preferredTags: string[] = preferredPreviewTags,
+            requireRelevant = true,
+        ) => {
             let query = supabase
                 .from('preview_assets')
-                .select('id,name,media_url,media_type,priority')
+                .select('id,name,description,triggers,tags,media_url,media_type,priority,min_tarado,max_tarado')
                 .eq('enabled', true)
                 .order('priority', { ascending: false })
                 .order('created_at', { ascending: false })
-                .limit(20);
+                .limit(1000);
             if (mediaType) query = query.eq('media_type', mediaType);
             const { data, error } = await query;
             if (error) {
@@ -1479,7 +1548,20 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 return null;
             }
             const excluded = new Set(excludeUrls.map((url) => String(url || '')));
-            return (data || []).find((item: any) => item.media_url && !excluded.has(String(item.media_url))) || null;
+            const tarado = Number(aiResponse.lead_stats?.tarado || 0);
+            const ranked = (data || [])
+                .filter((item: any) => item.media_url
+                    && !excluded.has(String(item.media_url))
+                    && tarado >= Number(item.min_tarado ?? 0)
+                    && tarado <= Number(item.max_tarado ?? 100))
+                .map((item: any) => ({
+                    item,
+                    score: scorePreviewForContext(item, userOnlyText, preferredTags),
+                }))
+                .sort((a: any, b: any) => b.score - a.score);
+            if (ranked.length === 0) return null;
+            if (requireRelevant && ranked[0].score < 4) return null;
+            return ranked[0].item;
         };
 
         let mediaUrl = null;
@@ -1503,7 +1585,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             }
             if (!mediaUrl) {
                 const requestedType = /video|vídeo/i.test(userOnlyText) ? 'video' : undefined;
-                const fallbackPreview = await getRegisteredPreview(requestedType);
+                const fallbackPreview = await getRegisteredPreview(requestedType, [], requestedPreviewSpec.tags, true);
                 if (fallbackPreview) {
                     mediaUrl = fallbackPreview.media_url;
                     mediaType = fallbackPreview.media_type;
@@ -1511,20 +1593,20 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             }
         } else {
             switch (aiResponse.action) {
-                case 'send_shower_photo': mediaUrl = SHOWER_PHOTO; mediaType = 'image'; caption = ""; break;
-                case 'send_lingerie_photo': mediaUrl = LINGERIE_PHOTO; mediaType = 'image'; break;
-                case 'send_wet_finger_photo': mediaUrl = WET_PHOTO; mediaType = 'image'; break;
+                case 'send_shower_photo':
+                case 'send_lingerie_photo':
+                case 'send_wet_finger_photo':
                 case 'send_ass_photo_preview': {
-                    const registered = await getRegisteredPreview('image');
-                    mediaUrl = registered?.media_url || SHOWER_PHOTO;
-                    mediaType = 'image';
+                    const registered = await getRegisteredPreview('image', [], preferredPreviewTags, true);
+                    mediaUrl = registered?.media_url || null;
+                    mediaType = registered?.media_type || null;
                     break;
                 }
                 case 'send_video_preview':
                 case 'send_hot_video_preview': {
-                    const registered = await getRegisteredPreview('video');
-                    mediaUrl = registered?.media_url || VIDEO_PREVIEW;
-                    mediaType = 'video';
+                    const registered = await getRegisteredPreview('video', [], preferredPreviewTags, true);
+                    mediaUrl = registered?.media_url || null;
+                    mediaType = registered?.media_type || null;
                     break;
                 }
                 case 'check_payment_status':
@@ -1840,8 +1922,6 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 if (alternative) {
                     mediaUrl = alternative.media_url;
                     mediaType = alternative.media_type;
-                } else if (mediaType === 'video' && !recentUrls.has(VIDEO_PREVIEW)) {
-                    mediaUrl = VIDEO_PREVIEW;
                 }
             }
 
@@ -1867,13 +1947,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 ]);
                 const fallbackCandidates = [
                     registeredSameType && { url: String(registeredSameType.media_url), type: String(registeredSameType.media_type) },
-                    deliveredType === 'video' && deliveredUrl !== VIDEO_PREVIEW && !recentUrls.has(VIDEO_PREVIEW)
-                        ? { url: VIDEO_PREVIEW, type: 'video' }
-                        : null,
                     registeredAnyType && { url: String(registeredAnyType.media_url), type: String(registeredAnyType.media_type) },
-                    deliveredUrl !== SHOWER_PHOTO && !recentUrls.has(SHOWER_PHOTO)
-                        ? { url: SHOWER_PHOTO, type: 'image' }
-                        : null,
                 ].filter((candidate): candidate is { url: string; type: string } => Boolean(candidate?.url));
 
                 let recovered = false;
@@ -1938,7 +2012,13 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             await sendDeferredMediaReaction();
         } else if (isMediaDeliveryTurn) {
             await persistMediaDeliveryStatus('failed');
-            const noAssetMessage = 'essa nao carregou aqui, vou pegar outra pra vc';
+            await upsertMissingPreviewRequest({
+                description: requestedPreviewSpec.description,
+                tags: requestedPreviewSpec.tags,
+                examplePhrase: requestedPreviewSpec.examplePhrase,
+                sessionId: session.id,
+            });
+            const noAssetMessage = 'essa eu ainda nao tenho exatamente desse jeito, vou guardar a ideia';
             await waitWithChatAction('typing', humanTextDelayMs(noAssetMessage, 0));
             if (await findNewerUserMessage()) {
                 return NextResponse.json({ status: 'superseded_during_media_recovery' });

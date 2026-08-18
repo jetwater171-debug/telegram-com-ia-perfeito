@@ -9,6 +9,7 @@ import {
     OPENROUTER_MODEL_FALLBACK_ORDER,
 } from '@/lib/aiModels';
 import { buildCleanAiHistory } from '@/lib/aiHistory';
+import { scorePreviewForContext } from '@/lib/previewCatalog';
 
 const readSecret = (value?: string) => {
     const secret = String(value || "").trim();
@@ -61,6 +62,16 @@ const responseSchema = {
             ]
         },
         preview_id: { type: "STRING", nullable: true },
+        preview_request: {
+            type: "OBJECT",
+            nullable: true,
+            properties: {
+                description: { type: "STRING" },
+                tags: { type: "ARRAY", items: { type: "STRING" } },
+                reason: { type: "STRING", nullable: true }
+            },
+            required: ["description", "tags"]
+        },
         payment_details: {
             type: "OBJECT",
             nullable: true,
@@ -1070,7 +1081,9 @@ NEGOCIACAO:
 Actions validas: none, send_video_preview, send_hot_video_preview, send_ass_photo_preview, send_custom_preview, generate_pix_payment, check_payment_status, send_shower_photo, send_lingerie_photo, send_wet_finger_photo, request_app_install.
 
 - Midia precisa nascer do pedido atual ou de preferencia real. Antes da action, escreva um balao curto que conecte a midia ao assunto.
-- Para catalogo cadastrado, use action=send_custom_preview e preview_id com o ID exato.
+- Toda previa deve vir exclusivamente do catalogo abaixo. Use action=send_custom_preview e preview_id com o ID exato; nao use as actions legadas de foto/video quando nao houver um ID cadastrado.
+- Compare pedido, pose, roupa, acessorio, cenario, enquadramento e nivel de explicitness. Nao mande uma imagem apenas vagamente parecida.
+- Se o lead pedir uma imagem e nao existir correspondencia boa, use action=none, preview_id=null e preencha preview_request com descricao concreta, tags e motivo. Isso cria uma ideia pendente para o admin produzir.
 - current_state: WELCOME no primeiro contato; CONNECTION ao conhecer; HOT_TALK em conversa adulta; PREVIEW ao enviar previa; SALES_PITCH ao ofertar; NEGOTIATION ao discutir valor; CLOSING ao confirmar; PAYMENT_CHECK para PIX/status.
 - action=generate_pix_payment exige payment_details.value numerico e description exata.
 - action=check_payment_status nao confirma pagamento por conta propria; o backend verifica.
@@ -1759,11 +1772,11 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     const [previewResult, promptBlocksResult, messagesResult] = await Promise.all([
         supabase
             .from('preview_assets')
-            .select('id,name,description,media_type,stage,min_tarado,max_tarado,tags,triggers,priority,enabled')
+            .select('id,name,description,media_type,stage,min_tarado,max_tarado,tags,triggers,priority,enabled,ai_analysis,analysis_status')
             .eq('enabled', true)
             .order('priority', { ascending: false })
             .order('created_at', { ascending: false })
-            .limit(50),
+            .limit(1000),
         supabase
             .from('prompt_blocks')
             .select('key,label,content,enabled,updated_at')
@@ -1780,16 +1793,43 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             .limit(40),
     ]);
 
-    const { data: previewRows, error: previewError } = previewResult;
+    let previewRows: any[] | null = previewResult.data as any[] | null;
+    let previewError = previewResult.error;
+    if (previewError && /ai_analysis|analysis_status/i.test(String(previewError.message || ''))) {
+        const legacyPreviewResult = await supabase
+            .from('preview_assets')
+            .select('id,name,description,media_type,stage,min_tarado,max_tarado,tags,triggers,priority,enabled')
+            .eq('enabled', true)
+            .order('priority', { ascending: false })
+            .order('created_at', { ascending: false })
+            .limit(1000);
+        previewRows = legacyPreviewResult.data;
+        previewError = legacyPreviewResult.error;
+    }
 
-    const previewsCatalog = (!previewError ? (previewRows || []) : [])
-        .slice(0, 50)
+    const rankedPreviewRows = (!previewError ? (previewRows || []) : [])
+        .filter((preview: any) => {
+            const tarado = Number(currentStats.tarado || 0);
+            return tarado >= Number(preview.min_tarado ?? 0) && tarado <= Number(preview.max_tarado ?? 100);
+        })
+        .map((preview: any) => ({
+            ...preview,
+            contextual_score: scorePreviewForContext(preview, userMessage),
+        }))
+        .sort((a: any, b: any) => Number(b.contextual_score || 0) - Number(a.contextual_score || 0)
+            || Number(b.priority || 0) - Number(a.priority || 0));
+
+    const previewsCatalog = rankedPreviewRows
+        .slice(0, 40)
         .map((p: any) => {
             const tags = Array.isArray(p.tags) ? p.tags.join(', ') : '';
             const desc = String(p.description || '').replace(/\s+/g, ' ').slice(0, 160);
             const trig = String(p.triggers || '').replace(/\s+/g, ' ').slice(0, 160);
+            const visual = p.ai_analysis && typeof p.ai_analysis === 'object'
+                ? [p.ai_analysis.pose, p.ai_analysis.outfit, p.ai_analysis.accessories?.join?.(', '), p.ai_analysis.setting, p.ai_analysis.framing, p.ai_analysis.explicitness].filter(Boolean).join(' | ')
+                : '';
             const taradoRange = `${Number(p.min_tarado ?? 0)}-${Number(p.max_tarado ?? 100)}`;
-            return `ID: ${p.id} | Nome: ${p.name} | Tipo: ${p.media_type} | Fase: ${p.stage || 'PREVIEW'} | Tarado: ${taradoRange} | Tags: ${tags} | Quando usar: ${trig || desc}`;
+            return `ID: ${p.id} | Nome: ${p.name} | Tipo: ${p.media_type} | Fase: ${p.stage || 'PREVIEW'} | Tarado: ${taradoRange} | Tags: ${tags} | Visual: ${visual || desc} | Quando usar: ${trig || desc}`;
         })
         .join('\n');
 
@@ -1934,8 +1974,9 @@ Se o lead disser que quer comer/transar/meter/chupar/gozar, responda fazendo ele
 Se for usar action de foto/video, messages[0] deve ser apenas uma preparacao curta conectando a midia ao que o lead falou. Nao escreva "ta aqui", "olha essa", "te mandei", "gostou?", "curtiu?" ou "o que achou?" em messages[0]. Nos baloes seguintes pode haver uma unica reacao curta e personalizada; o sistema vai segura-la e so liberar depois da confirmacao do Telegram.
 Se a memoria indicar que o ultimo envio falhou e o lead cobrar, reconheca com leveza e tente uma alternativa. Nunca diga que ele recebeu algo que nao recebeu.
 Atualize lead_memory_patch com os fatos, desejos, objecoes, ganchos, tom e proximo passo realmente observados neste turno.
+Se o lead pedir uma imagem especifica sem correspondencia exata no catalogo, nao improvise outra: action=none, preview_id=null e preview_request={description,tags,reason}. Se houver correspondencia, preview_request=null.
 
-Retorne JSON com: internal_thought (resumo operacional curto, sem raciocinio passo a passo), lead_classification, lead_stats completo, extracted_user_name, audio_transcription, current_state, messages, action, preview_id, payment_details e lead_memory_patch. Use null nos campos opcionais sem valor.`;
+Retorne JSON com: internal_thought (resumo operacional curto, sem raciocinio passo a passo), lead_classification, lead_stats completo, extracted_user_name, audio_transcription, current_state, messages, action, preview_id, preview_request, payment_details e lead_memory_patch. Use null nos campos opcionais sem valor.`;
 
             const draftParts: any[] = [{
                 text: `${userMessage}
