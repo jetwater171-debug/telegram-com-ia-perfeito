@@ -1447,6 +1447,7 @@ const callOpenRouterJson = async <T,>(
 
     const response = await fetch(`${settings.openRouterBaseUrl}/chat/completions`, {
         method: "POST",
+        signal: AbortSignal.timeout(20_000),
         headers: {
             "Authorization": `Bearer ${settings.openRouterApiKey}`,
             "Content-Type": "application/json",
@@ -1455,13 +1456,10 @@ const callOpenRouterJson = async <T,>(
         },
         body: JSON.stringify({
             model: gateway.model,
-            models: Array.from(new Set([gateway.model, ...OPENROUTER_MODEL_FALLBACK_ORDER])).filter(Boolean),
             messages: toOpenRouterMessages(systemInstruction, history, userContent, mediaPart),
             temperature: role === "draft" ? 0.85 : 0.35,
             max_tokens: 1200,
-            response_format: { type: "json_object" },
             provider: {
-                sort: "latency",
                 allow_fallbacks: true,
             },
         }),

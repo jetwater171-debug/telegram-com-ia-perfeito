@@ -718,10 +718,10 @@ export async function POST(req: NextRequest) {
         }
     };
 
-    // Debounce inteligente de 4.5s: espera o lead terminar de enviar múltiplas mensagens seguidas.
+    // Debounce inteligente de 2.5s: espera o lead terminar de enviar múltiplas mensagens seguidas.
     // Se o lead mandar mais uma mensagem enquanto espera, este worker aborta e passa o bastão para a mais nova.
-    const DEBOUNCE_WAIT_MS = 4500;
-    const pollIntervalMs = 500;
+    const DEBOUNCE_WAIT_MS = 2500;
+    const pollIntervalMs = 400;
     let waited = 0;
 
     while (waited < DEBOUNCE_WAIT_MS) {
