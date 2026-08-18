@@ -4,6 +4,7 @@ import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import {
     DEFAULT_GEMINI_MODEL,
     DEFAULT_OPENROUTER_MODEL,
+    GEMINI_MODEL_OPTIONS,
     normalizeGeminiModelName,
     normalizeOpenRouterPrimaryModel,
     OPENROUTER_MODEL_FALLBACK_ORDER,
@@ -1323,12 +1324,29 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings): AiGateway
     const globalOrder = parseAiModelOrder(settings.aiModelOrder, role, settings);
     const defaults = parseAiModelOrder(DEFAULT_PROVIDER_ORDER, role, settings);
 
-    const order = [...roleSpecific, ...globalOrder, ...defaults];
+    // Adiciona todos os modelos reais do OpenRouter (DeepSeek e Qwen) na cadeia de tentativa
+    const extraOpenRouterModels: AiGatewayConfig[] = settings.openRouterApiKey
+        ? OPENROUTER_MODEL_FALLBACK_ORDER.map((model) => ({
+            provider: "openrouter" as AiProvider,
+            model,
+            label: `openrouter:${model}`,
+        }))
+        : [];
+
+    const extraGeminiModels: AiGatewayConfig[] = settings.geminiApiKey
+        ? GEMINI_MODEL_OPTIONS.map((model) => ({
+            provider: "gemini" as AiProvider,
+            model,
+            label: `gemini:${model}`,
+        }))
+        : [];
+
+    const order = [...roleSpecific, ...globalOrder, ...defaults, ...extraOpenRouterModels, ...extraGeminiModels];
     const seen = new Set<string>();
     return order.filter((gateway) => {
         if (gateway.provider === "openrouter" && !settings.openRouterApiKey) return false;
         if (gateway.provider === "gemini" && !settings.geminiApiKey) return false;
-        const key = gateway.provider;
+        const key = `${gateway.provider}:${gateway.model}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -1436,7 +1454,8 @@ const callOpenRouterJson = async <T,>(
             "X-Title": settings.openRouterTitle,
         },
         body: JSON.stringify({
-            models: [...OPENROUTER_MODEL_FALLBACK_ORDER],
+            model: gateway.model,
+            models: Array.from(new Set([gateway.model, ...OPENROUTER_MODEL_FALLBACK_ORDER])).filter(Boolean),
             messages: toOpenRouterMessages(systemInstruction, history, userContent, mediaPart),
             temperature: role === "draft" ? 0.85 : 0.35,
             max_tokens: 1200,
@@ -1742,11 +1761,11 @@ const makeLocalFallbackResponse = (
     if (wantsMedia) {
         return {
             internal_thought: "Fallback local: lead pediu previa/foto, manter conversa quente.",
-            lead_classification: "tarado",
-            lead_stats: { ...stats, tarado: Math.max(Number(stats.tarado || 0), 50) },
-            current_state: "PREVIEW",
-            messages: ["ta bom amor", "vou te mostrar uma previa rapidinho"],
-            action: "send_shower_photo",
+            lead_classification: "curioso",
+            lead_stats: { ...stats, tarado: Math.max(Number(stats.tarado || 0), 45) },
+            current_state: "CONNECTION",
+            messages: ["oii amor", "separei umas coisas bem gostosas pra vc", "me conta que tipo de foto vc mais gosta"],
+            action: "none",
             extracted_user_name: null,
             audio_transcription: null,
             payment_details: null
@@ -1788,8 +1807,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     const aiSettings = await getAiRuntimeSettings();
     initializeGenAI(aiSettings.geminiApiKey);
     if (!aiSettings.openRouterApiKey && !aiSettings.geminiApiKey) {
-        console.warn("[AI Gateway] Nenhum provedor configurado; usando resposta local de emergência.", { sessionId });
-        return makeLocalFallbackResponse(userMessage, context, media);
+        throw new Error("[AI Gateway] Nenhuma chave de IA (OpenRouter ou Gemini) configurada. Não é permitido enviar respostas simuladas.");
     }
 
     const currentStats = parseLeadStats(context?.currentStats);
@@ -2136,13 +2154,12 @@ Revise e corrija se necessario.`
                 attempt = maxRetries;
             }
 
-            // Simpler Fallback if retries exhausted
+            // Se esgotou todas as tentativas com todas as IAs reais
             if (attempt >= maxRetries) {
-                return makeLocalFallbackResponse(userMessage, context, media);
+                throw new Error(`[AI Gateway] Todas as IAs reais falharam após ${maxRetries} tentativas: ${error?.message || error}`);
             }
         }
     }
 
-    // Fallback unreachable
-    return {} as any;
+    throw new Error("[AI Gateway] Resposta de IA indisponível.");
 };

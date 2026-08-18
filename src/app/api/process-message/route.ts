@@ -539,6 +539,7 @@ const inferRequestedPreviewSpec = (userText: string, action?: string) => {
     if (/(selfie|rosto|carinha)/i.test(normalized)) add('selfie', 'rosto');
     if (/(peito|seio|teta)/i.test(normalized)) add('peitos');
     if (/(p[eé]|pezinho)/i.test(normalized)) add('pes');
+    if (/(leite|condensado|doce|lambuzada|food)/i.test(normalized)) add('leite condensado', 'food play');
     if (/(video|vídeo|rebol|dan[cç]|movimento)/i.test(normalized) || /video/i.test(String(action || ''))) add('video');
     if (tags.size === 0) add(/video/i.test(String(action || '')) ? 'video' : 'foto');
     return {
@@ -1120,8 +1121,8 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         ? null
         : resolveContextualMediaAction(userOnlyText, aiResponse.action);
     if (contextualMedia) {
-        aiResponse.action = contextualMedia.action;
-        aiResponse.current_state = ACTION_STAGE_MAP[contextualMedia.action] || aiResponse.current_state;
+        aiResponse.action = contextualMedia.action as any;
+        aiResponse.current_state = (ACTION_STAGE_MAP[contextualMedia.action] || aiResponse.current_state) as any;
     }
     let pendingPhotoRequestAnalysis: Promise<unknown> | null = null;
     if (aiResponse.preview_request?.description && userAskedPhoto) {
