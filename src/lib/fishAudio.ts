@@ -15,14 +15,15 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 export const DEFAULT_FISH_AUDIO_SETTINGS: Omit<FishAudioSettings, "apiKey"> = {
     enabled: false,
     voiceId: "24522123b5804bf691a8450d9187f03e",
-    model: "s2-pro",
+    model: "s1",
     frequencyPercent: 18,
     cooldownMinutes: 30,
     maxChars: 240,
 };
 
-export const normalizeFishAudioModel = (value?: string | null) =>
-    String(value || '').trim().toLowerCase() === 's1' ? 's1' : 's2-pro';
+// O S1 e o modelo gratuito escolhido para todos os audios da Lari.
+// Normalizar tambem configuracoes antigas impede um valor salvo de reativar o S2-Pro pago.
+export const normalizeFishAudioModel = (_value?: string | null) => 's1';
 
 export const normalizeFishAudioSettings = (input: Partial<FishAudioSettings>): FishAudioSettings => ({
     apiKey: String(input.apiKey || "").trim(),

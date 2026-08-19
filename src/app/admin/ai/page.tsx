@@ -77,7 +77,7 @@ const emptySettings: AiSettings = {
     fishAudioApiKeySaved: false,
     fishAudioEnabled: false,
     fishAudioVoiceId: "24522123b5804bf691a8450d9187f03e",
-    fishAudioModel: "s2-pro",
+    fishAudioModel: "s1",
     fishAudioFrequencyPercent: 18,
     fishAudioCooldownMinutes: 30,
     fishAudioMaxChars: 240,
@@ -496,8 +496,7 @@ export default function AdminAiPage() {
                                         onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioModel: event.target.value }))}
                                         className={inputClass}
                                     >
-                                        <option value="s2-pro">S2-Pro (recomendado)</option>
-                                        <option value="s1">S1 (legado)</option>
+                                        <option value="s1">S1 (gratuito)</option>
                                     </select>
                                 </Field>
                             </div>
