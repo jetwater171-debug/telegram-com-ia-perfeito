@@ -1722,11 +1722,21 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     }
 
     if (aiResponse.internal_thought) {
-        await supabase.from('messages').insert({
-            session_id: session.id,
-            sender: 'thought',
-            content: aiResponse.internal_thought
-        });
+        try {
+            await supabase.from('messages').insert({
+                session_id: session.id,
+                sender: 'thought',
+                content: aiResponse.internal_thought,
+                ai_debug: aiResponse.ai_debug || null
+            });
+        } catch (insertThoughtErr: any) {
+            console.warn("[PROCESSADOR] Falha ao inserir thought com ai_debug, tentando inserção simples:", insertThoughtErr?.message || insertThoughtErr);
+            await supabase.from('messages').insert({
+                session_id: session.id,
+                sender: 'thought',
+                content: aiResponse.internal_thought
+            });
+        }
     }
 
     // 5.5 Atualizar Transcrição de Áudio (Se houver)

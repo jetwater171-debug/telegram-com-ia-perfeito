@@ -2682,12 +2682,17 @@ ${purchaseHistoryText}
         try {
             let strategy: any = makeFallbackStrategy(userMessage, context?.leadMemory);
             let strategyStatus = 'integrado na chamada unica';
+            let strategyResultInfo: any = null;
+            let draftResultInfo: any = null;
+            let reviewResultInfo: any = null;
+            let evaluatorResultInfo: any = null;
             const useSeparateStrategyCall = aiSettings.aiStrategyEnabled && orchestration.separateStrategy;
 
             if (!useSeparateStrategyCall) {
                 strategyStatus = 'integrado na chamada unica';
             } else {
             try {
+                const strategyStartTime = Date.now();
                 const strategyPrompt = `${baseInstruction}
 
 # CÉREBRO GERAL DA LARI — PLANEJADOR PSICOLÓGICO & ESTRATÉGICO PRIVADO
@@ -2725,6 +2730,15 @@ Retorne JSON com: intent, lead_type, temperature, emotional_context, relationshi
                 });
                 strategy = strategyResult.data;
                 strategyStatus = `cerebro via ${strategyResult.gateway.label}`;
+                strategyResultInfo = {
+                    name: "Cérebro Estratégico",
+                    role: "strategy",
+                    model: strategyResult.gateway.model,
+                    provider: strategyResult.gateway.provider,
+                    duration_ms: Date.now() - strategyStartTime,
+                    prompt: strategyPrompt,
+                    output: strategyResult.data,
+                };
             } catch (strategyError: any) {
                 console.warn("Cérebro central falhou, usando fallback local:", strategyError?.message || strategyError);
             }
@@ -2773,6 +2787,7 @@ Use essa estrategia para responder.`
             if (media) draftParts.push(currentMessageParts[1]);
             let mediaRecoveryUsed = false;
             let draftResult: Awaited<ReturnType<typeof callAiGatewayJson<AIResponse>>>;
+            const draftStartTime = Date.now();
             try {
                 draftResult = await callAiGatewayJson<AIResponse>({
                     settings: aiSettings,
@@ -2816,6 +2831,16 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
             }
             const responseText = JSON.stringify(draftResult.data);
 
+            draftResultInfo = {
+                name: "Rascunho da Lari",
+                role: "draft",
+                model: draftResult.gateway.model,
+                provider: draftResult.gateway.provider,
+                duration_ms: Date.now() - draftStartTime,
+                prompt: draftPrompt,
+                output: draftResult.data,
+            };
+
             console.log(`AI Gateway Draft (${draftResult.gateway.label}) Attempt ${attempt + 1}:`, responseText);
 
             const jsonResponse = draftResult.data;
@@ -2858,6 +2883,7 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                     : 'guardas locais (rota rapida)';
             } else {
             try {
+                const reviewStartTime = Date.now();
                 const reviewPrompt = `${baseInstruction}
 
 # IA 3: REVISORA DE QUALIDADE
@@ -2891,6 +2917,15 @@ Revise e corrija se necessario.`
                 });
                 review = reviewResult.data;
                 reviewStatus = `ia revisora via ${reviewResult.gateway.label}`;
+                reviewResultInfo = {
+                    name: "Revisora de Qualidade",
+                    role: "review",
+                    model: reviewResult.gateway.model,
+                    provider: reviewResult.gateway.provider,
+                    duration_ms: Date.now() - reviewStartTime,
+                    prompt: reviewPrompt,
+                    output: reviewResult.data,
+                };
             } catch (reviewError: any) {
                 console.warn("Revisora falhou, mantendo rascunho da Lari:", reviewError?.message || reviewError);
             }
@@ -2916,6 +2951,7 @@ Revise e corrija se necessario.`
 
             if (useEvaluatorCall) {
                 try {
+                    const evaluatorStartTime = Date.now();
                     const evaluatorPrompt = `${baseInstruction}
 
 # IA 4: AVALIADORA FINAL DE CLIENTE ELITE
@@ -2945,6 +2981,15 @@ Faca a avaliacao final.`
                     });
                     evaluator = evaluatorResult.data;
                     evaluatorStatus = `ia avaliadora via ${evaluatorResult.gateway.label}`;
+                    evaluatorResultInfo = {
+                        name: "Avaliadora Elite",
+                        role: "evaluator",
+                        model: evaluatorResult.gateway.model,
+                        provider: evaluatorResult.gateway.provider,
+                        duration_ms: Date.now() - evaluatorStartTime,
+                        prompt: evaluatorPrompt,
+                        output: evaluatorResult.data,
+                    };
 
                     const evaluatedMessages = Array.isArray(evaluator?.messages)
                         ? normalizeAiMessageList(evaluator.messages)
@@ -2981,6 +3026,48 @@ Faca a avaliacao final.`
             } else {
                 jsonResponse.lead_stats = currentStats;
             }
+
+            // Montar payload estruturado para o Inspetor de Prompt e Resposta da IA
+            const totalDurationMs = Date.now() - executionStartedAt;
+            const cleanHistoryForDebug = (cleanHistory || []).map((h: any) => ({
+                role: h.role === 'model' ? 'assistant' : 'user',
+                content: String(h.parts?.[0]?.text || ''),
+            }));
+
+            const debugStages: Record<string, any> = {};
+            if (strategyResultInfo) debugStages.strategy = strategyResultInfo;
+            if (draftResultInfo) debugStages.draft = draftResultInfo;
+            if (reviewResultInfo) debugStages.review = reviewResultInfo;
+            if (evaluatorResultInfo) debugStages.evaluator = evaluatorResultInfo;
+
+            jsonResponse.ai_debug = {
+                timestamp: new Date().toISOString(),
+                model: draftResult?.gateway?.model || 'gemini-2.5-flash',
+                provider: draftResult?.gateway?.provider || 'gemini',
+                tier: orchestration.tier,
+                duration_ms: totalDurationMs,
+                system_prompt: draftPrompt,
+                user_prompt: draftParts[0]?.text || userMessage,
+                clean_history: cleanHistoryForDebug,
+                raw_response: {
+                    internal_thought: jsonResponse.internal_thought,
+                    lead_classification: jsonResponse.lead_classification,
+                    lead_stats: jsonResponse.lead_stats,
+                    extracted_user_name: jsonResponse.extracted_user_name,
+                    audio_transcription: jsonResponse.audio_transcription,
+                    current_state: jsonResponse.current_state,
+                    messages: jsonResponse.messages,
+                    action: jsonResponse.action,
+                    payment_details: jsonResponse.payment_details,
+                    preview_id: jsonResponse.preview_id,
+                    preview_request: jsonResponse.preview_request,
+                    lead_memory_patch: jsonResponse.lead_memory_patch,
+                    recommended_message_count: jsonResponse.recommended_message_count,
+                    max_chars_per_message: jsonResponse.max_chars_per_message,
+                },
+                stages: Object.keys(debugStages).length > 0 ? debugStages : undefined,
+                tokens_estimated: estimateAiTokens(draftPrompt, draftParts[0]?.text || userMessage, cleanHistoryForDebug),
+            };
 
             console.log("[AI Gateway Final Return] Stats Calculados:", JSON.stringify(jsonResponse.lead_stats));
 

@@ -4,6 +4,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useParams, useRouter } from "next/navigation";
 import { parseLeadScore, parseLeadScoreMeta } from "@/lib/leadScoring";
+import { AiDebugData } from "@/types";
+import { PromptInspectorDrawer } from "./components/PromptInspectorDrawer";
 
 interface Message {
     id: string;
@@ -12,6 +14,7 @@ interface Message {
     created_at: string;
     media_url?: string | null;
     media_type?: string | null;
+    ai_debug?: AiDebugData | null;
 }
 
 interface MediaPreview {
@@ -35,6 +38,12 @@ export default function AdminChatPage() {
     const [typingClock, setTypingClock] = useState(() => Date.now());
     const [showThoughts, setShowThoughts] = useState(false);
     const [showSystem, setShowSystem] = useState(false);
+    const [showAdvancedView, setShowAdvancedView] = useState(false);
+    const [selectedInspectorMessage, setSelectedInspectorMessage] = useState<{
+        debugData: AiDebugData | null;
+        createdAt?: string;
+        thoughtContent?: string;
+    } | null>(null);
     const [actionMsg, setActionMsg] = useState("");
     const [forceLoading, setForceLoading] = useState(false);
     const [scoreLoading, setScoreLoading] = useState(false);
@@ -286,11 +295,11 @@ export default function AdminChatPage() {
 
     const visibleMessages = useMemo(() => {
         return messages.filter((msg) => {
-            if (msg.sender === "thought" && !showThoughts) return false;
+            if (msg.sender === "thought" && !showThoughts && !showAdvancedView) return false;
             if (msg.sender === "system" && !showSystem) return false;
             return true;
         });
-    }, [messages, showThoughts, showSystem]);
+    }, [messages, showThoughts, showSystem, showAdvancedView]);
 
     const leadTyping = useMemo(() => {
         const lastMsg = messages[messages.length - 1];
@@ -331,6 +340,26 @@ export default function AdminChatPage() {
                         <div className="flex flex-wrap items-center gap-2">
                             <SegmentButton active={showSystem} onClick={() => setShowSystem(!showSystem)}>Sistema</SegmentButton>
                             <SegmentButton active={showThoughts} onClick={() => setShowThoughts(!showThoughts)}>Ideias IA</SegmentButton>
+                            <SegmentButton
+                                active={showAdvancedView}
+                                onClick={() => {
+                                    const next = !showAdvancedView;
+                                    setShowAdvancedView(next);
+                                    if (next) {
+                                        const latestAiMsg = [...messages].reverse().find((m) => m.ai_debug || m.sender === "thought" || m.sender === "bot");
+                                        if (latestAiMsg) {
+                                            const associatedDebug = findAssociatedDebug(messages, latestAiMsg);
+                                            setSelectedInspectorMessage({
+                                                debugData: latestAiMsg.ai_debug || associatedDebug,
+                                                createdAt: latestAiMsg.created_at,
+                                                thoughtContent: latestAiMsg.sender === "thought" ? latestAiMsg.content : undefined,
+                                            });
+                                        }
+                                    }
+                                }}
+                            >
+                                ⚡ Visão Avançada
+                            </SegmentButton>
                             <button
                                 onClick={() => session?.id && loadMessages(session.id)}
                                 className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-300/40"
@@ -367,6 +396,7 @@ export default function AdminChatPage() {
                         {visibleMessages.map((msg, index) => {
                             const previous = visibleMessages[index - 1];
                             const showDate = !previous || !isSameDay(previous.created_at, msg.created_at);
+                            const associatedDebug = findAssociatedDebug(messages, msg);
 
                             return (
                                 <React.Fragment key={msg.id}>
@@ -377,7 +407,19 @@ export default function AdminChatPage() {
                                             </span>
                                         </div>
                                     )}
-                                    <MessageBubble message={msg} onOpenMedia={setMediaPreview} />
+                                    <MessageBubble
+                                        message={msg}
+                                        onOpenMedia={setMediaPreview}
+                                        showAdvancedView={showAdvancedView}
+                                        associatedDebug={associatedDebug}
+                                        onInspectPrompt={(targetMsg, debug) => {
+                                            setSelectedInspectorMessage({
+                                                debugData: debug || targetMsg.ai_debug || null,
+                                                createdAt: targetMsg.created_at,
+                                                thoughtContent: targetMsg.sender === "thought" ? targetMsg.content : undefined,
+                                            });
+                                        }}
+                                    />
                                 </React.Fragment>
                             );
                         })}
@@ -508,16 +550,37 @@ export default function AdminChatPage() {
                     </div>
                 </div>
             )}
+
+            <PromptInspectorDrawer
+                open={Boolean(selectedInspectorMessage)}
+                onClose={() => setSelectedInspectorMessage(null)}
+                debugData={selectedInspectorMessage?.debugData || null}
+                messageCreatedAt={selectedInspectorMessage?.createdAt}
+                thoughtContent={selectedInspectorMessage?.thoughtContent}
+            />
         </div>
     );
 }
 
-function MessageBubble({ message, onOpenMedia }: { message: Message; onOpenMedia: (media: MediaPreview) => void }) {
+function MessageBubble({
+    message,
+    onOpenMedia,
+    showAdvancedView,
+    associatedDebug,
+    onInspectPrompt,
+}: {
+    message: Message;
+    onOpenMedia: (media: MediaPreview) => void;
+    showAdvancedView: boolean;
+    associatedDebug: AiDebugData | null;
+    onInspectPrompt: (targetMsg: Message, debug?: AiDebugData | null) => void;
+}) {
     const isMe = message.sender === "bot" || message.sender === "admin";
     const isSystem = message.sender === "system";
     const isThought = message.sender === "thought";
     const mediaSrc = getMessageMediaSrc(message);
     const displayText = cleanTextForBubble(message.content);
+    const effectiveDebug = message.ai_debug || associatedDebug;
 
     if (isSystem || isThought) {
         return (
@@ -525,9 +588,27 @@ function MessageBubble({ message, onOpenMedia }: { message: Message; onOpenMedia
                 <div className={`max-w-[92%] rounded-lg border px-3 py-2 text-xs leading-relaxed ${isThought
                     ? "border-amber-300/20 bg-amber-300/10 text-amber-100"
                     : "border-white/10 bg-white/[0.04] text-slate-400"}`}>
-                    <span className="font-semibold">{isThought ? "IA" : "Sistema"}: </span>
-                    <span className="whitespace-pre-wrap break-words">{displayText}</span>
-                    <span className="ml-2 text-[10px] opacity-60">{formatTime(message.created_at)}</span>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-semibold">{isThought ? "IA (Pensamento)" : "Sistema"}: </span>
+                        <div className="flex items-center gap-2">
+                            {isThought && (showAdvancedView || message.ai_debug) && (
+                                <button
+                                    type="button"
+                                    onClick={() => onInspectPrompt(message, message.ai_debug)}
+                                    className={`flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-semibold transition ${message.ai_debug
+                                        ? "border border-cyan-400/40 bg-cyan-400/15 text-cyan-200 hover:bg-cyan-400/25"
+                                        : "border border-amber-300/30 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20"}`}
+                                    title="Inspecionar prompt completo e resposta bruta da IA"
+                                >
+                                    <span>⚡ {message.ai_debug ? "Ver Prompt & JSON" : "Inspecionar"}</span>
+                                    {message.ai_debug?.model && <span className="opacity-75">· {message.ai_debug.model}</span>}
+                                    {message.ai_debug?.duration_ms ? <span className="text-emerald-300">· {message.ai_debug.duration_ms}ms</span> : null}
+                                </button>
+                            )}
+                            <span className="text-[10px] opacity-60">{formatTime(message.created_at)}</span>
+                        </div>
+                    </div>
+                    <div className="mt-1 whitespace-pre-wrap break-words">{displayText}</div>
                 </div>
             </div>
         );
@@ -560,9 +641,43 @@ function MessageBubble({ message, onOpenMedia }: { message: Message; onOpenMedia
                     </button>
                 )}
                 {displayText && <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{displayText}</p>}
+
+                {message.sender === "bot" && (showAdvancedView || effectiveDebug) && (
+                    <div className="mt-2.5 flex justify-end border-t border-white/5 pt-1.5">
+                        <button
+                            type="button"
+                            onClick={() => onInspectPrompt(message, effectiveDebug)}
+                            className="flex items-center gap-1.5 rounded-md border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-200 transition hover:border-cyan-400/60 hover:bg-cyan-400/20"
+                            title="Inspecionar o prompt completo e a resposta da IA para esta mensagem"
+                        >
+                            <span>⚡ Ver Prompt & Resposta IA</span>
+                            {effectiveDebug?.model && <span className="opacity-75">· {effectiveDebug.model}</span>}
+                            {effectiveDebug?.duration_ms ? <span className="text-emerald-300">· {effectiveDebug.duration_ms}ms</span> : null}
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );
+}
+
+function findAssociatedDebug(messages: Message[], currentMsg: Message): AiDebugData | null {
+    if (currentMsg.ai_debug) return currentMsg.ai_debug;
+    if (currentMsg.sender === "bot") {
+        const msgIndex = messages.findIndex((m) => m.id === currentMsg.id);
+        if (msgIndex >= 0) {
+            for (let i = msgIndex - 1; i >= 0; i--) {
+                const prev = messages[i];
+                if (prev.sender === "thought" && prev.ai_debug) {
+                    const diffMs = Math.abs(new Date(currentMsg.created_at).getTime() - new Date(prev.created_at).getTime());
+                    if (diffMs <= 120_000) {
+                        return prev.ai_debug;
+                    }
+                }
+            }
+        }
+    }
+    return null;
 }
 
 function getMessageMediaSrc(message: Message) {
