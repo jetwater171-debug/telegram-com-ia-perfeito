@@ -40,6 +40,21 @@ const PROCESSING_LEASE_TTL_MS = 90_000;
 const PROCESSING_LEASE_WAIT_MS = 45_000;
 const PROCESSING_LEASE_POLL_MS = 750;
 
+const normalizeTelegramImageMimeType = (contentType: string | null, filePath: string) => {
+    const normalized = String(contentType || '').split(';')[0].trim().toLowerCase();
+    if (normalized.startsWith('image/')) return normalized;
+
+    const extension = String(filePath || '').split('?')[0].match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
+    const mimeByExtension: Record<string, string> = {
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        png: 'image/png',
+        webp: 'image/webp',
+        gif: 'image/gif',
+    };
+    return (extension && mimeByExtension[extension]) || 'image/jpeg';
+};
+
 const randomBetween = (min: number, max: number) => Math.floor(min + Math.random() * (max - min + 1));
 
 const humanTextDelayMs = (text: string, bubbleIndex: number) => {
@@ -1204,7 +1219,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 const arrayBuffer = await res.arrayBuffer();
                 const buffer = Buffer.from(arrayBuffer);
                 const base64Image = buffer.toString('base64');
-                const mimeType = res.headers.get('content-type') || 'image/jpeg';
+                const mimeType = normalizeTelegramImageMimeType(res.headers.get('content-type'), filePath);
 
                 mediaData = {
                     mimeType,
