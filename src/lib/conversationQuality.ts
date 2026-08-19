@@ -27,10 +27,13 @@ export const refineNewRelationshipMessages = (messages: unknown[], options: {
         seen.add(key);
         unique.push(message);
     }
-    if (unique.length === 0 || (options.isConversationStart && userOnlyGreeting)) {
+    if (options.isConversationStart && userOnlyGreeting) {
         return options.hasKnownName
             ? ['oii lindo, tudo bem?', 'como ta seu dia hj?']
             : ['oii, tudo bem?', 'como eu te chamo, anjo?'];
+    }
+    if (unique.length === 0) {
+        return ['to adorando conversar com vc amor', 'me fala mais de vc vida'];
     }
     return unique.slice(0, 3);
 };

@@ -1860,22 +1860,12 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         extractedName: aiResponse.extracted_user_name,
         lastBotContent
     });
-    const relationshipStageBeforeTurn = String(leadMemory.relationship_stage || 'new').trim().toLowerCase();
-    const episodeStartedAtMs = Date.parse(String(leadMemory.metadata?.conversation_started_at || ''));
-    const episodeLeadTurns = Number.isFinite(episodeStartedAtMs)
-        ? recentSalesHistory.filter((message: any) => message.sender === 'user'
-            && Date.parse(String(message.created_at || '')) >= episodeStartedAtMs).length
-        : Number.POSITIVE_INFINITY;
-    const isEarlyConversationEpisode = isConversationStart || episodeLeadTurns <= 3;
-    if (!relationshipStageBeforeTurn
-        || relationshipStageBeforeTurn === 'new'
-        || relationshipStageBeforeTurn === 'unknown'
-        || isEarlyConversationEpisode) {
+    if (isConversationStart) {
         safeMessages = refineNewRelationshipMessages(safeMessages, {
             userText: userOnlyText,
             lastBotContent,
             hasKnownName: sessionHasUsefulName(session.user_name) || userProbablyProvidedName(userOnlyText, aiResponse.extracted_user_name),
-            isConversationStart,
+            isConversationStart: true,
         });
     }
     if (mediaSuppressedForRepetition) {
@@ -1884,9 +1874,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     if (safeMessages.length === 0 && (!userAskedMedia || mediaSuppressedForRepetition)) {
         safeMessages = hasExplicitSexualFantasyTrigger(userOnlyText)
             ? ['so de imaginar vc me comendo ja fico toda arrepiada']
-            : mediaSuppressedForRepetition
-                ? ['agora quero te provocar de um jeito diferente amor']
-                : ['me conta melhor amor, quero entender vc'];
+            : ['to adorando conversar com vc amor', 'me fala mais de vc'];
     }
     if (cityQuestion && hasCity) {
         const forcedCityAnswer = `sou de ${userCity} amor, e vc?`;
@@ -1913,25 +1901,14 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     if (safeMessages.length === 0 && !MEDIA_ACTIONS.has(String(aiResponse.action || 'none'))) {
         safeMessages = hasExplicitSexualFantasyTrigger(userOnlyText)
             ? ['so de imaginar vc me comendo ja fico toda arrepiada']
-            : ['me fala mais disso amor', 'to adorando conversar com vc'];
+            : ['to adorando conversar com vc amor', 'me fala mais de vc vida'];
     }
 
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));
-    const setupIndex = isMediaDeliveryTurn
-        ? safeMessages.findIndex((message: string) => !isPrematureMediaReaction(message))
-        : -1;
-    const naturalMediaSetup = isMediaDeliveryTurn
-        ? buildNaturalMediaSetup(
-            userOnlyText,
-            aiResponse.action,
-            setupIndex >= 0 ? safeMessages[setupIndex] : 'olha o que separei pra vc amor',
-        )
-        : '';
-    const deferredMediaMessages = isMediaDeliveryTurn
-        ? safeMessages.filter((_: string, index: number) => index !== setupIndex).slice(0, 1)
-        : [];
+    const setupMessage = isMediaDeliveryTurn && safeMessages.length > 0 ? safeMessages[0] : '';
+    const deferredMediaMessages = isMediaDeliveryTurn && safeMessages.length > 1 ? safeMessages.slice(1, 2) : [];
     let outgoingToSend = isMediaDeliveryTurn
-        ? (naturalMediaSetup ? [naturalMediaSetup] : [])
+        ? (setupMessage ? [setupMessage] : [])
         : safeMessages.slice(0, 3);
     let operationalLeadMemory = updatedLeadMemory;
     const persistMediaDeliveryStatus = async (
