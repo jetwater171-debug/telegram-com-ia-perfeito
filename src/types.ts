@@ -86,4 +86,35 @@ export interface AIResponse {
     lead_memory_patch?: LeadMemoryPatch | null;
     recommended_message_count?: number;
     max_chars_per_message?: number;
+    ai_debug?: AiDebugData | null;
 }
+
+export interface AiDebugStage {
+    name?: string;
+    role?: string;
+    model?: string;
+    provider?: string;
+    duration_ms?: number;
+    prompt?: string;
+    output?: any;
+}
+
+export interface AiDebugData {
+    timestamp: string;
+    model?: string;
+    provider?: string;
+    tier?: string;
+    duration_ms?: number;
+    system_prompt: string;
+    user_prompt: string;
+    clean_history?: Array<{ role: string; content: string }>;
+    raw_response?: Record<string, any>;
+    stages?: {
+        strategy?: AiDebugStage;
+        draft?: AiDebugStage;
+        review?: AiDebugStage;
+        evaluator?: AiDebugStage;
+    };
+    tokens_estimated?: number;
+}
+

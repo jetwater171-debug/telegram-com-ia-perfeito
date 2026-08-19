@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     processing_started_at TIMESTAMP WITH TIME ZONE
 );
 
+
 -- Create messages table
 CREATE TABLE IF NOT EXISTS messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -27,7 +28,8 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT,
     media_url TEXT,
     media_type TEXT, -- 'image', 'video', 'audio'
-    payment_data JSONB -- Stores payment info if related to payment
+    payment_data JSONB, -- Stores payment info if related to payment
+    ai_debug JSONB -- Stores full prompt, raw response and model telemetry for advanced inspector
 );
 
 -- Create bot_settings table (for dynamic token)

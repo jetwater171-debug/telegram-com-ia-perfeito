@@ -24,7 +24,7 @@ import {
 } from '@/lib/fishAudio';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
-import { buildDeliveredPreviewCaption } from '@/lib/previewMoment';
+import { buildDeliveredPreviewCaption, isPhotoTakenNow } from '@/lib/previewMoment';
 import { evaluateSalesTiming, extractExplicitBudget, guardPrematureSaleMessages } from '@/lib/salesTiming';
 
 export const maxDuration = 120;
@@ -417,16 +417,18 @@ const removeGenericBotPhrases = (messages: string[]) => {
 const isPrematureMediaReaction = (message: string) => {
     const text = normalizeLoopText(message);
     return /\b(o que achou|oq achou|me fala o que achou|gostou|curtiu|achou gostosa|achou bonita)\b/i.test(text)
-        || /\b(ta aqui|tá aqui|te mandei|acabei de mandar|ja mandei|já mandei)\b/i.test(text)
-        || /\b(?:olha|ve|vê|confere)\b.{0,45}\b(?:essa|foto|fotinha|imagem|previa|prévia|video|vídeo)\b/i.test(text)
-        || /\b(?:tirei|separei|escolhi)\b.{0,45}\b(?:essa|uma|foto|fotinha|imagem|previa|prévia|video|vídeo)\b/i.test(text)
+        || /\b(ta aqui|tá aqui|te mandei|acabei de mandar|ja mandei|já mandei|vai aí|vai ai|olha aí|olha ai)\b/i.test(text)
+        || /\b(?:olha|ve|vê|confere|toma)\b.{0,45}\b(?:essa|esse|foto|fotinha|imagem|previa|prévia|video|vídeo|pedacinho)\b/i.test(text)
+        || /\b(?:tirei|separei|escolhi|mandei)\b.{0,45}\b(?:essa|uma|foto|fotinha|imagem|previa|prévia|video|vídeo|pedacinho)\b/i.test(text)
+        || /\b(?:que tal|se liga|dá uma olhada|da uma olhada)\b.{0,35}\b(?:nesse|nessa|esse|essa|pedacinho|foto|previa|prévia)\b/i.test(text)
+        || /\b(?:vou te mandar|to te mandando|tô te mandando|vou mandar|mandando agora)\b/i.test(text)
         || isMediaSetupPromise(message);
 };
 
 const isMediaAnnouncement = (message: string) => {
     const text = normalizeLoopText(message);
     return isPrematureMediaReaction(message)
-        || /\b(?:foto|fotinha|fotos|imagem|imagens|selfie|previa|prévia|video|vídeo|nude|nudes)\b/i.test(text);
+        || /\b(?:foto|fotinha|fotos|imagem|imagens|selfie|previa|prévia|video|vídeo|nude|nudes|pedacinho)\b/i.test(text);
 };
 
 const buildNaturalMediaSetup = (userText: string, action?: string, suggested?: string) => {
@@ -2497,12 +2499,24 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 asset: any = selectedPreviewAsset,
             ) => {
                 if (type === 'image') {
+                    const timeZone = String(operationalLeadMemory.metadata?.redirect_timezone || '');
                     const deliveredCaption = buildDeliveredPreviewCaption({
                         asset,
                         userText: userOnlyText,
-                        timeZone: String(operationalLeadMemory.metadata?.redirect_timezone || ''),
+                        timeZone,
                     });
-                    await sendTelegramAction(botToken, chatId, 'upload_photo');
+                    const isTakenNow = isPhotoTakenNow({
+                        asset,
+                        timeZone,
+                    });
+
+                    // Se a foto é no contexto "tirada agora", aplica um delay realista maior
+                    // simulando o tempo de pegar o celular, fazer a pose e tirar a foto na hora!
+                    const photoPreparationDelayMs = isTakenNow
+                        ? randomBetween(4200, 6800)
+                        : randomBetween(1500, 2500);
+
+                    await waitWithChatAction('upload_photo', photoPreparationDelayMs);
                     const heartbeat = setInterval(() => {
                         void sendTelegramAction(botToken, chatId, 'upload_photo');
                     }, 4_000);

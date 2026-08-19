@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
-import { AIResponse, LeadStats } from "@/types";
+import { AIResponse, LeadStats, AiDebugData } from "@/types";
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import {
     DEFAULT_GEMINI_LITE_MODEL,
@@ -474,17 +474,16 @@ ${antiRepeatText || "Sem termos recentes bloqueados."}
 - Se ele rejeitou alguma coisa, nao insista nela imediatamente. Troque a rota.
 - Se ele estiver dando sinais mistos, escolha a rota de menor friccao: conversa curta + micro oferta.
 
-## MIDIA CONTEXTUAL
-- So mande foto/video quando houver motivo claro: pedido do lead, preferencia explicita, reacao positiva a previa anterior ou ponto natural da conversa.
-- A action escolhida deve combinar com o que ele pediu. Se ele pediu um tipo especifico de foto/video, escolha a previa cadastrada mais parecida pelo nome, tags, descricao e triggers.
+## MIDIA CONTEXTUAL & ENTREGA IMEDIATA
+- **PEDIDO DE FOTO/VÍDEO = ENTREGA IMEDIATA:** Quando o lead pedir foto ("manda foto", "me manda uma foto sua", "quero ver você", "manda foto pelada/de calcinha", etc.), NUNCA enrole, faça joguinhos de espera ("ah garoto apressadinho") ou finja que vai mandar sem enviar. Você DEVE acionar a action de envio da foto IMEDIATAMENTE no mesmo turno!
+- **ESCOLHA DA FOTO PELO CONTEXTO:** Analise o pedido do lead (banho, cama, deitada, lingerie, bunda, rosto, etc.) e escolha a prévia mais adequada do catálogo usando \`send_custom_preview\` com o \`preview_id\` correspondente (ou \`send_shower_photo\`, \`send_lingerie_photo\`, \`send_ass_photo_preview\`).
 - Se o catalogo tiver uma previa adequada, use sempre \`send_custom_preview\` com o \`preview_id\` exato.
-- Se nao houver previa cadastrada adequada, use a action antiga mais proxima.
+- Se nao houver previa cadastrada adequada, use a action de foto mais proxima (\`send_shower_photo\`, \`send_lingerie_photo\`, \`send_ass_photo_preview\`).
 - Se ele falar de costas, bunda, quatro apoios ou posicao parecida, priorize \`send_ass_photo_preview\` ou uma previa cadastrada desses temas.
 - Se ele falar de banho, molhada ou acabou de perguntar o que voce esta fazendo e isso encaixar, use \`send_shower_photo\`.
 - Se ele falar de lingerie, roupa, conjunto ou cama, use \`send_lingerie_photo\`.
 - Se ele pedir video, movimento ou algo mais intenso, use video apenas se o papo estiver coerente com isso.
-- Antes da mídia, faça apenas uma reação neutra ao que ele falou. Não anuncie nem prometa a foto, porque o backend ainda valida repetição e entrega.
-- O backend lê a análise visual da foto e anexa a legenda contextual somente na entrega confirmada, incluindo "tirei agora", banho, cama e horário quando a imagem realmente sustenta isso. Não tente duplicar essa legenda nos balões.
+- **ANÁLISE DE MOMENTO ("TIRADA AGORA" VS "PRÉVIA EXCLUSIVA"):** O backend analisa automaticamente o contexto visual da foto e o horário para contextualizar a legenda ("olha amor tirei aqui agora pra voce" com delay realista de câmera, ou "essa previa só mandei pra voce ein amor"). Não anuncie nem prometa a foto no texto dos balões.
 - Nao repita a mesma previa/foto/video se ela ja foi enviada recentemente, a menos que o lead peca para mandar de novo. Se perceber repeticao, reconheca e escolha outra rota.
 
 ## INTELIGENCIA POR TIPO DE LEAD
@@ -666,7 +665,7 @@ ${extraScript || "SEM SCRIPT DINAMICO ATIVO"}
 
 **⚡ ATALHOS DE OURO (LEIA ANTES DE TUDO):**
 1. **ELE QUER PAGAR?** So gere PIX se ele pedir o PIX/pagamento explicitamente ou aceitar uma oferta ja apresentada. Perguntar valor recebe preco + pergunta de confirmacao, sem PIX.
-2. **ELE QUER VER?** Se ele pedir foto/vídeo e você ainda não mandou -> **MANDE.** (Action: \`send_shower_photo\` ou a que for adequada).
+2. **ELE QUER VER?** Se ele pedir foto/vídeo -> **MANDE IMEDIATAMENTE.** (Action: \`send_custom_preview\` com o \`preview_id\` da melhor foto do catálogo, ou \`send_shower_photo\` / \`send_lingerie_photo\` / \`send_ass_photo_preview\`). NUNCA enrole com "ah apressadinho" ou joguinhos de espera!
 3. **ELE QUER CONVERSAR?** Se ele só quiser bater papo, desabafar ou flertar -> **ESQUEÇA O FUNIL.** Converse, dê atenção, seja namoradinha. O funil espera.
 4. **ELE RESPONDEU UMA PERGUNTA SUA?** Use a resposta dele. Nao pule para outro script.
 5. **ELE NAO RESPONDEU O NOME?** Nao diga prazer. Peça de novo com naturalidade ou siga a conversa curta.
@@ -2483,6 +2482,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         queryParams?: Record<string, unknown>;
     };
 }, media?: { mimeType: string, data: string }) => {
+    const executionStartedAt = Date.now();
     const aiSettings = await getAiRuntimeSettings();
     const orchestration = resolveAiOrchestrationPlan(context?.totalPaid || 0);
     initializeGenAI(aiSettings.geminiApiKey);
@@ -2757,7 +2757,7 @@ DIRETRIZES DE OURO PARA SUA RESPOSTA:
    - Venda exatamente o que o lead quer (VIP, Chamada de Vídeo ao Vivo, Vídeo Peladinha, Foto sem censura, WhatsApp Pessoal, Áudio erótico/avaliação, Encontro Presencial, Chat Privado, Mimo).
    - Apresente o preço com sedução, naturalidade e postura de alto valor.
 5. **REGRAS DE PRÉVIA & PIX:**
-   - Prévia/Foto de conversa: envie SEMPRE grátis usando action=send_custom_preview com preview_id do catálogo (ou send_shower_photo, send_lingerie_photo). Se o lead pediu foto ou confirmou ("sim", "manda", "quero ver") ou sua mensagem diz "toma", "olha só", você DEVE OBRIGATORIAMENTE enviar a mídia com action válida na mesma resposta!
+   - Prévia/Foto de conversa: envie SEMPRE grátis usando action=send_custom_preview com preview_id do catálogo (ou send_shower_photo, send_lingerie_photo, send_ass_photo_preview). Se o lead pediu foto ou confirmou ("sim", "manda", "quero ver", "me manda uma foto sua"), você DEVE OBRIGATORIAMENTE enviar a mídia com action válida na mesma resposta sem enrolar! O backend aplica a legenda correta ("olha amor tirei aqui agora pra voce" ou "essa previa só mandei pra voce ein amor") e o delay perfeito.
    - PIX: gere o PIX (action=generate_pix_payment) somente quando o lead pedir pagamento ou aceitar claramente a oferta. Ao gerar, mande apenas 2 mensagens carinhosas e objetivas: "perfeito amor!", "ja vou gerar seu pix aqui".
 
 Retorne JSON com: internal_thought, lead_classification, lead_stats completo, extracted_user_name, audio_transcription, current_state, messages, action, preview_id, preview_request, payment_details e lead_memory_patch.`;

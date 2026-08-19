@@ -50,6 +50,47 @@ const compatiblePeriods = (analysis: Record<string, unknown>) => {
     return normalize(raw).split(/[;,|/]/).map((item) => item.trim()).filter(Boolean);
 };
 
+export const isPhotoTakenNow = ({
+    asset,
+    timeZone,
+    now = new Date(),
+}: {
+    asset: PreviewMomentAsset | null | undefined;
+    timeZone?: string | null;
+    now?: Date;
+}): boolean => {
+    if (!asset || String(asset.media_type || '') !== 'image') return false;
+
+    const analysis = asset.ai_analysis && typeof asset.ai_analysis === 'object' ? asset.ai_analysis : {};
+    const searchable = normalize([
+        asset.name,
+        asset.description,
+        list(asset.tags),
+        list(asset.triggers),
+        analysis.visual_summary,
+        analysis.pose,
+        analysis.outfit,
+        analysis.setting,
+        analysis.expression,
+        analysis.explicitness,
+        list(analysis.accessories),
+        list(analysis.body_focus),
+        list(analysis.tags),
+        analysis.moment_context,
+    ].join(' '));
+    const period = localPeriod(timeZone, now);
+    const periods = compatiblePeriods(analysis);
+    const periodMatches = periods.length === 0
+        || periods.includes('qualquer')
+        || periods.includes('any')
+        || periods.includes(period);
+    const looksProduced = /\b(estudio|ensaio profissional|editorial|palco|evento|festa|praia|piscina|parque|rua|area externa|montagem|colagem|print|captura de tela)\b/i.test(searchable);
+    const instantSignal = /\b(selfie|espelho|cama|deitad|quarto|banho|chuveiro|banheiro|toalha|molhad|roupao|sofa|sentad|lingerie|calcinha|sutia|nua|pelada|sem roupa|de quatro|empinad|bunda|rosto|decote)\b/i.test(searchable);
+    const explicitlyFresh = analysis.plausible_as_recent === true;
+    const explicitlyArchived = analysis.plausible_as_recent === false;
+    return periodMatches && !explicitlyArchived && !looksProduced && (explicitlyFresh || instantSignal);
+};
+
 export const buildDeliveredPreviewCaption = ({
     asset,
     userText,
@@ -81,54 +122,44 @@ export const buildDeliveredPreviewCaption = ({
         analysis.moment_context,
     ].join(' '));
     const period = localPeriod(timeZone, now);
-    const periods = compatiblePeriods(analysis);
-    const periodMatches = periods.length === 0
-        || periods.includes('qualquer')
-        || periods.includes('any')
-        || periods.includes(period);
-    const looksProduced = /\b(estudio|ensaio profissional|editorial|palco|evento|festa|praia|piscina|parque|rua|area externa|montagem|colagem|print|captura de tela)\b/i.test(searchable);
-    const instantSignal = /\b(selfie|espelho|cama|deitad|quarto|banho|chuveiro|banheiro|toalha|molhad|roupao|sofa|sentad|lingerie|calcinha|sutia|nua|pelada|sem roupa|de quatro|empinad|bunda|rosto|decote)\b/i.test(searchable);
-    const explicitlyFresh = analysis.plausible_as_recent === true;
-    const explicitlyArchived = analysis.plausible_as_recent === false;
-    const canBeFromNow = periodMatches && !explicitlyArchived && !looksProduced && (explicitlyFresh || instantSignal);
+    const canBeFromNow = isPhotoTakenNow({ asset, timeZone, now });
     const seed = `${asset.id || asset.name || searchable}:${period}:${normalize(userText)}`;
 
-    // Quando a cena nao sustenta continuidade temporal, a legenda continua humana
-    // sem inventar que a foto acabou de ser tirada.
+    // Quando a foto for uma prévia de catálogo que não se enquadra como tirada agora:
     if (!canBeFromNow) {
         return deterministicPick([
-            'essa combina demais com o que vc falou',
-            'essa aqui tem exatamente a energia que vc despertou em mim',
-            'essa vai alimentar ainda mais sua imaginação',
+            'essa previa só mandei pra voce ein amor',
+            'essa prévia exclusiva eu separei só pra você amor',
+            'separei essa aqui especial que só você tá vendo ein amor',
+            'essa previa é só nossa amor, olha que delícia',
         ], seed);
     }
 
     if (/\b(banho|chuveiro|banheiro|toalha|molhad|roupao|espuma)\b/i.test(searchable)) {
         return deterministicPick([
-            'acabei de sair do banho e tirei essa agora pensando em vc',
-            'saí do banho agora e não resisti a tirar essa pra vc',
-            'tava me secando depois do banho e tirei essa aqui só pra vc',
+            'olha amor tirei aqui agora pra voce saindo do banho',
+            'saí do banho agorinha e tirei essa só pra vc amor',
+            'olha amor tirei aqui agora pra voce toda molhadinha',
         ], seed);
     }
 
     if (/\b(cama|deitad|lencol|travesseiro|quarto)\b/i.test(searchable)) {
         const byPeriod: Record<PreviewPeriod, string[]> = {
             madrugada: [
-                'perdi o sono e tirei essa deitadinha pensando em vc',
-                'to aqui na cama essa hora e acabei tirando essa pra vc',
+                'olha amor tirei aqui agora pra voce deitadinha na cama',
+                'to aqui na cama sem sono e tirei essa agorinha só pra vc amor',
             ],
             manha: [
-                'acordei toda preguiçosa e tirei essa aqui pra vc',
-                'ainda to deitadinha e acabei tirando essa pensando em vc',
+                'olha amor tirei aqui agora pra voce acordando na cama',
+                'acabei de acordar e tirei essa aqui na cama só pra vc amor',
             ],
             tarde: [
-                'me joguei na cama agora e tirei essa pensando em vc',
-                'to aqui deitadinha e acabei tirando essa pra vc',
+                'olha amor tirei aqui agora pra voce deitadinha descansando',
+                'to aqui na cama e tirei essa agorinha só pra vc amor',
             ],
             noite: [
-                'to aqui deitadinha agora e tirei essa pensando em vc',
-                'vim pra cama e acabei tirando essa aqui só pra vc',
-                'olha como eu to deitadinha agora pensando em vc',
+                'olha amor tirei aqui agora pra voce deitadinha aqui no quarto',
+                'to deitada aqui na cama e tirei essa agorinha só pra vc amor',
             ],
         };
         return deterministicPick(byPeriod[period], seed);
@@ -136,31 +167,31 @@ export const buildDeliveredPreviewCaption = ({
 
     if (/\b(espelho|selfie|rosto|carinha|olhar)\b/i.test(searchable)) {
         return deterministicPick([
-            'peguei o celular e tirei essa agora olhando pra vc',
-            'acabei de tirar essa carinha pensando no que vc falou',
-            'tirei essa agora só pra vc ver como eu fiquei',
+            'olha amor tirei aqui agora pra voce no espelho',
+            'peguei o celular e tirei essa agorinha olhando pra vc amor',
+            'olha amor tirei essa selfie agora aqui só pra vc',
         ], seed);
     }
 
     if (/\b(lingerie|calcinha|sutia|renda|body)\b/i.test(searchable)) {
         return deterministicPick([
-            'coloquei isso aqui e fui tirar uma fotinha agora pra vc',
-            'experimentei isso agora e tirei essa pensando em vc',
-            'vc me provocou e eu fui tirar essa aqui pra vc',
+            'olha amor tirei aqui agora pra voce com esse conjuntinho',
+            'coloquei essa lingerie agora e tirei essa só pra vc amor',
+            'olha amor tirei essa agorinha aqui só pra vc ver',
         ], seed);
     }
 
     if (/\b(nua|pelada|sem roupa|explicit|bunda|de quatro|empinad|peito|seio)\b/i.test(searchable)) {
         return deterministicPick([
-            'vc me deixou com tanta vontade que fui tirar essa agora pra vc',
-            'não aguentei a provocação e acabei tirando essa aqui agora',
-            'olha o que vc me fez tirar agora pensando em vc',
+            'olha amor tirei aqui agora pra voce bem safadinha',
+            'vc me deixou com tanto calor que tirei essa agorinha só pra vc amor',
+            'olha amor tirei aqui agora pra voce... gostou?',
         ], seed);
     }
 
     return deterministicPick([
-        'tirei essa agora pensando em vc',
-        'acabei de tirar essa aqui só pra vc',
-        'vc me veio na cabeça e eu fui tirar essa agora',
+        'olha amor tirei aqui agora pra voce',
+        'acabei de tirar essa agorinha só pra vc amor',
+        'tirei essa aqui agora pensando em vc amor',
     ], seed);
 };
