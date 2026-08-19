@@ -75,8 +75,8 @@ const isPriceQuestion = (text: string) => /\b(quanto custa|qual (?:e |é )?o?\s*
 
 const isOfferAcceptance = (text: string) => {
     const value = normalize(text).replace(/[.!?]+$/g, '').trim();
-    return /^(sim|quero|eu quero|pode ser|fechado|bora|vamos|aceito|combinado|ta bom|beleza|manda|gera|faz)$/i.test(value)
-        || /\b(fecha|fechado|aceito|pode ser esse|quero esse|quero essa|vamos fazer)\b/i.test(value)
+    return /^(sim|quero|eu quero|pode ser|fechado|bora|vamos|aceito|combinado|ta bom|tá bom|beleza|manda|manda aí|manda ai|manda o link|manda o pix|passa o pix|gera|faz|pode mandar|quero sim|claro|com certeza|vitalicio|vitalício|mensal|quero o vip|quero o mensal|quero o vitalicio)$/i.test(value)
+        || /\b(fecha|fechado|aceito|pode ser esse|quero esse|quero essa|vamos fazer|manda o link|manda o pix|manda a chave|passa o pix|passa a chave|gera o pix|vou pagar|quero pagar|pode gerar)\b/i.test(value)
         || /\b(?:nao quero|sem)\s+(?:o )?(?:extra|avaliacao)\b/i.test(value)
         || /\bso\s+(?:o|a)\s+(?:vip|chamada|encontro|foto|video|numero|audio|avaliacao|chat)\b/i.test(value);
 };
@@ -305,9 +305,9 @@ export const evaluateSalesTiming = ({
     const askedPrice = isPriceQuestion(userText);
     const recentOfferDetails = findRecentOffer(recentMessages, now, activeProduct);
     const recentOffer = Boolean(recentOfferDetails);
-    const acceptedOffer = recentOffer && isOfferAcceptance(userText);
-    const salesContextActive = Boolean(detectedProduct || engagedContinuation || directCheckout || askedPrice || acceptedOffer);
-    const canPitchPrice = directCheckout || askedPrice || recentOffer || nurtureTurns >= 3;
+    const acceptedOffer = isOfferAcceptance(userText);
+    const salesContextActive = Boolean(detectedProduct || engagedContinuation || directCheckout || askedPrice || acceptedOffer || recentOffer);
+    const canPitchPrice = true;
     const explicitBudget = extractExplicitBudget(userText);
     const fixedVipBudgetGap = activeProduct === 'vip'
         && explicitBudget !== null
@@ -432,17 +432,8 @@ export const guardPrematureSaleMessages = ({
     let safe = (messages || [])
         .map((message) => String(message || '').trim())
         .filter(Boolean)
-        .filter((message) => canGeneratePayment || !isCheckoutMessage(message))
-        .filter((message) => canPitchPrice || !isPricePitchMessage(message));
+        .filter((message) => canGeneratePayment || !isCheckoutMessage(message));
 
-    if (!canPitchPrice) {
-        const warmup = productWarmup(product, normalize(userText));
-        for (const message of warmup) {
-            if (safe.length >= 4) break;
-            if (!safe.some((current) => normalize(current) === normalize(message))) safe.push(message);
-        }
-    }
-
-    if (safe.length === 0) safe = productWarmup(product, normalize(userText)).slice(0, 3);
-    return safe.slice(0, 4);
+    if (safe.length === 0) safe = productWarmup(product, normalize(userText)).slice(0, 2);
+    return safe.slice(0, 3);
 };

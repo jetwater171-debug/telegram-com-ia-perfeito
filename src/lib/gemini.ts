@@ -2136,62 +2136,66 @@ const makeFallbackStrategy = (message: string, leadMemory?: any) => {
     const wantsSpecificProduct = /(chamada|call|encontro|sair comigo|te encontrar|vem aqui|te busco|numero|número|whats|whatsapp|avaliacao|avaliação|vip|vitalicio|vitalício|mensal)/i.test(text);
     const isSexual = /(nude|pelada|bunda|peito|pau|buceta|gozar|tes[aã]o|safada|putaria)/i.test(text);
 
+    const isHotOrEngaged = isSexual || /(gostosa|linda|delicia|delícia|tesao|tesão|gozar|comer|chupar|meter|safada|putaria|fundo|pau|buceta|rola|caralho|bunda|peito|quente|vem|fazer comigo)/i.test(text);
+
     return {
         intent: wantsPayment
             ? 'comprar ou pedir valor'
-            : wantsMedia
-                ? 'pediu previa ou foto para ver'
-                : wantsAudio
-                    ? 'pediu audio falando com ele'
-                    : wantsSpecificProduct
-                        ? 'quer produto especifico'
+            : wantsSpecificProduct
+                ? 'quer produto especifico'
+                : wantsMedia
+                    ? 'pediu previa ou foto para ver'
+                    : isHotOrEngaged
+                        ? 'conversa quente e tesao'
                         : 'conversar',
-        lead_type: isSexual ? 'tarado' : wantsPayment ? 'curioso' : 'desconhecido',
-        temperature: wantsPayment ? 80 : isSexual ? 65 : 30,
-        emotional_context: isSexual ? 'excitado e receptivo' : wantsPayment ? 'objetivo e pronto para decidir' : 'aberto a conversa',
+        lead_type: isHotOrEngaged ? 'tarado' : wantsPayment ? 'comprador' : 'desconhecido',
+        temperature: wantsPayment ? 95 : isHotOrEngaged ? 85 : 45,
+        emotional_context: isHotOrEngaged ? 'excitado no ápice do tesão' : wantsPayment ? 'pronto para pagar' : 'aberto a conversa',
         relationship_stage: relationshipStage,
-        connection_cue: 'usar literalmente o assunto da mensagem atual',
+        connection_cue: 'usar o assunto atual e conduzir com sedução para o fechamento',
         objective: wantsPayment
-            ? 'fechar pagamento'
-            : wantsMedia
-                ? 'enviar previa do catalogo e encantar o lead'
-                : wantsAudio
-                    ? 'responder com voz carinhosa falando com ele'
-                    : wantsSpecificProduct
-                        ? 'vender o pedido exato do lead'
-                        : 'conversar naturalmente e observar uma pista real do lead',
-        product_to_sell: wantsSpecificProduct ? 'produto pedido pelo lead' : null,
-        should_sell_now: wantsPayment,
-        response_angle: 'responder primeiro o que ele disse e conduzir sem parecer script',
-        must_answer: 'responder diretamente a mensagem atual',
+            ? 'gerar o PIX imediatamente'
+            : wantsSpecificProduct
+                ? 'vender o pedido exato do lead com ancoragem'
+                : isHotOrEngaged
+                    ? 'provocar com imaginação sensorial e puxar a venda do VIP (R$ 19,90)'
+                    : wantsMedia
+                        ? 'enviar previa do catalogo e encantar o lead'
+                        : 'conversar com carinho e conduzir o interesse',
+        product_to_sell: wantsSpecificProduct ? 'produto pedido pelo lead' : 'vip',
+        should_sell_now: wantsPayment || isHotOrEngaged || Boolean(wantsSpecificProduct),
+        response_angle: 'reagir com extrema sensualidade e conduzir ativamente para a venda',
+        must_answer: 'responder o que ele disse com tesão e fazer a ponte para o VIP',
         next_step: wantsPayment
-            ? 'gerar pix se houver valor claro'
-            : wantsMedia
-                ? 'mandar foto de previa'
-                : 'continuar o mesmo assunto sem apressar intimidade ou venda',
+            ? 'gerar pix imediatamente'
+            : wantsSpecificProduct
+                ? 'apresentar valor e perguntar se pode gerar o pix'
+                : isHotOrEngaged
+                    ? 'alimentar o tesão com imaginação e propor o VIP secreto por R$ 19,90'
+                    : 'conversar naturalmente e aproximar intimidade',
         message_plan: wantsPayment
-            ? ['confirmar a escolha', 'informar a proxima acao']
-            : wantsMedia
-                ? ['preparar o envio da previa com carinho', 'mandar a foto']
-                : ['reagir ao que ele disse', 'acrescentar no maximo um gancho natural se couber'],
-        recommended_message_count: wantsPayment ? 2 : wantsMedia ? 2 : 1,
+            ? ['confirmar com carinho', 'gerar o pix']
+            : isHotOrEngaged
+                ? ['alimentar a fantasia com imaginação', 'propor o VIP de R$ 19,90 e perguntar se manda o link']
+                : ['reagir ao que ele disse', 'fazer uma pergunta que mantém o engajamento'],
+        recommended_message_count: 2,
         max_chars_per_message: 88,
-        avoid: ['repetir frase antiga', 'perguntar nome sem contexto', 'vender vip se ele pediu avulso', 'gerar pix para previa'],
+        avoid: ['parecer robô', 'deixar a conversa sem gancho de fechamento', 'ficar só conversando sem vender quando o clima tá quente'],
         action_hint: wantsPayment
             ? 'generate_pix_payment'
             : wantsMedia
                 ? 'send_custom_preview'
                 : 'none',
-        payment_value_hint: null,
-        confidence: 0.55,
+        payment_value_hint: wantsPayment ? 19.90 : null,
+        confidence: 0.85,
         memory_patch: {
-            best_tone: isSexual ? 'direta e safada' : wantsPayment ? 'objetiva e segura' : 'leve e curiosa',
-            emotional_context: isSexual ? 'excitado' : wantsPayment ? 'decidindo compra' : 'conhecendo a Lari',
+            best_tone: isHotOrEngaged ? 'safada e irresistível' : wantsPayment ? 'objetiva e carinhosa' : 'fofa e envolvente',
+            emotional_context: isHotOrEngaged ? 'excitado' : wantsPayment ? 'fechando compra' : 'conhecendo a Lari',
             relationship_stage: relationshipStage,
-            next_personal_step: 'deixar a conversa revelar um detalhe por vez sem qualificar o lead',
-            wanted_products: wantsSpecificProduct ? ['produto pedido na mensagem atual'] : [],
+            next_personal_step: isHotOrEngaged ? 'fechar o VIP ou produto' : 'aproximar intimidade',
+            wanted_products: wantsSpecificProduct ? ['produto pedido'] : ['vip'],
             rejected_products: [],
-            desires: isSexual ? ['conversa adulta direta'] : [],
+            desires: isHotOrEngaged ? ['conteúdo adulto exclusivo'] : [],
             objections: [],
             known_facts: [],
             conversation_hooks: [],
