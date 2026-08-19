@@ -1536,6 +1536,8 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     .filter(Boolean),
             );
             const catalog = (catalogResult.data || []).filter((asset: any) => asset.media_url);
+            const isImgAsset = (t?: string | null) => t === 'image' || t === 'photo' || !t;
+            const isVidAsset = (t?: string | null) => t === 'video';
             const action = String(aiResponse.action || '');
             const requestedType = userMediaKind === 'video' || /video/i.test(action)
                 ? 'video'
@@ -1543,13 +1545,13 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     ? 'image'
                     : null;
             const relevantCatalog = requestedType
-                ? catalog.filter((asset: any) => asset.media_type === requestedType)
+                ? catalog.filter((asset: any) => requestedType === 'video' ? isVidAsset(asset.media_type) : isImgAsset(asset.media_type))
                 : catalog;
             let unusedCatalog = relevantCatalog.filter((asset: any) =>
                 !sentMediaKeys.has(normalizeMediaUrlKey(asset.media_url))
             );
 
-            // Vídeo pode cair para uma foto inédita, como já acontecia no fluxo antigo.
+            // Vídeo pode cair para uma foto inédita se não houver vídeos
             if (unusedCatalog.length === 0 && requestedType === 'video') {
                 unusedCatalog = catalog.filter((asset: any) =>
                     !sentMediaKeys.has(normalizeMediaUrlKey(asset.media_url))
@@ -2091,42 +2093,51 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             ...requestedPreviewSpec.tags,
         ]));
 
+        const isImageType = (t?: string | null) => t === 'image' || t === 'photo' || !t;
+        const isVideoType = (t?: string | null) => t === 'video';
+        const matchesMediaType = (assetType?: string | null, targetType?: 'image' | 'video') => {
+            if (!targetType) return true;
+            return targetType === 'video' ? isVideoType(assetType) : isImageType(assetType);
+        };
+
         const getRegisteredPreview = async (
             mediaType?: 'image' | 'video',
             excludeUrls: string[] = [],
             preferredTags: string[] = preferredPreviewTags,
             requireRelevant = false,
         ) => {
-            let query = supabase
+            let data: any[] | null = null;
+            let error: any = null;
+
+            const res = await supabase
                 .from('preview_assets')
-                .select('id,name,description,triggers,tags,media_url,media_type,priority,min_tarado,max_tarado,ai_analysis')
+                .select('*')
                 .eq('enabled', true)
                 .order('priority', { ascending: false })
                 .order('created_at', { ascending: false })
                 .limit(1000);
-            if (mediaType) query = query.eq('media_type', mediaType);
-            let { data, error } = await query;
-            if (error) {
-                console.warn('[MÍDIA] Falha ao procurar prévia cadastrada:', error.message);
-            }
-            if (!data || data.length === 0) {
-                // Se procurou vídeo e não achou nenhum no banco, busca qualquer mídia do catálogo
-                const { data: anyData } = await supabase
+            data = res.data;
+            error = res.error;
+
+            if (error || !data || data.length === 0) {
+                const anyRes = await supabase
                     .from('preview_assets')
-                    .select('id,name,description,triggers,tags,media_url,media_type,priority,min_tarado,max_tarado,ai_analysis')
-                    .eq('enabled', true)
+                    .select('*')
                     .order('priority', { ascending: false })
                     .limit(1000);
-                data = anyData || [];
+                data = anyRes.data || [];
             }
+
             if (!data || data.length === 0) return null;
 
-            const excluded = new Set(excludeUrls.map((url) => String(url || '')));
-            const valid = (data || []).filter((item: any) => item.media_url);
-            if (valid.length === 0) return null;
+            const excluded = new Set(excludeUrls.map((url) => normalizeMediaUrlKey(url)).filter(Boolean));
+            const valid = (data || []).filter((item: any) => item?.media_url && matchesMediaType(item.media_type, mediaType));
+            
+            const candidateList = valid.length > 0 ? valid : (data || []).filter((item: any) => item?.media_url);
+            if (candidateList.length === 0) return null;
 
-            const available = valid.filter((item: any) => !excluded.has(String(item.media_url)));
-            const pool = available.length > 0 ? available : valid;
+            const available = candidateList.filter((item: any) => !excluded.has(normalizeMediaUrlKey(item.media_url)));
+            const pool = available.length > 0 ? available : candidateList;
 
             const ranked = pool
                 .map((item: any) => ({
@@ -2146,13 +2157,12 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             if (previewId) {
                 const { data: previewRow } = await supabase
                     .from('preview_assets')
-                    .select('id,name,description,triggers,tags,media_url,media_type,enabled,ai_analysis')
+                    .select('*')
                     .eq('id', previewId)
-                    .eq('enabled', true)
-                    .single();
+                    .maybeSingle();
                 if (previewRow?.media_url) {
                     mediaUrl = previewRow.media_url;
-                    mediaType = previewRow.media_type;
+                    mediaType = previewRow.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = previewRow;
                 }
             }
@@ -2160,7 +2170,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 const fallbackPreview = await getRegisteredPreview(undefined, [], requestedPreviewSpec.tags, false);
                 if (fallbackPreview) {
                     mediaUrl = fallbackPreview.media_url;
-                    mediaType = fallbackPreview.media_type;
+                    mediaType = fallbackPreview.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = fallbackPreview;
                 }
             }
@@ -2170,18 +2180,20 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 case 'send_lingerie_photo':
                 case 'send_wet_finger_photo':
                 case 'send_ass_photo_preview': {
-                    const registered = await getRegisteredPreview('image', [], preferredPreviewTags, false);
+                    const registered = await getRegisteredPreview('image', [], preferredPreviewTags, false)
+                        || await getRegisteredPreview(undefined, [], preferredPreviewTags, false);
                     mediaUrl = registered?.media_url || null;
-                    mediaType = registered?.media_type || null;
+                    mediaType = registered?.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = registered;
                     break;
                 }
                 case 'send_video_preview':
                 case 'send_hot_video_preview': {
                     const registered = await getRegisteredPreview('video', [], preferredPreviewTags, false)
-                        || await getRegisteredPreview('image', [], preferredPreviewTags, false);
+                        || await getRegisteredPreview('image', [], preferredPreviewTags, false)
+                        || await getRegisteredPreview(undefined, [], preferredPreviewTags, false);
                     mediaUrl = registered?.media_url || null;
-                    mediaType = registered?.media_type || null;
+                    mediaType = registered?.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = registered;
                     break;
                 }
@@ -2508,36 +2520,8 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 protection: TelegramMediaProtection = mediaProtection,
                 asset: any = selectedPreviewAsset,
             ) => {
-                if (type === 'image') {
-                    const timeZone = String(operationalLeadMemory.metadata?.redirect_timezone || '');
-                    const deliveredCaption = buildDeliveredPreviewCaption({
-                        asset,
-                        userText: userOnlyText,
-                        timeZone,
-                    });
-                    const isTakenNow = isPhotoTakenNow({
-                        asset,
-                        timeZone,
-                    });
-
-                    // Se a foto é no contexto "tirada agora", aplica um delay realista maior
-                    // simulando o tempo de pegar o celular, fazer a pose e tirar a foto na hora!
-                    const photoPreparationDelayMs = isTakenNow
-                        ? randomBetween(4200, 6800)
-                        : randomBetween(1500, 2500);
-
-                    await waitWithChatAction('upload_photo', photoPreparationDelayMs);
-                    const heartbeat = setInterval(() => {
-                        void sendTelegramAction(botToken, chatId, 'upload_photo');
-                    }, 4_000);
-                    try {
-                        await sendTelegramPhoto(botToken, chatId, url, deliveredCaption, protection);
-                    } finally {
-                        clearInterval(heartbeat);
-                    }
-                    return;
-                }
-                if (type === 'video') {
+                const isVideo = type === 'video';
+                if (isVideo) {
                     await sendTelegramAction(botToken, chatId, 'upload_video');
                     const heartbeat = setInterval(() => {
                         void sendTelegramAction(botToken, chatId, 'upload_video');
@@ -2549,7 +2533,34 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     }
                     return;
                 }
-                throw new Error(`tipo de midia invalido: ${type}`);
+
+                const timeZone = String(operationalLeadMemory.metadata?.redirect_timezone || '');
+                const deliveredCaption = buildDeliveredPreviewCaption({
+                    asset,
+                    userText: userOnlyText,
+                    timeZone,
+                });
+                const isTakenNow = isPhotoTakenNow({
+                    asset,
+                    timeZone,
+                });
+
+                // Se a foto é no contexto "tirada agora", aplica um delay realista maior
+                // simulando o tempo de pegar o celular, fazer a pose e tirar a foto na hora!
+                const photoPreparationDelayMs = isTakenNow
+                    ? randomBetween(4200, 6800)
+                    : randomBetween(1500, 2500);
+
+                await waitWithChatAction('upload_photo', photoPreparationDelayMs);
+                const heartbeat = setInterval(() => {
+                    void sendTelegramAction(botToken, chatId, 'upload_photo');
+                }, 4_000);
+                try {
+                    await sendTelegramPhoto(botToken, chatId, url, deliveredCaption, protection);
+                } finally {
+                    clearInterval(heartbeat);
+                }
+                return;
             };
 
             const userAskedRepeatMedia = userAskedToRepeatMedia(userOnlyText);
@@ -2568,12 +2579,12 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
 
             if (recentUrlKeys.has(normalizeMediaUrlKey(mediaUrl))) {
                 const alternative = await getRegisteredPreview(
-                    mediaType === 'image' || mediaType === 'video' ? mediaType : undefined,
+                    mediaType === 'video' ? 'video' : 'image',
                     [...recentUrls, String(mediaUrl)],
                 );
-                if (alternative) {
+                if (alternative?.media_url) {
                     mediaUrl = alternative.media_url;
-                    mediaType = alternative.media_type;
+                    mediaType = alternative.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = alternative;
                     mediaProtection = protectionForPreview(alternative);
                 }
