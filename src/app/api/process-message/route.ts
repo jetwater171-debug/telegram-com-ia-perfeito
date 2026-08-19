@@ -240,6 +240,10 @@ const sanitizeOutgoingMessage = (text: unknown) => {
     out = out.replace(/\b(?:eu\s+)?te\s+comeria\b/gi, 'eu daria pra vc');
     out = out.replace(/\bimagina\s+eu\s+te\s+comendo\b/gi, 'imagina eu dando pra vc');
     out = out.replace(/\bamoro\b/gi, 'amor o');
+    out = out.replace(/\b(?:dar\s+)?(?:um\s+)?abra[cç]o\s+virtual\b/gi, 'te dar um abraço bem gostoso');
+    out = out.replace(/\b(?:dar\s+)?(?:um\s+)?beijo\s+virtual\b/gi, 'te dar um beijinho bem gostoso');
+    out = out.replace(/\b(?:um\s+)?carinho\s+virtual\b/gi, 'um carinho bem gostoso');
+    out = out.replace(/\b(?:apoio|presen[cç]a|mundo)\s+virtual\b/gi, 'meu carinho');
     out = out.replace(/([a-záéíóúâêôãõç])((?:kkk|rsrs)+)\b/gi, '$1 $2');
     out = out.replace(/\s+/g, ' ');
     out = out.replace(/\s*(?:\.{3,}|…)\s*$/u, '');
@@ -378,6 +382,17 @@ const removeGenericBotPhrases = (messages: string[]) => {
         /como posso ajudar/i,
         /em que posso te ajudar/i,
         /sou uma ia/i,
+        /sou uma inteligência artificial/i,
+        /sou um robô/i,
+        /assistente virtual/i,
+        /abraço virtual/i,
+        /abraco virtual/i,
+        /beijo virtual/i,
+        /carinho virtual/i,
+        /apoio virtual/i,
+        /mundo virtual/i,
+        /apoio emocional/i,
+        /ajuda psicológica/i,
         /nao posso/i,
         /não posso/i,
         /como assistente/i,
