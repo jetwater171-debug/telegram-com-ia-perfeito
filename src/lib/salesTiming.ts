@@ -212,6 +212,17 @@ const createOfferPlan = ({
             valueSource: explicitBudget ? 'explicit_budget' : 'accepted_offer',
         };
     }
+    if (product === 'social_meetup') {
+        return {
+            product,
+            tier: 'core',
+            value: 500,
+            description: 'Encontro com Larissa Morais',
+            format: 'um encontro de ate duas horas, com transporte combinado separadamente',
+            explicitBudget: null,
+            valueSource: 'standard',
+        };
+    }
 
     const catalog = PRODUCT_OFFERS[product];
     let tier: 'entry' | 'core' | 'premium' = 'core';

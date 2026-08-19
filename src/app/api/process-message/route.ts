@@ -2158,6 +2158,8 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
 
                         const value = lastPayMsg.payment_data?.value ?? (valueMatch ? parseFloat(valueMatch[1]) : 0);
                         const paymentId = lastPayMsg.payment_data?.paymentId ?? (idMatch ? idMatch[1] : null);
+                        const paymentProduct = String(lastPayMsg.payment_data?.product || '');
+                        const isSocialMeetupPayment = paymentProduct === 'social_meetup';
                         const storedPaid = lastPayMsg.payment_data?.paid === true || isPaymentPaidPayload(lastPayMsg.payment_data);
 
                         if (!paymentId) {
@@ -2198,10 +2200,16 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                             await supabase.from('messages').insert({
                                 session_id: session.id,
                                 sender: 'system',
-                                content: `[SISTEMA: PAGAMENTO CONFIRMADO - R$ ${value}. TOTAL PAGO: R$ ${newTotal}]`
+                                content: `[SISTEMA: PAGAMENTO CONFIRMADO - ${lastPayMsg.payment_data?.description || paymentProduct || 'produto'} - R$ ${value}. TOTAL PAGO: R$ ${newTotal}]`
                             });
 
-                            await sendTelegramMessage(botToken, chatId, "confirmado amor! obrigada... vou te mandar agora");
+                            await sendTelegramMessage(
+                                botToken,
+                                chatId,
+                                isSocialMeetupPayment
+                                    ? 'pagamento confirmado, agora vamos alinhar e confirmar os detalhes do nosso encontro'
+                                    : 'confirmado amor! obrigada... vou te mandar agora',
+                            );
 
                             // Forçar IA a saber que pagou na proxima iteração se necessário, 
                             // mas aqui ela já recebe o input de sistema acima.
@@ -2212,6 +2220,9 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                                         paid: true,
                                         counted: true,
                                         status: status || 'paid',
+                                        fulfillment_status: isSocialMeetupPayment
+                                            ? 'paid_awaiting_scheduling'
+                                            : lastPayMsg.payment_data?.fulfillment_status || 'paid',
                                         paid_at: lastPayMsg.payment_data?.paid_at || new Date().toISOString(),
                                         last_checked_at: new Date().toISOString(),
                                         last_status_payload: statusData
@@ -2293,6 +2304,8 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
 
             case 'generate_pix_payment':
                 try {
+                    const isSocialMeetup = salesTiming.activeProduct === 'social_meetup';
+                    const paymentProduct = isSocialMeetup ? 'social_meetup' : (salesTiming.activeProduct || 'custom_offer');
                     const inferredValue = inferPixValue([
                         ...(Array.isArray(aiResponse.messages) ? aiResponse.messages : []),
                         combinedText,
@@ -2301,26 +2314,42 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     const negotiatedUserValue = extractNegotiatedUserValue(userOnlyText);
                     // O backend, e nao apenas o modelo, garante o preco ja aceito/planejado.
                     // Isso evita cobrar acima do limite declarado ou trocar o produto no fechamento.
-                    const value = Number(salesTiming.offerPlan?.value ?? negotiatedUserValue ?? aiResponse.payment_details?.value ?? inferredValue ?? 19.90);
-                    const description = salesTiming.offerPlan?.description || aiResponse.payment_details?.description || "Pack Exclusivo";
-                    // Se já existe PIX pendente com o mesmo valor, reenviar o mesmo
+                    const value = isSocialMeetup
+                        ? 500
+                        : Number(salesTiming.offerPlan?.value ?? negotiatedUserValue ?? aiResponse.payment_details?.value ?? inferredValue ?? 19.90);
+                    const description = isSocialMeetup
+                        ? 'Encontro com Larissa Morais'
+                        : (salesTiming.offerPlan?.description || aiResponse.payment_details?.description || "Pack Exclusivo");
+                    const idempotencyKey = `${session.id}:${paymentProduct}:${value.toFixed(2)}`;
+                    // Idempotencia por sessao + produto + valor: uma nova tentativa
+                    // reenviara exatamente o mesmo PIX, mesmo se outro produto tiver
+                    // gerado uma cobranca mais recente na conversa.
                     const { data: lastPixMsg } = await supabase
                         .from('messages')
                         .select('id, payment_data, created_at')
                         .eq('session_id', session.id)
                         .eq('sender', 'system')
                         .ilike('content', '%PIX GENERATED%')
+                        .filter('payment_data->>idempotency_key', 'eq', idempotencyKey)
                         .order('created_at', { ascending: false })
                         .limit(1)
-                        .single();
+                        .maybeSingle();
 
                     const lastPaymentData: any = lastPixMsg?.payment_data || {};
                     const sameValue = Number(lastPaymentData.value || 0) === Number(value);
+                    const sameProduct = String(lastPaymentData.product || '') === paymentProduct
+                        || (!lastPaymentData.product && String(lastPaymentData.description || '') === description);
+                    const sameGateway = !isSocialMeetup || String(lastPaymentData.gateway || '') === 'wiinpay';
                     const notPaid = lastPaymentData.paid !== true;
                     const lastPixCode = lastPaymentData.pixCopiaCola;
                     const lastPaymentId = lastPaymentData.paymentId;
 
-                    if (sameValue && notPaid && lastPixCode) {
+                    if (isSocialMeetup && sameValue && sameProduct && !notPaid) {
+                        await sendTelegramMessage(botToken, chatId, 'seu encontro ja esta pago, agora falta so alinhar e confirmar os detalhes certinhos');
+                        break;
+                    }
+
+                    if (sameValue && sameProduct && sameGateway && notPaid && lastPixCode) {
                         await sendTelegramMessage(botToken, chatId, "ta aqui o pix de novo amor 👇");
                         await sendTelegramCopyableCode(botToken, chatId, lastPixCode);
 
@@ -2342,8 +2371,13 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                         email: (session.user_name && session.user_name.toLowerCase().includes('operação kaique'))
                             ? 'operaçaokaique@gmail.com'
                             : `user_${chatId}@telegram.com`,
-                        description: description
-                    });
+                        description: description,
+                        metadata: {
+                            session_id: session.id,
+                            product: paymentProduct,
+                            idempotency_key: idempotencyKey,
+                        },
+                    }, isSocialMeetup ? { onlyGateway: 'wiinpay' } : {});
 
                     // LOG DE DEBUG
                     await supabase.from('messages').insert({
@@ -2370,6 +2404,9 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                                 gatewayAttempts: payment.gatewayAttempts,
                                 value,
                                 description,
+                                product: paymentProduct,
+                                idempotency_key: idempotencyKey,
+                                fulfillment_status: isSocialMeetup ? 'awaiting_payment' : 'pending',
                                 pixCopiaCola: payment.pixCopiaCola,
                                 qrCodeBase64: payment.qrCodeBase64 || null,
                                 paid: false,

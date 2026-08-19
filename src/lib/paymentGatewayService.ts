@@ -33,6 +33,10 @@ type MultiGatewayPaymentResponse = PaymentResponse & {
   raw?: any;
 };
 
+type CreatePaymentOptions = {
+  onlyGateway?: PaymentGatewayId;
+};
+
 const DEFAULT_ORDER: PaymentGatewayId[] = ['wiinpay', 'pushinpay'];
 const PUSHINPAY_PRODUCTION_URL = 'https://api.pushinpay.com.br/api';
 const PUSHINPAY_SANDBOX_URL = 'https://api-sandbox.pushinpay.com.br/api';
@@ -214,11 +218,15 @@ const createPushinpayPayment = async (params: CreatePaymentParams, settings: Gat
   return normalized;
 };
 
-export const createPaymentMultiGateway = async (params: CreatePaymentParams): Promise<MultiGatewayPaymentResponse> => {
+export const createPaymentMultiGateway = async (
+  params: CreatePaymentParams,
+  options: CreatePaymentOptions = {},
+): Promise<MultiGatewayPaymentResponse> => {
   const settings = await loadPaymentGatewaySettings();
   const attempts: GatewayAttempt[] = [];
+  const gatewayOrder = options.onlyGateway ? [options.onlyGateway] : settings.order;
 
-  for (const gateway of settings.order) {
+  for (const gateway of gatewayOrder) {
     const config = settings[gateway];
     if (!config.enabled) {
       attempts.push({ gateway, ok: false, skipped: true, reason: 'disabled' });
@@ -231,7 +239,10 @@ export const createPaymentMultiGateway = async (params: CreatePaymentParams): Pr
 
     try {
       const payment = gateway === 'wiinpay'
-        ? await WiinPayService.createPayment(params, { apiKey: settings.wiinpay.apiKey })
+        ? await WiinPayService.createPayment({
+            ...params,
+            webhook_url: params.webhook_url || buildWebhookUrl(settings, 'wiinpay'),
+          }, { apiKey: settings.wiinpay.apiKey })
         : await createPushinpayPayment(params, settings);
       attempts.push({ gateway, ok: true });
       return {

@@ -24,6 +24,10 @@ export const WiinPayService = {
     if (!apiKey) {
       throw new Error('WIINPAY_API_KEY not configured');
     }
+    const value = Number(params.value || 0);
+    if (!Number.isFinite(value) || value <= 0) throw new Error('WiinPay recebeu valor invalido');
+    if (!String(params.description || '').trim()) throw new Error('WiinPay recebeu descricao vazia');
+
     const response = await fetch(`${BASE_URL}/payment/create`, {
       method: 'POST',
       headers: {
@@ -32,26 +36,36 @@ export const WiinPayService = {
       },
       body: JSON.stringify({
         api_key: apiKey,
-        ...params
-      })
+        ...params,
+        value: Math.round(value * 100) / 100,
+      }),
+      signal: AbortSignal.timeout(25_000),
     });
 
+    const responseText = await response.text();
+    let data: any = {};
+    try {
+      data = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      data = { raw: responseText };
+    }
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`WiinPay Error (${response.status}):`, errorText);
-      throw new Error(`WiinPay Failed (${response.status}): ${errorText}`);
+      const detail = String(data?.message || data?.error?.message || responseText || 'erro').slice(0, 500);
+      console.error(`WiinPay Error (${response.status}):`, detail);
+      throw new Error(`WiinPay Failed (${response.status}): ${detail}`);
     }
 
-    const data = await response.json();
-    // Force lowercase key check just in case, and check nested 'data' object
-    const qrCode = data.qr_code || data.qrCode || data.pixCopiaCola || data.data?.qr_code || data.data?.pixCopiaCola;
+    const nested = data?.data && typeof data.data === 'object' ? data.data : {};
+    const paymentId = String(data.paymentId || data.payment_id || data.id || nested.paymentId || nested.payment_id || nested.id || '').trim();
+    const qrCode = String(data.qr_code || data.qrCode || data.pixCopiaCola || data.pix_code || nested.qr_code || nested.qrCode || nested.pixCopiaCola || nested.pix_code || '').trim();
+    if (!paymentId || !qrCode) throw new Error('WiinPay retornou PIX sem id ou codigo copia-e-cola');
 
     return {
-      paymentId: data.paymentId || data.data?.paymentId,
-      qrCode: qrCode,
+      ...data,
+      paymentId,
+      qrCode,
       pixCopiaCola: qrCode,
-      status: data.status || 'pending',
-      ...data
+      status: data.status || nested.status || 'pending',
     };
   },
 

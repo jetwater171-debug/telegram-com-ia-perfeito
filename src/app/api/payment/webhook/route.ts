@@ -27,10 +27,15 @@ const findTransactionId = (payload: any) => pickText(
   payload?.payment_id,
   payload?.paymentId,
   payload?.data?.id,
+  payload?.data?.payment_id,
+  payload?.data?.paymentId,
   payload?.data?.transaction_id,
   payload?.data?.transactionId,
   payload?.transaction?.id,
-  payload?.data?.transaction?.id
+  payload?.data?.transaction?.id,
+  payload?.payment?.id,
+  payload?.payment?.payment_id,
+  payload?.payment?.paymentId
 );
 
 const findStatus = (payload: any) => normalizeStatus(pickText(
@@ -97,6 +102,8 @@ async function POST(req: NextRequest) {
       .maybeSingle();
 
     const paymentData = paymentMsg.payment_data || {};
+    const paymentProduct = String(paymentData.product || '');
+    const isSocialMeetup = paymentProduct === 'social_meetup';
     const value = Number(paymentData.value || 0);
     const alreadyCounted = paymentData.counted === true;
     const shouldCount = paid && !alreadyCounted;
@@ -110,6 +117,9 @@ async function POST(req: NextRequest) {
         counted: paid ? true : alreadyCounted,
         status,
         paid_at: paid ? (paymentData.paid_at || new Date().toISOString()) : paymentData.paid_at,
+        fulfillment_status: paid
+          ? (isSocialMeetup ? 'paid_awaiting_scheduling' : paymentData.fulfillment_status || 'paid')
+          : paymentData.fulfillment_status,
         last_checked_at: new Date().toISOString(),
         last_webhook_payload: payload,
       },
@@ -123,7 +133,7 @@ async function POST(req: NextRequest) {
       await supabase.from('messages').insert({
         session_id: session.id,
         sender: 'system',
-        content: `[SISTEMA: PAGAMENTO CONFIRMADO VIA WEBHOOK - R$ ${value}. TOTAL PAGO: R$ ${newTotal}]`,
+        content: `[SISTEMA: PAGAMENTO CONFIRMADO VIA WEBHOOK - ${paymentData.description || paymentProduct || 'produto'} - R$ ${value}. TOTAL PAGO: R$ ${newTotal}]`,
       });
       await supabase.from('funnel_events').insert({
         session_id: session.id,
@@ -133,7 +143,13 @@ async function POST(req: NextRequest) {
 
       const botToken = await loadSetting('telegram_bot_token');
       if (botToken && session.telegram_chat_id) {
-        await sendTelegramMessage(botToken, session.telegram_chat_id, 'confirmado amor! obrigada... vou te mandar agora');
+        await sendTelegramMessage(
+          botToken,
+          session.telegram_chat_id,
+          isSocialMeetup
+            ? 'pagamento confirmado, agora vamos alinhar e confirmar os detalhes do nosso encontro'
+            : 'confirmado amor! obrigada... vou te mandar agora',
+        );
       }
     }
 
