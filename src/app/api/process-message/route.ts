@@ -66,31 +66,28 @@ const humanTextDelayMs = (text: string, bubbleIndex: number) => {
     const raw = String(text || '').trim();
     const length = raw.length;
     const wordCount = raw.split(/\s+/).filter(Boolean).length;
-    const punctuationBonus = /[?!…]$/.test(raw) ? 350 : 150;
 
-    // Digitação humana realista no celular: ~55ms por letra + ~120ms por palavra + variação natural
-    const typingTimeMs = (length * 55) + (wordCount * 120) + punctuationBonus + randomBetween(300, 900);
+    // Digitação ágil e natural no celular: ~25ms por letra + ~60ms por palavra
+    const typingTimeMs = (length * 25) + (wordCount * 60) + randomBetween(150, 450);
 
     if (bubbleIndex === 0) {
-        // Primeiro balão: pausa humana de leitura/pensamento antes de digitar
-        const thinkingPauseMs = 1_200 + randomBetween(200, 700);
-        const total = thinkingPauseMs + typingTimeMs;
-        return Math.min(8_500, Math.max(1_800, total));
+        // Primeiro balão: a chamada de IA já funciona como a pausa de leitura.
+        // Digitação rápida para responder quase de imediato.
+        return Math.min(2_500, Math.max(500, typingTimeMs));
     }
 
-    // Balões seguintes: intervalo entre envio de balões + tempo de digitação
-    const gapBetweenBubblesMs = 900 + randomBetween(200, 600);
+    // Balões seguintes: intervalo curto e natural entre mensagens digitadas em sequência
+    const gapBetweenBubblesMs = 400 + randomBetween(100, 300);
     const total = gapBetweenBubblesMs + typingTimeMs;
-    return Math.min(9_500, Math.max(2_200, total));
+    return Math.min(2_800, Math.max(700, total));
 };
 
 const humanAudioRecordingDelayMs = (text: string) => {
     const raw = String(text || '').trim();
     const wordCount = raw.split(/\s+/).filter(Boolean).length;
-    const length = raw.length;
-    // Tempo de fala e gravação de áudio real: ~320ms por palavra + preparação do microfone
-    const recordingTimeMs = 1_800 + (wordCount * 320) + (length * 20) + randomBetween(500, 1_200);
-    return Math.min(12_000, Math.max(3_000, recordingTimeMs));
+    // Tempo de gravação de áudio ágil e realista
+    const recordingTimeMs = 1_000 + (wordCount * 180) + randomBetween(200, 500);
+    return Math.min(5_500, Math.max(1_200, recordingTimeMs));
 };
 
 const detectCityFromText = (input: string): string | null => {
@@ -838,10 +835,10 @@ export async function POST(req: NextRequest) {
         }
     };
 
-    // Debounce inteligente de 2.5s: espera o lead terminar de enviar múltiplas mensagens seguidas.
+    // Debounce inteligente de 1.8s: espera o lead terminar de enviar múltiplas mensagens seguidas.
     // Se o lead mandar mais uma mensagem enquanto espera, este worker aborta e passa o bastão para a mais nova.
-    const DEBOUNCE_WAIT_MS = 2500;
-    const pollIntervalMs = 400;
+    const DEBOUNCE_WAIT_MS = 1800;
+    const pollIntervalMs = 300;
     let waited = 0;
 
     while (waited < DEBOUNCE_WAIT_MS) {
