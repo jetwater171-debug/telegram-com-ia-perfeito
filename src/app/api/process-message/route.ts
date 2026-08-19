@@ -22,6 +22,7 @@ import {
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
 import { buildDeliveredPreviewCaption } from '@/lib/previewMoment';
+import { evaluateSalesTiming, guardPrematureSaleMessages } from '@/lib/salesTiming';
 
 export const maxDuration = 120;
 
@@ -934,7 +935,7 @@ export async function POST(req: NextRequest) {
 
 
     // Identificar contexto e a ultima oferta em paralelo.
-    const [lastBotResult, lastOfferResult] = await Promise.all([
+    const [lastBotResult, lastOfferResult, recentSalesHistoryResult] = await Promise.all([
         supabase
             .from('messages')
             .select('created_at, content')
@@ -951,9 +952,17 @@ export async function POST(req: NextRequest) {
             .order('created_at', { ascending: false })
             .limit(1)
             .single(),
+        supabase
+            .from('messages')
+            .select('sender,content,created_at')
+            .eq('session_id', sessionId)
+            .in('sender', ['user', 'bot'])
+            .order('created_at', { ascending: false })
+            .limit(40),
     ]);
     const lastBotMsg = lastBotResult.data;
     const lastOfferMsg = lastOfferResult.data;
+    const recentSalesHistory = recentSalesHistoryResult.data || [];
 
     const cutoffTime = lastBotMsg ? lastBotMsg.created_at : new Date(0).toISOString();
 
@@ -1286,6 +1295,31 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         action: aiResponse.action,
         state: aiResponse.current_state,
     });
+    const salesTiming = evaluateSalesTiming({
+        userText: userOnlyText,
+        recentMessages: recentSalesHistory,
+        leadMemory,
+    });
+    if (salesTiming.salesContextActive || aiResponse.action === 'generate_pix_payment') {
+        const attemptedPrematurePayment = aiResponse.action === 'generate_pix_payment' && !salesTiming.canGeneratePayment;
+        if (attemptedPrematurePayment) {
+            console.log('[VENDA] PIX prematuro bloqueado', {
+                product: salesTiming.activeProduct,
+                nurtureTurns: salesTiming.nurtureTurns,
+                recentOffer: salesTiming.recentOffer,
+            });
+            aiResponse.action = 'none';
+            aiResponse.payment_details = null;
+            aiResponse.current_state = salesTiming.canPitchPrice ? 'SALES_PITCH' : 'HOT_TALK';
+        }
+        aiResponse.messages = guardPrematureSaleMessages({
+            messages: Array.isArray(aiResponse.messages) ? aiResponse.messages : [],
+            product: salesTiming.activeProduct,
+            canPitchPrice: salesTiming.canPitchPrice,
+            canGeneratePayment: salesTiming.canGeneratePayment,
+            userText: userOnlyText,
+        });
+    }
     const userMediaKind = classifyRequestedMediaLocally(userOnlyText);
     const userAskedPhoto = userMediaKind === 'photo';
     const userAskedMedia = userMediaKind !== 'not_media'
@@ -1495,7 +1529,17 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         aiResponse,
         session.lead_memory
     );
-    const updatedLeadMemory = mergeLeadMemoryPatch(detectedLeadMemory, aiResponse.lead_memory_patch);
+    let updatedLeadMemory = mergeLeadMemoryPatch(detectedLeadMemory, aiResponse.lead_memory_patch);
+    if (salesTiming.activeProduct && salesTiming.salesContextActive) {
+        updatedLeadMemory = {
+            ...updatedLeadMemory,
+            metadata: {
+                ...(updatedLeadMemory.metadata || {}),
+                ...salesTiming.metadataPatch,
+            },
+            updated_at: new Date().toISOString(),
+        };
+    }
 
     const updatePayload: any = {
         lead_score: aiResponse.lead_stats,
