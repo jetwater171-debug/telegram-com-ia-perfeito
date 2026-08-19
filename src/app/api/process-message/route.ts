@@ -1437,7 +1437,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         || /\b(quero te ver|qualquer foto|manda qualquer|me mostra vc|me mostra você|kd a foto|kd|cadê a foto|cade a foto)\b/i.test(userOnlyText);
 
     const botMessagesPromiseMedia = (Array.isArray(aiResponse.messages) ? aiResponse.messages : []).some((msg: string) =>
-        /\b(toma|olha só|olha so|olha essa|como eu t[oô]|te esperando|aqui pra vc|te mandei|olha a fotinha|olha aqui|olha amor|olha como|separei pra vc)\b/i.test(msg)
+        /\b(toma|olha só|olha so|olha essa|como eu t[oô]|te esperando|aqui pra vc|te mandei|olha a fotinha|olha aqui|olha amor|olha como|separei pra vc|olha o look|olha meu look|olha eu|tirando foto|tirei essa|tirei agora|fotinha pra vc|foto pra vc|olha essa foto|deitadinha aqui|olha como eu fico)\b/i.test(msg)
     );
     const shouldDeliverMedia = userAskedMedia || botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || ''));
 

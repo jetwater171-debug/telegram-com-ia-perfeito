@@ -62,6 +62,8 @@ export const normalizeLeadMemory = (input: any) => {
         objections: list(memory.objections),
         known_facts: list(memory.known_facts, 16),
         conversation_hooks: list(memory.conversation_hooks),
+        fetiches: list(memory.fetiches, 10),
+        favorite_media_types: list(memory.favorite_media_types, 6),
         price_sensitivity: cleanText(memory.price_sensitivity, 60),
         last_offer: cleanText(memory.last_offer, 140),
         notes: list(memory.notes),
@@ -102,6 +104,8 @@ export const mergeLeadMemoryPatch = (currentMemory: any, patch: LeadMemoryPatch 
         objections: mergeUniqueLeadMemoryValues(current.objections, list(patch.objections)),
         known_facts: mergeUniqueLeadMemoryValues(current.known_facts, list(patch.known_facts), 16),
         conversation_hooks: mergeUniqueLeadMemoryValues(current.conversation_hooks, list(patch.conversation_hooks)),
+        fetiches: mergeUniqueLeadMemoryValues(current.fetiches, list(patch.fetiches), 10),
+        favorite_media_types: mergeUniqueLeadMemoryValues(current.favorite_media_types, list(patch.favorite_media_types), 6),
         notes: mergeUniqueLeadMemoryValues(current.notes, list(patch.notes)),
         updated_at: new Date().toISOString(),
     };

@@ -40,6 +40,8 @@ export interface LeadMemoryPatch {
     objections?: string[];
     known_facts?: string[];
     conversation_hooks?: string[];
+    fetiches?: string[];
+    favorite_media_types?: string[];
     notes?: string[];
 }
 
