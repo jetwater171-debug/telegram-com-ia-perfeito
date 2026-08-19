@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 
 export default function AdminSettingsPage() {
     const [token, setToken] = useState("");
+    const [username, setUsername] = useState("");
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState("");
     const [showToken, setShowToken] = useState(false);
@@ -15,6 +16,7 @@ export default function AdminSettingsPage() {
         const res = await fetch("/api/admin/bot-settings");
         const data = await res.json();
         if (data?.token !== undefined) setToken(data.token);
+        if (data?.username !== undefined) setUsername(data.username);
     };
 
     const saveToken = async () => {
@@ -30,7 +32,12 @@ export default function AdminSettingsPage() {
         if (data?.error) {
             setMsg("Erro ao salvar: " + data.error);
         } else {
-            setMsg("Token salvo com sucesso!");
+            if (data?.username) {
+                setUsername(data.username);
+                setMsg(`Token salvo com sucesso! Bot conectado: @${data.username}`);
+            } else {
+                setMsg("Token salvo com sucesso!");
+            }
         }
         setLoading(false);
     };
@@ -107,6 +114,19 @@ export default function AdminSettingsPage() {
                                 {showToken ? "Ocultar" : "Mostrar"}
                             </button>
                         </div>
+                        {username && (
+                            <div className="flex items-center gap-2 text-xs text-slate-300">
+                                <span>Bot ativo:</span>
+                                <a
+                                    href={`https://t.me/${username}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-mono text-cyan-300 underline hover:text-cyan-200"
+                                >
+                                    @{username}
+                                </a>
+                            </div>
+                        )}
                     </div>
 
                     <div className="mt-6 grid gap-3 sm:grid-cols-2">

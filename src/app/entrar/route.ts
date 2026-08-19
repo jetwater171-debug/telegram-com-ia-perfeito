@@ -2,10 +2,9 @@ import { randomBytes } from 'crypto';
 import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 
-let cachedTelegramUsername = (process.env.TELEGRAM_BOT_USERNAME || process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || '')
-    .replace(/^@/, '')
-    .trim();
-let usernamePromise: Promise<string> | null = null;
+const tokenUsernameCache = new Map<string, { username: string; cachedAt: number }>();
+const activeFetches = new Map<string, Promise<string>>();
+const CACHE_TTL_MS = 60 * 1000;
 
 const getClientIp = (req: NextRequest) => {
     const forwarded = req.headers.get('x-forwarded-for');
@@ -56,59 +55,93 @@ const lookupGeoByIp = async (ip: string) => {
     }
 };
 
-const getTelegramUsername = async () => {
-    if (cachedTelegramUsername) return cachedTelegramUsername;
-    if (usernamePromise) return usernamePromise;
+const getActiveBotToken = async (): Promise<string> => {
+    const { data: tokenSetting } = await supabase
+        .from('bot_settings')
+        .select('value')
+        .eq('key', 'telegram_bot_token')
+        .single();
 
-    usernamePromise = (async () => {
-        const { data: usernameSetting } = await supabase
+    const token = tokenSetting?.value
+        ? String(tokenSetting.value).trim()
+        : (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+
+    return token;
+};
+
+const getTelegramBotUsername = async (token: string): Promise<string> => {
+    const cleanToken = token.trim();
+    if (!cleanToken) return '';
+
+    const cached = tokenUsernameCache.get(cleanToken);
+    if (cached && (Date.now() - cached.cachedAt) < CACHE_TTL_MS) {
+        return cached.username;
+    }
+
+    const ongoing = activeFetches.get(cleanToken);
+    if (ongoing) return ongoing;
+
+    const fetchPromise = (async () => {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 4000);
+            const res = await fetch(`https://api.telegram.org/bot${cleanToken}/getMe`, {
+                cache: 'no-store',
+                signal: controller.signal
+            }).finally(() => clearTimeout(timeout));
+
+            if (res.ok) {
+                const json = await res.json();
+                const username = json?.result?.username ? String(json.result.username).replace(/^@/, '').trim() : '';
+                if (username) {
+                    tokenUsernameCache.set(cleanToken, { username, cachedAt: Date.now() });
+                    void supabase.from('bot_settings').upsert({
+                        key: 'telegram_bot_username',
+                        value: username
+                    });
+                    return username;
+                }
+            }
+        } catch (err) {
+            console.error('[ENTRAR] Error fetching Telegram getMe for token:', err);
+        }
+
+        if (cached?.username) {
+            return cached.username;
+        }
+
+        const { data: dbUsername } = await supabase
             .from('bot_settings')
             .select('value')
             .eq('key', 'telegram_bot_username')
             .single();
 
-        if (usernameSetting?.value) {
-            cachedTelegramUsername = String(usernameSetting.value).replace(/^@/, '').trim();
-            return cachedTelegramUsername;
+        if (dbUsername?.value) {
+            const fallback = String(dbUsername.value).replace(/^@/, '').trim();
+            tokenUsernameCache.set(cleanToken, { username: fallback, cachedAt: Date.now() });
+            return fallback;
         }
 
-        const { data: tokenSetting } = await supabase
-            .from('bot_settings')
-            .select('value')
-            .eq('key', 'telegram_bot_token')
-            .single();
-
-        const token = tokenSetting?.value;
-        if (!token) return '';
-
-        try {
-            const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, { cache: 'no-store' });
-            const json = await res.json();
-            const username = json?.result?.username ? String(json.result.username).trim() : '';
-            if (username) {
-                cachedTelegramUsername = username;
-                await supabase.from('bot_settings').upsert({
-                    key: 'telegram_bot_username',
-                    value: username
-                });
-            }
-            return username;
-        } catch {
-            return '';
-        }
+        return '';
     })();
 
+    activeFetches.set(cleanToken, fetchPromise);
     try {
-        return await usernamePromise;
+        return await fetchPromise;
     } finally {
-        usernamePromise = null;
+        activeFetches.delete(cleanToken);
     }
 };
 
 export async function GET(req: NextRequest) {
-    const username = await getTelegramUsername();
+    const token = await getActiveBotToken();
+    if (!token) {
+        return NextResponse.json({ error: 'telegram bot token not configured' }, { status: 500 });
+    }
+
+    const username = await getTelegramBotUsername(token);
     if (!username) {
-        return NextResponse.json({ error: 'telegram bot username not configured' }, { status: 500 });
+        return NextResponse.json({ error: 'telegram bot username not found for the active token' }, { status: 500 });
     }
 
     const url = req.nextUrl;
