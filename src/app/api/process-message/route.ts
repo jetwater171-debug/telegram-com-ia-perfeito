@@ -1421,12 +1421,25 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             userText: userOnlyText,
         });
     }
+    const userAffirmedMedia = /\b(sim|quero|quero ver|sim eu quero|manda|manda aí|manda ai|mostra|deixa ver|pode mandar|manda sim|solta|quero sim|claro|com certeza|bora|pode ser|kd|cade|cadê)\b/i.test(userOnlyText)
+        && (
+            /\b(ver|foto|fotinha|fotos|video|vídeo|previa|prévia|olhar|mostrar|assim|esperando|toma)\b/i.test(lastBotMsg?.content || '')
+            || recentSalesHistory.slice(-4).some((msg: any) => msg.sender === 'user' && /\b(foto|fotinha|fotos|video|vídeo|previa|prévia|nude|nudes)\b/i.test(msg.content || ''))
+        );
+
     const userMediaKind = classifyRequestedMediaLocally(userOnlyText);
-    const userAskedPhoto = userMediaKind === 'photo';
+    const userAskedPhoto = userMediaKind === 'photo' || (userAffirmedMedia && !/video/i.test(userOnlyText));
     const userAskedMedia = userMediaKind !== 'not_media'
+        || userAskedPhoto
+        || userAffirmedMedia
         || /\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|video|vídeo|previa|prévia)\b/i.test(userOnlyText)
         || /\b(manda|mostra|envia|quero ver|deixa ver|solta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo|uma)\b/i.test(userOnlyText)
-        || /\b(quero te ver|qualquer foto|manda qualquer|me mostra vc|me mostra você)\b/i.test(userOnlyText);
+        || /\b(quero te ver|qualquer foto|manda qualquer|me mostra vc|me mostra você|kd a foto|kd|cadê a foto|cade a foto)\b/i.test(userOnlyText);
+
+    const botMessagesPromiseMedia = (Array.isArray(aiResponse.messages) ? aiResponse.messages : []).some((msg: string) =>
+        /\b(toma|olha só|olha so|olha essa|como eu t[oô]|te esperando|aqui pra vc|te mandei|olha a fotinha|olha aqui|olha amor|olha como|separei pra vc)\b/i.test(msg)
+    );
+    const shouldDeliverMedia = userAskedMedia || botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || ''));
 
     // Pedido de mídia só vira cobrança quando o lead também manifesta uma compra real.
     // Palavras soltas como "pix" ou "pagar" em uma reclamação não autorizam cobrança.
@@ -1437,26 +1450,21 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     const explicitPaidPurchaseIntent = !rejectsPaymentNow
         && explicitTransactionRequest
         && (explicitPaidProduct || /\bpix\b/i.test(userOnlyText));
-    if (userAskedMedia && !explicitPaidPurchaseIntent && aiResponse.action === 'generate_pix_payment') {
+    if (shouldDeliverMedia && !explicitPaidPurchaseIntent && aiResponse.action === 'generate_pix_payment') {
         console.log('[PROCESSADOR] Bloqueando PIX indevido para pedido de prévia/foto. Redirecionando para envio de prévia.');
         aiResponse.action = 'send_custom_preview';
         aiResponse.payment_details = null;
     }
 
-    // Se o lead não pediu mídia e a ação não é uma prévia válida apontada pelo catálogo, cancela action de mídia espúria
-    if (!userAskedMedia && aiResponse.action !== 'send_custom_preview') {
-        if (MEDIA_ACTIONS.has(String(aiResponse.action || ''))) {
-            aiResponse.action = 'none';
-        }
-    }
-
-    // Se o lead pediu mídia e a ação atual não é de entrega de mídia, resolve action de prévia adequada
+    // Se o lead pediu mídia ou a IA escolheu ação de mídia ou a mensagem promete foto, garante action de mídia válida
     let contextualMedia: any = null;
-    if (userAskedMedia && (!MEDIA_ACTIONS.has(String(aiResponse.action || '')) || aiResponse.action === 'none')) {
+    if (shouldDeliverMedia && (!MEDIA_ACTIONS.has(String(aiResponse.action || '')) || aiResponse.action === 'none')) {
         contextualMedia = resolveContextualMediaAction(userOnlyText, aiResponse.action);
         if (contextualMedia) {
             aiResponse.action = contextualMedia.action as any;
             aiResponse.current_state = (ACTION_STAGE_MAP[contextualMedia.action] || aiResponse.current_state) as any;
+        } else {
+            aiResponse.action = 'send_shower_photo';
         }
     }
     let pendingPhotoRequestAnalysis: Promise<unknown> | null = null;
@@ -1548,7 +1556,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
 
             const requestedSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
             const tarado = Number(aiResponse.lead_stats?.tarado || 0);
-            const chosenPreview = unusedCatalog
+            const chosenPreview = (unusedCatalog.length > 0 ? unusedCatalog : relevantCatalog)
                 .map((asset: any) => {
                     const inRange = tarado >= Number(asset.min_tarado ?? 0)
                         && tarado <= Number(asset.max_tarado ?? 100);
@@ -1562,11 +1570,6 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             if (chosenPreview) {
                 aiResponse.action = 'send_custom_preview';
                 aiResponse.preview_id = chosenPreview.id;
-            } else if (relevantCatalog.length > 0 && sentMediaKeys.size > 0) {
-                console.log('[PREVIAS] Todas as mídias adequadas já foram enviadas; repetição bloqueada.');
-                aiResponse.action = 'none';
-                aiResponse.preview_id = null;
-                mediaSuppressedForRepetition = true;
             }
         } else {
             console.warn('[PREVIAS] Falha no preflight anti-repeticao:', sentMediaResult.error?.message || catalogResult.error?.message);
@@ -1852,7 +1855,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             : ['me fala mais disso amor'];
     }
 
-    const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none')) && (userAskedMedia || aiResponse.action === 'send_custom_preview');
+    const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));
     const setupIndex = isMediaDeliveryTurn
         ? safeMessages.findIndex((message: string) => !isPrematureMediaReaction(message))
         : -1;
@@ -2536,10 +2539,6 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     mediaType = alternative.media_type;
                     selectedPreviewAsset = alternative;
                     mediaProtection = protectionForPreview(alternative);
-                } else {
-                    console.log('[PREVIAS] Repeticao bloqueada no fail-safe de entrega.');
-                    mediaUrl = null;
-                    mediaType = null;
                 }
             }
 

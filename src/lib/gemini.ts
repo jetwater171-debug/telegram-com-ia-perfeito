@@ -2740,7 +2740,7 @@ DIRETRIZES DE OURO PARA SUA RESPOSTA:
    - Venda exatamente o que o lead quer (VIP, Chamada de Vídeo ao Vivo, Vídeo Peladinha, Foto sem censura, WhatsApp Pessoal, Áudio erótico/avaliação, Encontro Presencial, Chat Privado, Mimo).
    - Apresente o preço com sedução e naturalidade.
 5. **REGRAS DE PRÉVIA & PIX:**
-   - Prévia/Foto de conversa: envie SEMPRE grátis usando action=send_custom_preview com preview_id do catálogo.
+   - Prévia/Foto de conversa: envie SEMPRE grátis usando action=send_custom_preview com preview_id do catálogo (ou send_shower_photo, send_lingerie_photo). Se o lead pediu foto ou confirmou ("sim", "manda", "quero ver") ou sua mensagem diz "toma", "olha só", você DEVE OBRIGATORIAMENTE enviar a mídia com action válida na mesma resposta!
    - PIX: gere o PIX (action=generate_pix_payment) somente quando o lead pedir pagamento ou aceitar claramente a oferta. Ao gerar, mande apenas 2 mensagens carinhosas e objetivas: "perfeito amor!", "ja vou gerar seu pix aqui".
 
 Retorne JSON com: internal_thought, lead_classification, lead_stats completo, extracted_user_name, audio_transcription, current_state, messages, action, preview_id, preview_request, payment_details e lead_memory_patch.`;
