@@ -399,23 +399,32 @@ const removeGenericBotPhrases = (messages: string[]) => {
 const isPrematureMediaReaction = (message: string) => {
     const text = normalizeLoopText(message);
     return /\b(o que achou|oq achou|me fala o que achou|gostou|curtiu|achou gostosa|achou bonita)\b/i.test(text)
-        || /\b(ta aqui|tá aqui|te mandei|acabei de mandar|ja mandei|já mandei)\b/i.test(text);
+        || /\b(ta aqui|tá aqui|te mandei|acabei de mandar|ja mandei|já mandei)\b/i.test(text)
+        || /\b(?:olha|ve|vê|confere)\b.{0,45}\b(?:essa|foto|fotinha|imagem|previa|prévia|video|vídeo)\b/i.test(text)
+        || /\b(?:tirei|separei|escolhi)\b.{0,45}\b(?:essa|uma|foto|fotinha|imagem|previa|prévia|video|vídeo)\b/i.test(text)
+        || isMediaSetupPromise(message);
+};
+
+const isMediaAnnouncement = (message: string) => {
+    const text = normalizeLoopText(message);
+    return isPrematureMediaReaction(message)
+        || /\b(?:foto|fotinha|fotos|imagem|imagens|selfie|previa|prévia|video|vídeo|nude|nudes)\b/i.test(text);
 };
 
 const buildNaturalMediaSetup = (userText: string, action?: string, suggested?: string) => {
     const safeSuggestion = String(suggested || '').trim();
-    if (safeSuggestion && !isPrematureMediaReaction(safeSuggestion)) return safeSuggestion;
+    if (safeSuggestion && !isMediaAnnouncement(safeSuggestion)) return safeSuggestion;
 
     if (/video/i.test(String(action || '')) || /\bvideo|vídeo\b/i.test(userText)) {
-        return 'calma que vou separar um videozinho gostoso pra vc';
+        return 'vc falando assim me deixa ainda mais provocada';
     }
     if (/\b(leite|condensado|doce|lambuzad)\b/i.test(userText)) {
-        return 'essa ideia foi bem especifica kkk deixa eu escolher uma gostosa pra vc';
+        return 'essa ideia foi bem especifica kkk mexeu comigo demais';
     }
     if (/\b(bunda|de 4|de quatro|costas|por tras|por trás)\b/i.test(userText)) {
-        return 'calma que vou escolher uma de costas bem gostosa pra vc';
+        return 'so de imaginar essa cena eu ja fico toda arrepiada';
     }
-    return 'calma que vou escolher uma fotinha gostosa pra vc';
+    return 'vc falando assim me deixa toda arrepiada';
 };
 
 const removeDuplicateNormalizedMessages = (messages: string[]) => {
@@ -1627,7 +1636,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         lastBotContent
     });
     if (mediaSuppressedForRepetition) {
-        safeMessages = safeMessages.filter((message: string) => !isMediaSetupPromise(message));
+        safeMessages = safeMessages.filter((message: string) => !isMediaAnnouncement(message));
     }
     if (safeMessages.length === 0 && (!userAskedMedia || mediaSuppressedForRepetition)) {
         safeMessages = hasExplicitSexualFantasyTrigger(userOnlyText)
@@ -1645,7 +1654,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         safeMessages = [forcedCityAnswer, ...withoutGenericCity.filter((msg: string) => normalizeLoopText(msg) !== normalizeLoopText(forcedCityAnswer))];
     }
 
-    if (contextualMedia) {
+    if (contextualMedia && !mediaSuppressedForRepetition && MEDIA_ACTIONS.has(String(aiResponse.action || ''))) {
         const introNorm = normalizeLoopText(contextualMedia.intro);
         const alreadyPrepared = safeMessages.some((msg: string) => {
             const norm = normalizeLoopText(msg);
