@@ -1710,8 +1710,12 @@ const callAiGatewayJson = async <T,>(options: {
     throw new Error(`Todos os gateways de IA falharam (${options.role}): ${attempts.join(" | ")}`);
 };
 
-const makeFallbackStrategy = (message: string) => {
+const makeFallbackStrategy = (message: string, leadMemory?: any) => {
     const text = (message || '').toLowerCase();
+    const storedRelationshipStage = String(leadMemory?.relationship_stage || 'new').toLowerCase();
+    const relationshipStage = ['new', 'familiar', 'engaged', 'buyer', 'returning'].includes(storedRelationshipStage)
+        ? storedRelationshipStage
+        : 'new';
     const wantsMedia = /\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|previa|prévia|video|vídeo)\b/i.test(text)
         || /\b(manda|mostra|envia|quero ver|deixa ver|solta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo|uma)\b/i.test(text)
         || /\b(quero te ver|qualquer foto|manda qualquer|me mostra vc|me mostra você)\b/i.test(text);
@@ -1734,7 +1738,7 @@ const makeFallbackStrategy = (message: string) => {
         lead_type: isSexual ? 'tarado' : wantsPayment ? 'curioso' : 'desconhecido',
         temperature: wantsPayment ? 80 : isSexual ? 65 : 30,
         emotional_context: isSexual ? 'excitado e receptivo' : wantsPayment ? 'objetivo e pronto para decidir' : 'aberto a conversa',
-        relationship_stage: 'new',
+        relationship_stage: relationshipStage,
         connection_cue: 'usar literalmente o assunto da mensagem atual',
         objective: wantsPayment
             ? 'fechar pagamento'
@@ -1772,7 +1776,7 @@ const makeFallbackStrategy = (message: string) => {
         memory_patch: {
             best_tone: isSexual ? 'direta e safada' : wantsPayment ? 'objetiva e segura' : 'leve e curiosa',
             emotional_context: isSexual ? 'excitado' : wantsPayment ? 'decidindo compra' : 'conhecendo a Lari',
-            relationship_stage: 'new',
+            relationship_stage: relationshipStage,
             next_personal_step: 'deixar a conversa revelar um detalhe por vez sem qualificar o lead',
             wanted_products: wantsSpecificProduct ? ['produto pedido na mensagem atual'] : [],
             rejected_products: [],
@@ -1783,6 +1787,27 @@ const makeFallbackStrategy = (message: string) => {
             notes: []
         }
     };
+};
+
+const mergeBrainAndDraftMemory = (brainPatch: any, draftPatch: any) => {
+    const brain = brainPatch && typeof brainPatch === 'object' ? brainPatch : {};
+    const draft = draftPatch && typeof draftPatch === 'object' ? draftPatch : {};
+    const listKeys = ['wanted_products', 'rejected_products', 'desires', 'objections', 'known_facts', 'conversation_hooks', 'notes'];
+    const relationshipRank: Record<string, number> = { new: 0, familiar: 1, engaged: 2, buyer: 3, returning: 4 };
+    const brainStage = String(brain.relationship_stage || 'new');
+    const draftStage = String(draft.relationship_stage || 'new');
+    const relationshipStage = (relationshipRank[draftStage] ?? 0) >= (relationshipRank[brainStage] ?? 0)
+        ? draftStage
+        : brainStage;
+
+    const merged: Record<string, unknown> = { ...brain, ...draft, relationship_stage: relationshipStage };
+    for (const key of listKeys) {
+        merged[key] = Array.from(new Set([
+            ...(Array.isArray(brain[key]) ? brain[key] : []),
+            ...(Array.isArray(draft[key]) ? draft[key] : []),
+        ].map((item) => String(item || '').trim()).filter(Boolean)));
+    }
+    return merged;
 };
 
 const makeLocalFallbackResponse = (
@@ -2087,8 +2112,10 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         .join('\n\n');
 
     const dynamicScript = [
+        // Contexto operacional deste turno vem primeiro para nunca ser cortado por
+        // blocos longos do painel (limite total de 12 mil caracteres).
+        context?.extraScript || "",
         promptBlocksText,
-        context?.extraScript || ""
     ].filter(Boolean).join('\n\n').slice(0, 12000);
 
     // O perfil persistente guarda a historia longa; o modelo recebe apenas a janela recente.
@@ -2150,18 +2177,18 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 
     while (attempt < maxRetries) {
         try {
-            let strategy: any = makeFallbackStrategy(userMessage);
+            let strategy: any = makeFallbackStrategy(userMessage, context?.leadMemory);
             let strategyStatus = 'integrado na chamada unica';
-            const useSeparateStrategyCall = false;
+            const useSeparateStrategyCall = aiSettings.aiStrategyEnabled;
 
-            if (!useSeparateStrategyCall || !aiSettings.aiStrategyEnabled) {
+            if (!useSeparateStrategyCall) {
                 strategyStatus = 'integrado na chamada unica';
             } else {
             try {
                 const strategyPrompt = `${baseInstruction}
 
-# CEREBRO CENTRAL DA LARI
-Voce NAO fala com o lead. Voce e a inteligencia persistente que conhece, diagnostica e planeja cada conversa antes da Lari responder.
+# CEREBRO GERAL DA LARI — PLANEJADOR PRIVADO
+Voce NAO fala com o lead. Voce e a inteligencia persistente que conhece, diagnostica e planeja cada conversa antes da Lari responder. Tudo que voce produz aqui e interno.
 
 Para este lead, faca uma leitura individual:
 1. Separe o que ele disse literalmente da sua interpretacao.
@@ -2204,8 +2231,9 @@ memory_patch deve conter: best_tone, emotional_context, relationship_stage, next
 
             const draftPrompt = `${baseInstruction}
 
-# CÉREBRO E LARI EM UMA ÚNICA CHAMADA
-Primeiro analise silenciosamente o lead usando memória, histórico e as 4 barras psicológicas (tarado, carente, sentimental, financeiro). O cerebro pensa comercialmente; a Lari nunca deixa essa analise aparecer.
+# LARI ESCREVENDO DEPOIS DO CEREBRO GERAL
+Voce recebe abaixo um plano estruturado criado pelo cerebro geral a partir de memoria, historico e das 4 barras psicologicas. Use esse plano como orientacao privada e escreva apenas a fala natural da Lari.
+O cerebro pensa comercialmente; a Lari nunca deixa essa analise aparecer. Se algum detalhe do plano contrariar a mensagem atual ou um fato confirmado, priorize o fato e corrija a direcao sem inventar.
 Antes de escrever, determine o estagio real de intimidade: desconhecidos, se conhecendo, confortaveis, quentes ou negociando. Nunca fale um estagio acima do que o historico sustenta.
 A Lari deve soar como uma mulher real: espontânea, atenta e com intimidade gradual. Carinho e safadeza aparecem quando forem conquistados na conversa.
 Com desconhecidos ou no inicio, use normalmente 1-2 baloes e um unico assunto. Use 2-4 quando houver familiaridade e 5-6 apenas em fantasia intensa ja estabelecida.
@@ -2281,7 +2309,7 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
             console.log(`AI Gateway Draft (${draftResult.gateway.label}) Attempt ${attempt + 1}:`, responseText);
 
             const jsonResponse = draftResult.data;
-            jsonResponse.lead_memory_patch = jsonResponse.lead_memory_patch || strategy?.memory_patch || null;
+            jsonResponse.lead_memory_patch = mergeBrainAndDraftMemory(strategy?.memory_patch, jsonResponse.lead_memory_patch);
             jsonResponse.recommended_message_count = Math.max(1, Math.min(6, Number(jsonResponse.messages?.length || strategy?.recommended_message_count || 3)));
             jsonResponse.max_chars_per_message = Math.max(55, Math.min(110, Number(Math.max(0, ...(jsonResponse.messages || []).map((message) => String(message || '').length)) || strategy?.max_chars_per_message || 90)));
 
@@ -2296,11 +2324,16 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                 payment_details: jsonResponse.payment_details ?? null
             };
             let reviewStatus = 'sem revisao';
+            const earlyDraftText = (jsonResponse.messages || []).map((message) => String(message || '')).join(' ');
+            const earlyConversationReviewNeeded = String(strategy?.relationship_stage || 'new') === 'new'
+                && ((jsonResponse.messages || []).length > 2
+                    || /\b(am(or|orzinho)|anjo|vida|bb|lindo)\b|\b(deitad|banho|quarto|que horas sao|o que vc veio buscar|me conta sobre vc)\b/i.test(earlyDraftText));
             const criticalReviewNeeded = ["generate_pix_payment", "check_payment_status"].includes(String(jsonResponse.action || ""))
-                || Number(strategy?.confidence || 0) < 0.4;
-            const useSeparateReviewCall = false;
+                || Number(strategy?.confidence || 0) < 0.4
+                || earlyConversationReviewNeeded;
+            const useSeparateReviewCall = aiSettings.aiReviewEnabled;
 
-            if (!useSeparateReviewCall || !aiSettings.aiReviewEnabled) {
+            if (!useSeparateReviewCall) {
                 reviewStatus = 'integrada na chamada unica';
             } else if (!criticalReviewNeeded) {
                 reviewStatus = 'guardas locais (rota rapida)';
@@ -2315,6 +2348,7 @@ Reprove/corrija tambem se a action de midia nao combina com o que o lead falou, 
 Reprove/corrija se o lead falou putaria explicita e a Lari respondeu fofa, fria, desviando assunto ou perguntando algo generico em vez de continuar a fantasia.
 Reprove/corrija se a ultima mensagem termina com reticencias, suspense vazio ou frase pendurada sem conduzir o lead.
 Reprove/corrija se ela repete promessa de VIP para lead desconfiado, pergunta nome/cidade ja conhecida, manda mais de 4 baloes fora de fantasia quente, ou contradiz preco/desconto.
+Se relationship_stage for new, reprove se usar intimidade precoce, apelido carinhoso, cama/banho/quarto como muleta, pergunta de qualificacao comercial ou mais de dois baloes sem necessidade. Corrija pensando como uma menina que ainda esta conhecendo a pessoa, sem usar frase fixa.
 Se corrigir, devolva mensagens melhores no mesmo estilo da Lari. Nao explique para o lead.
 Retorne JSON com: approved, score, issues, messages, action, current_state, preview_id e payment_details.`;
 
