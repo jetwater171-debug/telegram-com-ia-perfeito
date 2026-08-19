@@ -455,10 +455,9 @@ export default function AdminChatPage() {
                     </Panel>
 
                     <Panel title="Score">
-                        <ScoreBar label="Interesse quente" hint="Pedidos e sinais sexuais" value={safeLeadScore.tarado} color="bg-rose-400" />
-                        <ScoreBar label="Chance de compra" hint="Preço, PIX e intenção de pagar" value={safeLeadScore.financeiro} color="bg-emerald-400" />
-                        <ScoreBar label="Busca de atenção" hint="Carência e necessidade de contato" value={safeLeadScore.carente} color="bg-cyan-400" />
-                        <ScoreBar label="Vínculo emocional" hint="Afeto, saudade e desabafos" value={safeLeadScore.sentimental} color="bg-violet-400" />
+                        <ScoreBar label="🔥 Tarado" hint="Interesse sexual, libido e fetiche" value={safeLeadScore.tarado} color="bg-rose-400" />
+                        <ScoreBar label="💔 Carência" hint="Busca de afeto, solidão e atenção" value={safeLeadScore.carente} color="bg-cyan-400" />
+                        <ScoreBar label="💰 Financeiro" hint="Poder aquisitivo, aparelho e propensão" value={safeLeadScore.financeiro} color="bg-emerald-400" />
                         {scoreMeta && (
                             <div className="mt-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-[11px] text-slate-500">
                                 Confiança {scoreMeta.confidence}% · {scoreMeta.message_count} mensagens analisadas · atualizado {formatTimeAgo(scoreMeta.updated_at)}

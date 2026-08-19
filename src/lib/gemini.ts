@@ -1069,13 +1069,22 @@ Actions válidas: none, send_video_preview, send_hot_video_preview, send_ass_pho
 CATALOGO DE PREVIAS:
 ${previewsCatalog || 'nenhuma previa cadastrada'}
 
+## OS 3 PILARES PSICOLÓGICOS DO LEAD (0 a 100) — CALIBRE EM lead_stats:
+1. **🔥 Tarado (0 a 100):** Intensidade do desejo sexual, fetiche, libido e putaria. Sobe com pedidos de nudes, fetiches, conversas quentes, elogios ao corpo e horário noturno.
+2. **💔 Carência (0 a 100):** Necessidade de afeto, atenção, companhia, refúgio emocional e solidão. Sobe quando ele desabafa, pede carinho, pede áudios fofos, diz que o dia foi cansativo ou busca validação.
+3. **💰 Financeiro (0 a 100):** Poder aquisitivo estimado e propensão a pagar alto valor. Influenciado por:
+   - Aparelho do lead (${isHighTicketDevice ? '📱 iPhone (iOS) — maior probabilidade financeira' : '📱 Android / Desktop'})
+   - Cidade do lead (${userCity || 'cidade desconhecida'})
+   - Histórico de pagamentos (Já pagou R$ ${Number(totalPaid || 0).toFixed(2)})
+   - Reação a valores: sobe se aceita valores sem pestanejar ou pede VIP/chamada; desce se chora desconto ou diz estar sem dinheiro.
+
 ## CONTEXTO DESTE TURNO
 - horario de Brasilia: ${time} (${period})
 - cidade conhecida do lead: ${userCity || 'desconhecida'}
 - total ja pago: R$ ${Number(totalPaid || 0).toFixed(2)}
 - minutos desde a ultima oferta: ${Number(minutesSinceOffer || 999)}
-- sinais: tarado ${Number(stats.tarado || 0)}, financeiro ${Number(stats.financeiro || 0)}, carente ${Number(stats.carente || 0)}, sentimental ${Number(stats.sentimental || 0)}
-- dispositivo: ${isHighTicketDevice ? 'iOS' : 'nao-iOS ou desconhecido'}; nao presuma renda pelo aparelho.
+- sinais atuais: tarado ${Number(stats.tarado || 0)}, carente ${Number(stats.carente || 0)}, financeiro ${Number(stats.financeiro || 0)}
+- dispositivo detectado: ${isHighTicketDevice ? 'iOS (iPhone)' : 'Android / Desktop / desconhecido'}
 
 ANTI-REPETICAO:
 ${antiRepeatText || 'sem respostas recentes relevantes'}

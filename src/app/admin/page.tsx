@@ -357,12 +357,11 @@ export default function AdminDashboard() {
                                         </span>
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-x-3 gap-y-2">
-                                        <MiniScoreBar label="Quente" value={safeStats.tarado} color="bg-rose-400" />
-                                        <MiniScoreBar label="Compra" value={safeStats.financeiro} color="bg-emerald-400" />
-                                        <MiniScoreBar label="Carente" value={safeStats.carente} color="bg-cyan-400" />
-                                        <MiniScoreBar label="Emocional" value={safeStats.sentimental} color="bg-violet-400" />
-                                        {scoreMeta && <p className="col-span-2 text-[10px] text-slate-600">Confiança {scoreMeta.confidence}% · {scoreMeta.message_count} mensagens</p>}
+                                    <div className="grid grid-cols-3 gap-x-2 gap-y-2">
+                                        <MiniScoreBar label="🔥 Tarado" value={safeStats.tarado} color="bg-rose-400" />
+                                        <MiniScoreBar label="💔 Carente" value={safeStats.carente} color="bg-cyan-400" />
+                                        <MiniScoreBar label="💰 Financeiro" value={safeStats.financeiro} color="bg-emerald-400" />
+                                        {scoreMeta && <p className="col-span-3 text-[10px] text-slate-600">Confiança {scoreMeta.confidence}% · {scoreMeta.message_count} mensagens</p>}
                                     </div>
 
                                     <div className="text-left lg:text-right">
