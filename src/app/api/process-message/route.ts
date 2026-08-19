@@ -211,6 +211,13 @@ const sanitizeOutgoingMessage = (text: string) => {
     out = out.replace(/\bme\s+chamo\s+a\s+larissa\b/gi, 'me chamo larissa');
     out = out.replace(/\bsou\s+eu\b/gi, 'sou lari');
     out = out.replace(/\beu\s+sou\s+eu\b/gi, 'eu sou lari');
+    // A Lari responde da própria perspectiva; ela não copia o papel do lead.
+    out = out.replace(/\b(?:eu\s+)?quero\s+te\s+comer\b/gi, 'quero dar pra vc');
+    out = out.replace(/\b(?:eu\s+)?quero\s+comer\s+(?:vc|voce|você)\b/gi, 'quero dar pra vc');
+    out = out.replace(/\b(?:eu\s+)?vou\s+te\s+comer\b/gi, 'vou dar pra vc');
+    out = out.replace(/\b(?:eu\s+)?vou\s+comer\s+(?:vc|voce|você)\b/gi, 'vou dar pra vc');
+    out = out.replace(/\b(?:eu\s+)?te\s+comeria\b/gi, 'eu daria pra vc');
+    out = out.replace(/\bimagina\s+eu\s+te\s+comendo\b/gi, 'imagina eu dando pra vc');
     out = out.replace(/\bamoro\b/gi, 'amor o');
     out = out.replace(/([a-záéíóúâêôãõç])((?:kkk|rsrs)+)\b/gi, '$1 $2');
     out = out.replace(/\s+/g, ' ');
@@ -218,6 +225,35 @@ const sanitizeOutgoingMessage = (text: string) => {
     out = fixGluedWords(out);
     return out;
 };
+
+const removeLeadEchoes = (messages: string[], userText: string) => {
+    const leadLines = String(userText || '')
+        .split(/\r?\n/)
+        .map((line) => normalizeLoopText(line))
+        .filter(Boolean);
+    const leadPhrases = new Set([
+        normalizeLoopText(userText),
+        ...leadLines,
+    ].filter(Boolean));
+    return messages.filter((message) => !leadPhrases.has(normalizeLoopText(message)));
+};
+
+const normalizeMediaUrlKey = (value: unknown) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+        const url = new URL(raw);
+        url.search = '';
+        url.hash = '';
+        return url.toString();
+    } catch {
+        return raw.replace(/[?#].*$/, '');
+    }
+};
+
+const userAskedToRepeatMedia = (text: string) => /\b(de novo|outra vez|reenviar|reenvia|envia de novo|manda de novo|a mesma foto|o mesmo video|o mesmo vídeo)\b/i.test(text || '');
+
+const isMediaSetupPromise = (message: string) => /\b(vou te mandar|vou mandar|vou separar|vou escolher|separei pra vc|tirei uma foto|fotinha pra vc|videozinho pra vc)\b/i.test(message || '');
 
 const OPENING_VICES = new Set(['amor', 'anjo', 'vida', 'nossa', 'ai', 'eita', 'perfeito']);
 
@@ -1274,6 +1310,80 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         }
     }
 
+    // A IA pode escolher de novo o mesmo preview_id. Antes de escrever qualquer
+    // promessa de envio, trocamos por uma mídia nunca usada nesta conversa.
+    let mediaSuppressedForRepetition = false;
+    if (MEDIA_ACTIONS.has(String(aiResponse.action || '')) && !userAskedToRepeatMedia(userOnlyText)) {
+        const [sentMediaResult, catalogResult] = await Promise.all([
+            supabase
+                .from('messages')
+                .select('media_url')
+                .eq('session_id', session.id)
+                .eq('sender', 'bot')
+                .not('media_url', 'is', null)
+                .limit(1000),
+            supabase
+                .from('preview_assets')
+                .select('id,name,description,triggers,tags,media_url,media_type,priority,min_tarado,max_tarado')
+                .eq('enabled', true)
+                .not('media_url', 'is', null)
+                .limit(1000),
+        ]);
+
+        if (!sentMediaResult.error && !catalogResult.error) {
+            const sentMediaKeys = new Set(
+                (sentMediaResult.data || [])
+                    .map((row: any) => normalizeMediaUrlKey(row.media_url))
+                    .filter(Boolean),
+            );
+            const catalog = (catalogResult.data || []).filter((asset: any) => asset.media_url);
+            const action = String(aiResponse.action || '');
+            const requestedType = userMediaKind === 'video' || /video/i.test(action)
+                ? 'video'
+                : userAskedPhoto || ['send_shower_photo', 'send_lingerie_photo', 'send_wet_finger_photo', 'send_ass_photo_preview'].includes(action)
+                    ? 'image'
+                    : null;
+            const relevantCatalog = requestedType
+                ? catalog.filter((asset: any) => asset.media_type === requestedType)
+                : catalog;
+            let unusedCatalog = relevantCatalog.filter((asset: any) =>
+                !sentMediaKeys.has(normalizeMediaUrlKey(asset.media_url))
+            );
+
+            // Vídeo pode cair para uma foto inédita, como já acontecia no fluxo antigo.
+            if (unusedCatalog.length === 0 && requestedType === 'video') {
+                unusedCatalog = catalog.filter((asset: any) =>
+                    !sentMediaKeys.has(normalizeMediaUrlKey(asset.media_url))
+                );
+            }
+
+            const requestedSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
+            const tarado = Number(aiResponse.lead_stats?.tarado || 0);
+            const chosenPreview = unusedCatalog
+                .map((asset: any) => {
+                    const inRange = tarado >= Number(asset.min_tarado ?? 0)
+                        && tarado <= Number(asset.max_tarado ?? 100);
+                    return {
+                        asset,
+                        score: scorePreviewForContext(asset, userOnlyText, requestedSpec.tags) + (inRange ? 3 : -3),
+                    };
+                })
+                .sort((a: any, b: any) => b.score - a.score)[0]?.asset;
+
+            if (chosenPreview) {
+                aiResponse.action = 'send_custom_preview';
+                aiResponse.preview_id = chosenPreview.id;
+            } else if (relevantCatalog.length > 0 && sentMediaKeys.size > 0) {
+                console.log('[PREVIAS] Todas as mídias adequadas já foram enviadas; repetição bloqueada.');
+                aiResponse.action = 'none';
+                aiResponse.preview_id = null;
+                mediaSuppressedForRepetition = true;
+            }
+        } else {
+            console.warn('[PREVIAS] Falha no preflight anti-repeticao:', sentMediaResult.error?.message || catalogResult.error?.message);
+        }
+    }
+
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
 
     // 5. Atualizar Stats & Salvar Pensamentos
@@ -1439,11 +1549,27 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
 
     // 6. Enviar Respostas
 
+    const { data: recentBotTextRows } = await supabase
+        .from('messages')
+        .select('content')
+        .eq('session_id', session.id)
+        .eq('sender', 'bot')
+        .order('created_at', { ascending: false })
+        .limit(30);
+    const recentBotTextKeys = new Set(
+        (recentBotTextRows || [])
+            .map((row: any) => normalizeLoopText(row.content || ''))
+            .filter((text: string) => text && !text.startsWith('midia ')),
+    );
+
     const outgoingMessages = Array.isArray(aiResponse.messages)
         ? aiResponse.messages
         : [String(aiResponse.messages || '')].filter(Boolean);
 
-    let safeMessages = (outgoingMessages.length > 0 ? outgoingMessages : ['amor?'])
+    let safeMessages = removeLeadEchoes(
+        outgoingMessages.length > 0 ? outgoingMessages : ['amor?'],
+        userOnlyText,
+    )
         .map((m: string) => sanitizeOutgoingMessage(m))
         .filter(Boolean);
 
@@ -1456,8 +1582,15 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         extractedName: aiResponse.extracted_user_name,
         lastBotContent
     });
-    if (safeMessages.length === 0 && !userAskedMedia) {
-        safeMessages = ['me conta melhor amor, quero entender vc'];
+    if (mediaSuppressedForRepetition) {
+        safeMessages = safeMessages.filter((message: string) => !isMediaSetupPromise(message));
+    }
+    if (safeMessages.length === 0 && (!userAskedMedia || mediaSuppressedForRepetition)) {
+        safeMessages = hasExplicitSexualFantasyTrigger(userOnlyText)
+            ? ['so de imaginar vc me comendo ja fico toda arrepiada']
+            : mediaSuppressedForRepetition
+                ? ['agora quero te provocar de um jeito diferente amor']
+                : ['me conta melhor amor, quero entender vc'];
     }
     if (cityQuestion && hasCity) {
         const forcedCityAnswer = `sou de ${userCity} amor, e vc?`;
@@ -1494,10 +1627,13 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         maxChars: aiResponse.max_chars_per_message || 90,
     });
 
-    const normLastBot = normalizeLoopText(lastBotContent);
-    const normFirstOut = normalizeLoopText(safeMessages[0] || '');
-    if (normLastBot && normFirstOut && normLastBot === normFirstOut) {
-        safeMessages[0] = `ei amor ${safeMessages[0]}`;
+    safeMessages = safeMessages.filter((message: string) =>
+        !recentBotTextKeys.has(normalizeLoopText(message))
+    );
+    if (safeMessages.length === 0 && !MEDIA_ACTIONS.has(String(aiResponse.action || 'none'))) {
+        safeMessages = hasExplicitSexualFantasyTrigger(userOnlyText)
+            ? ['so de imaginar vc me comendo ja fico toda arrepiada']
+            : ['me fala mais disso amor'];
     }
 
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none')) && (userAskedMedia || aiResponse.action === 'send_custom_preview');
@@ -2102,7 +2238,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 throw new Error(`tipo de midia invalido: ${type}`);
             };
 
-            const userAskedRepeatMedia = /(de novo|manda de novo|reenviar|envia de novo|outra vez)/i.test(userOnlyText);
+            const userAskedRepeatMedia = userAskedToRepeatMedia(userOnlyText);
             const { data: recentMediaRows } = !userAskedRepeatMedia
                 ? await supabase
                     .from('messages')
@@ -2111,11 +2247,12 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     .eq('sender', 'bot')
                     .not('media_url', 'is', null)
                     .order('created_at', { ascending: false })
-                    .limit(8)
+                    .limit(1000)
                 : { data: [] };
             const recentUrls = new Set((recentMediaRows || []).map((row: any) => String(row.media_url || '')).filter(Boolean));
+            const recentUrlKeys = new Set([...recentUrls].map(normalizeMediaUrlKey).filter(Boolean));
 
-            if (recentUrls.has(String(mediaUrl))) {
+            if (recentUrlKeys.has(normalizeMediaUrlKey(mediaUrl))) {
                 const alternative = await getRegisteredPreview(
                     mediaType === 'image' || mediaType === 'video' ? mediaType : undefined,
                     [...recentUrls, String(mediaUrl)],
@@ -2123,6 +2260,10 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 if (alternative) {
                     mediaUrl = alternative.media_url;
                     mediaType = alternative.media_type;
+                } else {
+                    console.log('[PREVIAS] Repeticao bloqueada no fail-safe de entrega.');
+                    mediaUrl = null;
+                    mediaType = null;
                 }
             }
 
