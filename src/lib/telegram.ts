@@ -152,3 +152,27 @@ export const getTelegramFilePath = async (token: string, fileId: string): Promis
 export const getTelegramFileDownloadUrl = (token: string, filePath: string) => {
     return `https://api.telegram.org/file/bot${token}/${filePath}`;
 };
+
+export const approveChatJoinRequest = async (token: string, chatId: number | string, userId: number | string) => {
+    if (!token) return false;
+    try {
+        const bot = new Telegraf(token);
+        await bot.telegram.approveChatJoinRequest(chatId, Number(userId));
+        return true;
+    } catch (e) {
+        console.error("Failed to approve chat join request:", e);
+        return false;
+    }
+};
+
+export const declineChatJoinRequest = async (token: string, chatId: number | string, userId: number | string) => {
+    if (!token) return false;
+    try {
+        const bot = new Telegraf(token);
+        await bot.telegram.declineChatJoinRequest(chatId, Number(userId));
+        return true;
+    } catch (e) {
+        console.error("Failed to decline chat join request:", e);
+        return false;
+    }
+};
