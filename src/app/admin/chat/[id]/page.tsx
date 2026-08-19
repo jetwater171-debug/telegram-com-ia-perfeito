@@ -681,14 +681,22 @@ function findAssociatedDebug(messages: Message[], currentMsg: Message): AiDebugD
 }
 
 function getMessageMediaSrc(message: Message) {
+    if (message.media_url) return message.media_url;
     if (!getMessageMediaType(message)) return "";
     return `/api/admin/media/${encodeURIComponent(message.id)}`;
 }
 
 function getMessageMediaType(message: Message) {
     if (message.media_type === "image" || message.media_type === "video") return message.media_type;
+    if (message.media_url) {
+        if (/\.(mp4|mov|webm|m4v)(\?|$)/i.test(message.media_url)) return "video";
+        return "image";
+    }
     if (/\[PHOTO_UPLOAD\]/i.test(message.content || "")) return "image";
     if (/\[VIDEO_UPLOAD\]/i.test(message.content || "")) return "video";
+    if (/\[MÍDIA/i.test(message.content || "")) {
+        return /video/i.test(message.content || "") ? "video" : "image";
+    }
     return "";
 }
 
@@ -928,7 +936,12 @@ function cleanTextForBubble(text?: string) {
     if (upload) {
         const caption = upload[2]?.trim();
         if (caption) return caption;
-        return upload[1].toUpperCase() === "VIDEO_UPLOAD" ? "Video recebido" : "Foto recebida";
+        return upload[1].toUpperCase() === "VIDEO_UPLOAD" ? "🎥 Vídeo recebido do lead" : "📸 Foto recebida do lead";
+    }
+    const mediaSent = raw.match(/^\[MÍDIA(?:\s+PROTEGIDA)?:\s*([^\]]+)\]/i);
+    if (mediaSent) {
+        const action = mediaSent[1].trim();
+        return action.includes("video") ? `🎥 [Vídeo Enviado ao Lead: ${action}]` : `📸 [Foto Enviada ao Lead: ${action}]`;
     }
     return raw;
 }

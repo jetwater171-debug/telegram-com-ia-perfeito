@@ -458,6 +458,15 @@ const removeDuplicateNormalizedMessages = (messages: string[]) => {
     });
 };
 
+const removeUserEchoMessages = (messages: string[], userText: string) => {
+    const normUser = normalizeLoopText(userText);
+    if (!normUser || normUser.length < 3) return messages;
+    return messages.filter((msg) => {
+        const normMsg = normalizeLoopText(msg);
+        return normMsg !== normUser && !normUser.includes(normMsg);
+    });
+};
+
 const applyConversationQualityGuards = (messages: string[], opts: {
     userText: string;
     sessionName: any;
@@ -467,6 +476,7 @@ const applyConversationQualityGuards = (messages: string[], opts: {
     lastBotContent: string;
 }) => {
     let out = [...messages];
+    out = removeUserEchoMessages(out, opts.userText);
     out = removeGenericBotPhrases(out);
     out = removePrematureNameIntro(out, opts.userText, opts.extractedName);
     out = removeAnsweredNameQuestions(out, opts.userText, opts.sessionName);
@@ -1445,12 +1455,33 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     const isInitialGreeting = /^\s*(\/start(?:\s+.*)?|oi|oii|oiii|ola|olá|boa tarde|bom dia|boa noite|eai|fala|opa)\s*$/i.test(userOnlyText.trim())
         && recentSalesHistory.filter((m: any) => m.sender === 'user').length <= 1;
 
+    const pastDeliveredMediaCount = recentSalesHistory.filter((m: any) =>
+        m.sender === 'bot' && (m.media_url || /\[MÍDIA/i.test(m.content || ''))
+    ).length;
+
+    const hasPaid = Number(session.total_paid || 0) > 0;
+    const isAskingRepeat = userAskedToRepeatMedia(userOnlyText);
+
     let shouldDeliverMedia = (userAskedMedia || botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || '')))
         && !(isInitialGreeting && !userAskedMedia);
 
     if (isInitialGreeting && !userAskedMedia) {
         aiResponse.action = 'none';
         shouldDeliverMedia = false;
+    }
+
+    // Se já entregou 1 prévia gratuita e o lead ainda não comprou nada, bloqueia envio de 2ª prévia gratuita
+    // e força a Lari a guiar a conversa para a oferta do VIP
+    if (pastDeliveredMediaCount >= 1 && !hasPaid && !isAskingRepeat) {
+        console.log('[FUNIL] Prévia gratuita adicional bloqueada. Conduzindo lead para VIP.');
+        aiResponse.action = 'none';
+        shouldDeliverMedia = false;
+        if (userAskedMedia) {
+            aiResponse.messages = [
+                'gostou do que viu amor? imagina o resto...',
+                'no meu VIP secreto tem todos os meus vídeos sem censura me tocando e peladinha... o acesso tá só R$ 19,90 hj, quer que eu te mande o link?'
+            ];
+        }
     }
 
     // Pedido de mídia só vira cobrança quando o lead também manifesta uma compra real.
