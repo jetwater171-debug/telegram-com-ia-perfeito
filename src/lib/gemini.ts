@@ -1033,12 +1033,29 @@ Você é a melhor vendedora do Telegram porque você entende a mente e o desejo 
 - Avaliação de Foto / Pau em Áudio: R$ 9,90 — "Avaliacao Personalizada"
 - Acesso VIP Completo: Vitalício R$ 24,90 (Promo R$ 17,90) | Mensal R$ 19,90 (Promo R$ 14,90).
 
-## REGRA INVIOLÁVEL DE PRÉVIA vs PIX:
-- SE O LEAD PEDIR PRÉVIA OU FOTO ("me manda uma previa", "manda prévia", "manda foto", "quero ver uma prévia", "manda fotinha", "pedi uma previa e nao o pix"):
-  - É TOTALMENTE PROIBIDO GERAR PIX (NUNCA use action=generate_pix_payment)!
-  - Use SEMPRE action=send_custom_preview com o preview_id da melhor foto do catálogo.
-  - Fale de forma fofa e safada entregando a foto ("toma amor, olha como eu to na cama pra vc...", "olha essa fotinha minha vida...").
-  - Somente use action=generate_pix_payment quando o lead estiver fechando um produto pago (chamada de vídeo, VIP, vídeo pelada), NUNCA para entregar prévia!
+## REGRAS INVIOLÁVEIS DE PRÉVIA, ÁUDIO, COBRANÇA E PERSONA:
+
+1. **PRÉVIAS E FOTOS DE CONVERSA (SEMPRE ENVIAR, NUNCA COBRAR):**
+   - Se o lead pedir prévia, foto, ou pedir para te ver ("me manda uma previa", "manda prévia", "manda foto", "quero ver uma prévia", "manda fotinha", "pedi uma previa e nao o pix", "qualquer foto aí que vc tiver", "quero te ver", "manda nudes"):
+     - **ENVIA A PRÉVIA IMEDIATAMENTE** usando action=send_custom_preview com preview_id da melhor foto do catálogo (ou send_shower_photo / send_lingerie_photo / send_ass_photo_preview).
+     - **É TOTALMENTE PROIBIDO GERAR PIX PARA PRÉVIA OU FOTO DE CONVERSA!**
+     - **NUNCA DIGA "vou pedir pra gravarem", "não tenho gravado", "vou guardar a ideia" ou "não tenho foto"!** Você é uma mulher real no seu quarto e você mesma tira suas fotos. Se o lead pedir qualquer foto, mande uma foto gostosa do catálogo ("olha essa fotinha amor...", "tirei essa aqui deitadinha pra vc vida...").
+
+2. **ÁUDIOS NORMAIS E FALANDO O NOME DO LEAD (SEMPRE GRATUITO):**
+   - Se o lead pedir um áudio conversando ou falando o nome dele ("manda um áudio", "grava um áudio falando meu nome", "fala meu nome no áudio", "quero ouvir sua voz", "manda voz"):
+     - Responda falando com ele com doçura e sensualidade, chamando ele pelo nome dele (ex: "oi amor, to aqui deitadinha pensando em vc...", "oi Leo lindo, adorei falar com vc...").
+     - **NÃO COBRE POR ÁUDIO DE CONVERSA OU FALANDO O NOME DELE!** O áudio de conversa/nome é 100% gratuito e serve para gerar conexão e paixão.
+
+3. **QUANDO VOCÊ DEVE COMEÇAR A COBRAR (SÓ COBRE NESTES CASOS ESPECÍFICOS):**
+   - Só apresente proposta de valor e envie PIX (action=generate_pix_payment) se o lead pedir conteúdos MUITO ESPECÍFICOS, EXPLÍCITOS (+18) ou SERVIÇOS VIP:
+     - Foto da Lari 100% pelada / nua sem censura / nudes explícitos (R$ 14,90)
+     - Foto ou vídeo de fetiche muito específico sob encomenda (ex: fantasia/fetiche pesado pedido pelo lead)
+     - Áudio erótico explícito / gemendo / masturbação guiada em áudio (R$ 9,90)
+     - Vídeo completo / vídeo longo peladinha (R$ 19,90)
+     - Chamada de vídeo privada ao vivo no sigilo (R$ 29,90)
+     - Acesso VIP Vitalício (R$ 24,90 / Promo R$ 17,90) ou Mensal (R$ 19,90)
+     - Número pessoal / WhatsApp VIP (R$ 19,90)
+   - Se o lead está apenas conversando, flertando, pedindo prévia, pedindo foto normal ou pedindo áudio falando o nome dele, **NÃO COBRE NADA!** Conecte, envie a prévia e crie desejo antes.
 
 ## ACTIONS E ESTADOS
 Actions válidas: none, send_video_preview, send_hot_video_preview, send_ass_photo_preview, send_custom_preview, generate_pix_payment, check_payment_status, send_shower_photo, send_lingerie_photo, send_wet_finger_photo, request_app_install.
@@ -1585,30 +1602,60 @@ const callAiGatewayJson = async <T,>(options: {
 
 const makeFallbackStrategy = (message: string) => {
     const text = (message || '').toLowerCase();
-    const wantsPayment = /(pix|valor|pre[cç]o|quanto|comprar|fechado|manda)/i.test(text);
-    const wantsSpecificProduct = /(chamada|call|foto|video|vídeo|numero|número|whats|avaliacao|avaliação|vip)/i.test(text);
+    const wantsMedia = /\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|previa|prévia|video|vídeo)\b/i.test(text)
+        || /\b(manda|mostra|envia|quero ver|deixa ver|solta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo|uma)\b/i.test(text)
+        || /\b(quero te ver|qualquer foto|manda qualquer|me mostra vc|me mostra você)\b/i.test(text);
+    const wantsAudio = /\b(audio|áudio|voz|grava|ouvir sua voz|fala meu nome|falando meu nome)\b/i.test(text);
+    const wantsPayment = !wantsMedia && !wantsAudio && /\b(pix|chave pix|codigo pix|código pix|quanto custa|qual o valor|qual o preco|qual o preço|quanto e|quanto é|como faco pra comprar|como faço pra comprar|quero comprar|vou comprar|vou pagar|manda o pix|manda a chave|passa o pix|passa a chave)\b/i.test(text);
+    const wantsSpecificProduct = /(chamada|call|numero|número|whats|whatsapp|avaliacao|avaliação|vip|vitalicio|vitalício|mensal)/i.test(text);
     const isSexual = /(nude|pelada|bunda|peito|pau|buceta|gozar|tes[aã]o|safada|putaria)/i.test(text);
 
     return {
-        intent: wantsPayment ? 'comprar ou pedir valor' : wantsSpecificProduct ? 'quer produto especifico' : 'conversar',
+        intent: wantsPayment
+            ? 'comprar ou pedir valor'
+            : wantsMedia
+                ? 'pediu previa ou foto para ver'
+                : wantsAudio
+                    ? 'pediu audio falando com ele'
+                    : wantsSpecificProduct
+                        ? 'quer produto especifico'
+                        : 'conversar',
         lead_type: isSexual ? 'tarado' : wantsPayment ? 'curioso' : 'desconhecido',
         temperature: wantsPayment ? 80 : isSexual ? 65 : 30,
         emotional_context: isSexual ? 'excitado e receptivo' : wantsPayment ? 'objetivo e pronto para decidir' : 'aberto a conversa',
         relationship_stage: 'new',
         connection_cue: 'usar literalmente o assunto da mensagem atual',
-        objective: wantsPayment ? 'fechar pagamento' : wantsSpecificProduct ? 'vender o pedido exato do lead' : 'criar conexao e puxar proximo passo',
+        objective: wantsPayment
+            ? 'fechar pagamento'
+            : wantsMedia
+                ? 'enviar previa do catalogo e encantar o lead'
+                : wantsAudio
+                    ? 'responder com voz carinhosa falando com ele'
+                    : wantsSpecificProduct
+                        ? 'vender o pedido exato do lead'
+                        : 'criar conexao e puxar proximo passo',
         product_to_sell: wantsSpecificProduct ? 'produto pedido pelo lead' : null,
-        should_sell_now: wantsPayment || wantsSpecificProduct,
+        should_sell_now: wantsPayment,
         response_angle: 'responder primeiro o que ele disse e conduzir sem parecer script',
         must_answer: 'responder diretamente a mensagem atual',
-        next_step: wantsPayment ? 'gerar pix se houver valor claro' : 'avancar uma etapa sem forcar produto errado',
+        next_step: wantsPayment
+            ? 'gerar pix se houver valor claro'
+            : wantsMedia
+                ? 'mandar foto de previa'
+                : 'avancar uma etapa sem forcar produto errado',
         message_plan: wantsPayment
             ? ['confirmar a escolha', 'informar a proxima acao']
-            : ['reagir ao que ele disse', 'aprofundar o mesmo assunto', 'dar um caminho facil para responder'],
+            : wantsMedia
+                ? ['preparar o envio da previa com carinho', 'mandar a foto']
+                : ['reagir ao que ele disse', 'aprofundar o mesmo assunto', 'dar um caminho facil para responder'],
         recommended_message_count: wantsPayment ? 2 : 3,
         max_chars_per_message: 88,
-        avoid: ['repetir frase antiga', 'perguntar nome sem contexto', 'vender vip se ele pediu avulso'],
-        action_hint: wantsPayment ? 'generate_pix_payment' : 'none',
+        avoid: ['repetir frase antiga', 'perguntar nome sem contexto', 'vender vip se ele pediu avulso', 'gerar pix para previa'],
+        action_hint: wantsPayment
+            ? 'generate_pix_payment'
+            : wantsMedia
+                ? 'send_custom_preview'
+                : 'none',
         payment_value_hint: null,
         confidence: 0.55,
         memory_patch: {
@@ -1637,11 +1684,12 @@ const makeLocalFallbackResponse = (
     const hasImage = Boolean(media?.mimeType?.startsWith('image/'));
     const hasAudio = Boolean(media?.mimeType?.startsWith('audio/'));
     const paymentLike = /\b(comprovante|paguei|pix|recibo|banco|transferencia|transferência|qr|pagamento|caiu|confere)\b/i.test(text);
-    const wantsPrice = /\b(pix|valor|pre[cç]o|quanto custa|quanto e|quanto é|comprar|fechado)\b/i.test(text);
     const wantsMedia = /\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|previa|prévia)\b/i.test(text)
-        || /\b(manda|mostra|envia|quero ver|deixa ver)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo)\b/i.test(text);
+        || /\b(manda|mostra|envia|quero ver|deixa ver|solta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo|uma)\b/i.test(text)
+        || /\b(quero te ver|qualquer foto|manda qualquer|me mostra vc|me mostra você)\b/i.test(text);
+    const wantsPrice = !wantsMedia && /\b(pix|chave pix|codigo pix|código pix|quanto custa|qual o valor|qual o preco|qual o preço|quanto e|quanto é|como faco pra comprar|como faço pra comprar|quero comprar|vou comprar|vou pagar|manda o pix|manda a chave|passa o pix|passa a chave)\b/i.test(text);
     const isSexual = /\b(nude|nudes|pelada|nua|bunda|peito|peitos|pau|buceta|gozar|tes[aã]o|safada|putaria|comer|chupar|meter)\b/i.test(text);
-    const noMoney = /\b(caro|sem dinheiro|so tenho|só tenho|liso|desconto|faz por)\b/i.test(text);
+    const noMoney = !wantsMedia && /\b(caro|sem dinheiro|so tenho|só tenho|liso|desconto|faz por)\b/i.test(text);
 
     if (/\/(?:start)\b/i.test(text)) {
         return {
@@ -1741,6 +1789,20 @@ const makeLocalFallbackResponse = (
         };
     }
 
+    if (wantsMedia) {
+        return {
+            internal_thought: "Fallback local: lead pediu previa/foto, enviar previa do catalogo sem cobrar.",
+            lead_classification: "curioso",
+            lead_stats: { ...stats, tarado: Math.max(Number(stats.tarado || 0), 40) },
+            current_state: "PREVIEW",
+            messages: ["olha essa fotinha que separei pra vc amor", "espero que goste rs"],
+            action: "send_shower_photo",
+            extracted_user_name: null,
+            audio_transcription: null,
+            payment_details: null
+        };
+    }
+
     if (wantsPrice || noMoney) {
         const value = noMoney ? 14.90 : 24.90;
         return {
@@ -1758,20 +1820,6 @@ const makeLocalFallbackResponse = (
                 value,
                 description: noMoney ? "VIP Mensal Promocional" : "VIP Vitalicio Lari"
             }
-        };
-    }
-
-    if (wantsMedia) {
-        return {
-            internal_thought: "Fallback local: lead pediu previa/foto, manter conversa quente.",
-            lead_classification: "curioso",
-            lead_stats: { ...stats, tarado: Math.max(Number(stats.tarado || 0), 45) },
-            current_state: "CONNECTION",
-            messages: ["oii amor", "separei umas coisas bem gostosas pra vc", "me conta que tipo de foto vc mais gosta"],
-            action: "none",
-            extracted_user_name: null,
-            audio_transcription: null,
-            payment_details: null
         };
     }
 
@@ -1853,10 +1901,6 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     }
 
     const rankedPreviewRows = (!previewError ? (previewRows || []) : [])
-        .filter((preview: any) => {
-            const tarado = Number(currentStats.tarado || 0);
-            return tarado >= Number(preview.min_tarado ?? 0) && tarado <= Number(preview.max_tarado ?? 100);
-        })
         .map((preview: any) => ({
             ...preview,
             contextual_score: scorePreviewForContext(preview, userMessage),
@@ -2013,9 +2057,11 @@ Prefira de 2 a 4 balões curtos, com no máximo 90 caracteres cada (podendo usar
 Cada balão deve soar como uma mensagem rápida de Telegram, sem textões mecânicos.
 O primeiro balão reage imediatamente ao que o lead acabou de dizer. Os seguintes alimentam a imaginação sensorial, aumentam a conexão/desejo e conduzem para o objetivo comercial.
 No máximo uma pergunta leve no turno inteiro.
-Se o lead puxar conversa quente/sexual (comer, chupar, meter, gozar, posições, fetiches), responda com tesão genuíno, instigando a imaginação dele e fazendo ele visualizar você e seu corpo, criando a ponte perfeita para vender foto, vídeo ou chamada.
-Se o lead estiver carente ou buscando atenção, acolha com carinho e intimidade, fazendo ele se sentir único.
-Se o lead demonstrar intenção de ver mídia, comprar ou pagar: execute a venda e gere o PIX imediatamente (action=generate_pix_payment).
+Se o lead puxar conversa quente/sexual (comer, chupar, meter, gozar, posições, fetiches), responda com tesão genuíno, instigando a imaginação dele e fazendo ele visualizar você e seu corpo.
+Se o lead pedir prévia, foto ou pedir para te ver: envie SEMPRE a prévia (action=send_custom_preview com preview_id da melhor foto do catálogo). NUNCA gere PIX para prévia ou foto de conversa!
+NUNCA diga que "vai pedir pra gravarem", "não tem gravado", "vai guardar a ideia" ou "não tem foto". Você mesma tira suas fotos no quarto.
+Se o lead pedir um áudio apenas conversando ou falando o nome dele: envie o áudio doce/safado falando o nome dele com carinho (NÃO cobre nada por áudio normal de conversa).
+SÓ comece a cobrar e gerar PIX (action=generate_pix_payment) se o lead estiver comprando produtos específicos pagos (foto da Lari 100% pelada sem censura, fetiche sob encomenda, áudio erótico gemendo, chamada de vídeo, acesso VIP ou se pediu explicitamente o PIX/preço para pagar).
 Se for usar action de foto/video, messages[0] deve ser apenas uma preparação curta conectando a mídia ao que o lead falou. Não escreva "ta aqui", "olha essa", "te mandei", "gostou?", "curtiu?" ou "o que achou?" em messages[0].
 Atualize lead_memory_patch com os fatos, desejos, objeções, ganchos e tom observados neste turno.
 Atualize lead_stats com os níveis calibrados de tarado, carente, sentimental e financeiro (0 a 100).
@@ -2075,7 +2121,7 @@ Use essa estrategia para responder.`
 
 # IA 3: REVISORA DE QUALIDADE
 Voce revisa a resposta da Lari antes de enviar.
-Reprove/corrija se: parece script, ignora pergunta do lead, vende produto errado, repete frase, pergunta nome sem necessidade, fala cidade generica, nao usa memoria, esta fria demais ou nao aproxima da conversao.
+Reprove/corrija se: gerou PIX para um pedido de prévia ou foto de conversa, se disse que "vai pedir pra gravarem" ou "vai guardar a ideia", se cobrou por áudio de conversa simples falando o nome do lead, se parece script, ignora pergunta do lead, vende produto errado, repete frase, pergunta nome sem necessidade, fala cidade generica, nao usa memoria, esta fria demais ou nao aproxima da conversao.
 Reprove/corrija tambem se a action de midia nao combina com o que o lead falou, se manda foto/video sem preparar com uma mensagem congruente, ou se escolhe previa aleatoria.
 Reprove/corrija se o lead falou putaria explicita e a Lari respondeu fofa, fria, desviando assunto ou perguntando algo generico em vez de continuar a fantasia.
 Reprove/corrija se a ultima mensagem termina com reticencias, suspense vazio ou frase pendurada sem conduzir o lead.

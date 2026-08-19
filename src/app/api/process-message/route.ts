@@ -287,7 +287,21 @@ const removeGenericBotPhrases = (messages: string[]) => {
         /nao posso/i,
         /não posso/i,
         /como assistente/i,
-        /estou aqui para/i
+        /estou aqui para/i,
+        /vou pedir pra gravarem/i,
+        /vou pedir para gravarem/i,
+        /vou pedir pra equipe/i,
+        /vou pedir para equipe/i,
+        /vou guardar a ideia/i,
+        /vou guardar essa ideia/i,
+        /ainda nao tenho gravado/i,
+        /ainda não tenho gravado/i,
+        /ainda nao tenho exatamente/i,
+        /ainda não tenho exatamente/i,
+        /nao tenho gravado/i,
+        /não tenho gravado/i,
+        /nao tenho foto/i,
+        /não tenho foto/i,
     ];
     const filtered = messages.filter((msg) => !blocked.some((pattern) => pattern.test(msg)));
     return filtered.length > 0 ? filtered : messages;
@@ -470,7 +484,8 @@ const resolveContextualMediaAction = (userText: string, currentAction?: string) 
     const t = (userText || '').toLowerCase();
     const action = currentAction || 'none';
     const askedForMedia = /\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|previa|prévia|video|vídeo)\b/i.test(t)
-        || /\b(manda|mostra|envia|quero ver|deixa ver)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo)\b/i.test(t);
+        || /\b(manda|mostra|envia|quero ver|deixa ver|solta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo|uma)\b/i.test(t)
+        || /\b(quero te ver|qualquer foto|manda qualquer|me mostra vc|me mostra você)\b/i.test(t);
     if (!askedForMedia) return null;
     if (action === 'send_custom_preview') return null;
 
@@ -498,7 +513,10 @@ const resolveContextualMediaAction = (userText: string, currentAction?: string) 
             intro: 'vou te mandar um videozinho que faz mais sentido com isso'
         };
     }
-    return null;
+    return {
+        action: 'send_shower_photo',
+        intro: 'olha essa fotinha que separei pra vc amor'
+    };
 };
 
 const inferRequestedPreviewSpec = (userText: string, action?: string) => {
@@ -1087,7 +1105,16 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     const userAskedPhoto = userMediaKind === 'photo';
     const userAskedMedia = userMediaKind !== 'not_media'
         || /\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|video|vídeo|previa|prévia)\b/i.test(userOnlyText)
-        || /\b(manda|mostra|envia|quero ver|deixa ver)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo)\b/i.test(userOnlyText);
+        || /\b(manda|mostra|envia|quero ver|deixa ver|solta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo|uma)\b/i.test(userOnlyText)
+        || /\b(quero te ver|qualquer foto|manda qualquer|me mostra vc|me mostra você)\b/i.test(userOnlyText);
+
+    // Se o lead pediu prévia/foto e NÃO pediu explicitamente para comprar VIP/chamada/produto pago, NUNCA gere PIX
+    const explicitPaidPurchaseIntent = /\b(vip|vitalicio|vitalício|mensal|chamada|call|comprar vip|assinar|pagar|passa o pix|manda o pix)\b/i.test(userOnlyText);
+    if (userAskedMedia && !explicitPaidPurchaseIntent && aiResponse.action === 'generate_pix_payment') {
+        console.log('[PROCESSADOR] Bloqueando PIX indevido para pedido de prévia/foto. Redirecionando para envio de prévia.');
+        aiResponse.action = 'send_custom_preview';
+        aiResponse.payment_details = null;
+    }
 
     // Se o lead não pediu mídia e a ação não é uma prévia válida apontada pelo catálogo, cancela action de mídia espúria
     if (!userAskedMedia && aiResponse.action !== 'send_custom_preview') {
@@ -1096,12 +1123,14 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         }
     }
 
-    const contextualMedia = userAskedPhoto
-        ? null
-        : resolveContextualMediaAction(userOnlyText, aiResponse.action);
-    if (contextualMedia) {
-        aiResponse.action = contextualMedia.action as any;
-        aiResponse.current_state = (ACTION_STAGE_MAP[contextualMedia.action] || aiResponse.current_state) as any;
+    // Se o lead pediu mídia e a ação atual não é de entrega de mídia, resolve action de prévia adequada
+    let contextualMedia: any = null;
+    if (userAskedMedia && (!MEDIA_ACTIONS.has(String(aiResponse.action || '')) || aiResponse.action === 'none')) {
+        contextualMedia = resolveContextualMediaAction(userOnlyText, aiResponse.action);
+        if (contextualMedia) {
+            aiResponse.action = contextualMedia.action as any;
+            aiResponse.current_state = (ACTION_STAGE_MAP[contextualMedia.action] || aiResponse.current_state) as any;
+        }
     }
     let pendingPhotoRequestAnalysis: Promise<unknown> | null = null;
     if (aiResponse.preview_request?.description && userAskedPhoto) {
@@ -1352,18 +1381,10 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     }
 
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none')) && (userAskedMedia || aiResponse.action === 'send_custom_preview');
-    const mediaDeliveryClaim = /(ta aqui|t[aá] aqui|olha essa|acabei de (te )?mandar|te mandei|gostou|curtiu|o que achou|do que viu)/i;
-    const firstGeneratedMessage = safeMessages[0] || '';
-    const naturalMediaSetup = (firstGeneratedMessage && !mediaDeliveryClaim.test(firstGeneratedMessage) ? firstGeneratedMessage : '')
-        || contextualMedia?.intro
-        || 'pera ai, separei uma coisinha que combina com vc';
-    const mediaReactionMessage = safeMessages.find((message: string) =>
-        /(gostou|curtiu|o que achou|me fala o que achou|do que viu)/i.test(message)
-    ) || 'agora me fala o que achou';
-
-    // Em turnos com mídia, nunca alegamos que o arquivo chegou antes do Telegram confirmar.
-    // Um único balão prepara o envio; a reação só sai depois da entrega bem-sucedida.
-    const deferredMediaMessages = isMediaDeliveryTurn ? [mediaReactionMessage] : [];
+    const naturalMediaSetup = safeMessages[0] || contextualMedia?.intro || 'olha o que separei pra vc amor';
+    const deferredMediaMessages = isMediaDeliveryTurn
+        ? (safeMessages.length > 1 ? safeMessages.slice(1) : [])
+        : [];
     let outgoingToSend = isMediaDeliveryTurn ? [naturalMediaSetup] : safeMessages;
     let operationalLeadMemory = updatedLeadMemory;
     const persistMediaDeliveryStatus = async (
@@ -1437,14 +1458,14 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             messageText: message,
             stage,
             action: String(aiResponse.action || 'none'),
-            hasRecentAudio: Boolean(recentAudio),
+            hasRecentAudio: userWantsAudio ? false : Boolean(recentAudio),
         })
     );
 
     let audioSpokenText = '';
-    if (userWantsAudio && fishAudioSettings.enabled && fishAudioSettings.apiKey && fishAudioSettings.voiceId && !recentAudio) {
+    if (userWantsAudio && fishAudioSettings.enabled && fishAudioSettings.apiKey && fishAudioSettings.voiceId) {
         const combined = outgoingToSend.join('. ').slice(0, fishAudioSettings.maxChars);
-        if (combined.length >= 15 && !isUnsafeForVoice(combined)) {
+        if (combined.length >= 8 && !isUnsafeForVoice(combined)) {
             outgoingToSend = [combined];
             preferredAudioIndex = 0;
             audioSpokenText = combined;
