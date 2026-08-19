@@ -73,9 +73,9 @@ export const shapeConversationBubbles = (
     messages: string[],
     options: ShapeConversationBubblesOptions = {},
 ) => {
-    const preferredCount = Math.max(1, Math.min(6, Number(options.preferredCount || 3)));
-    const maxBubbles = Math.max(1, Math.min(6, Number(options.maxBubbles || 4)));
-    const maxChars = Math.max(55, Math.min(110, Number(options.maxChars || 90)));
+    const preferredCount = Math.max(2, Math.min(3, Number(options.preferredCount || 2)));
+    const maxBubbles = Math.max(2, Math.min(3, Number(options.maxBubbles || 3)));
+    const maxChars = Math.max(60, Math.min(120, Number(options.maxChars || 90)));
     const encourageSplit = messages.length < preferredCount;
     const seen = new Set<string>();
 

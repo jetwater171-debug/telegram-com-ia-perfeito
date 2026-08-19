@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
+import { approveChatJoinRequest } from '@/lib/telegram';
 
 const parseStartPayload = (text: string | undefined) => {
     const match = (text || '').trim().match(/^\/?start(?:\s+(.+))?$/i);
@@ -60,6 +61,61 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
     const body = await req.json();
+
+    // 0. Process Chat Join Request (Aprovacao automatica de leads no canal / grupo)
+    if (body.chat_join_request) {
+        try {
+            const joinReq = body.chat_join_request;
+            const channelId = joinReq.chat.id;
+            const userId = joinReq.from.id;
+            const userName = [joinReq.from.first_name, joinReq.from.last_name].filter(Boolean).join(' ') || 'Novo Lead';
+            const userChatId = (joinReq.user_chat_id || userId).toString();
+
+            console.log(`[CHAT_JOIN_REQUEST] Recebida solicitacao de entrada de ${userName} (${userId}) no chat ${joinReq.chat.title} (${channelId})`);
+
+            const { data: tokenData } = await supabase
+                .from('bot_settings')
+                .select('value')
+                .eq('key', 'telegram_bot_token')
+                .single();
+
+            const botToken = tokenData?.value;
+            if (botToken) {
+                const approved = await approveChatJoinRequest(botToken, channelId, userId);
+                console.log(`[CHAT_JOIN_REQUEST] Resultado aprovacao para ${userName}: ${approved}`);
+
+                let { data: session } = await supabase
+                    .from('sessions')
+                    .select('*')
+                    .eq('telegram_chat_id', userChatId)
+                    .single();
+
+                if (!session) {
+                    await supabase
+                        .from('sessions')
+                        .insert([{
+                            telegram_chat_id: userChatId,
+                            user_name: userName,
+                            device_type: 'Unknown',
+                            status: 'active',
+                            lead_memory: {
+                                notes: [`Entrou pelo canal ${joinReq.chat.title || channelId}`],
+                                metadata: {
+                                    channel_id: channelId,
+                                    channel_title: joinReq.chat.title || '',
+                                    invite_link: joinReq.invite_link?.invite_link || '',
+                                    joined_at: new Date().toISOString()
+                                }
+                            }
+                        }]);
+                }
+            }
+        } catch (joinErr) {
+            console.error('[CHAT_JOIN_REQUEST] Erro ao aprovar lead:', joinErr);
+        }
+        return NextResponse.json({ ok: true });
+    }
+
     const message = body.message || body.edited_message;
 
     if (!message) {
@@ -224,6 +280,26 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        if (startPayload && !leadRedirectCode) {
+            const currentMemory = normalizeLeadMemory(session.lead_memory);
+            const updatedMemory = {
+                ...currentMemory,
+                notes: mergeList(currentMemory.notes, [`origem payload ${startPayload}`]),
+                metadata: {
+                    ...(currentMemory.metadata || {}),
+                    start_payload: startPayload
+                },
+                updated_at: new Date().toISOString()
+            };
+            const { error: memErr } = await supabase
+                .from('sessions')
+                .update({ lead_memory: updatedMemory })
+                .eq('id', session.id);
+            if (!memErr) {
+                session.lead_memory = updatedMemory;
+            }
+        }
+
         // 3.5. Reset Reengagement Flag & Update Timestamp
         // Quando o usuário fala, o bot não precisa mais cobrar.
         // ATUALIZAMOS 'last_bot_activity_at' para AGORA para impedir que o cron dispare
@@ -247,11 +323,14 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // 3. Save User Message
+        // 3. Save User Message - qualquer comando de start sempre é salvo apenas como '/start'
+        const isStartCommand = /^\/?start(?:\s+.*)?$/i.test(text.trim());
+        const savedContent = isStartCommand ? '/start' : text;
+
         const { data: insertedMsg } = await supabase.from('messages').insert({
             session_id: session.id,
             sender: 'user',
-            content: leadRedirectCode ? '/start' : text,
+            content: savedContent,
             media_type: mediaType
         }).select().single();
 

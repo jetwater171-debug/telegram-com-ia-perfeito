@@ -27,10 +27,10 @@ export const refineNewRelationshipMessages = (messages: unknown[], options: {
         seen.add(key);
         unique.push(message);
     }
-    if (unique.length === 0) {
+    if (unique.length === 0 || (options.isConversationStart && userOnlyGreeting)) {
         return options.hasKnownName
-            ? ['oiii lindo, tudo bem?', 'como ta seu dia hj?']
-            : ['oiii amor, tudo bem?', 'tava aqui descansando... e vc, como ta?'];
+            ? ['oii lindo, tudo bem?', 'como ta seu dia hj?']
+            : ['oii, tudo bem?', 'como eu te chamo, anjo?'];
     }
     return unique.slice(0, 3);
 };

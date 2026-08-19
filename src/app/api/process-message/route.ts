@@ -1442,7 +1442,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         /\b(toma|olha só|olha so|olha essa|como eu t[oô]|te esperando|aqui pra vc|te mandei|olha a fotinha|olha aqui|olha amor|olha como|separei pra vc|olha o look|olha meu look|olha eu|tirando foto|tirei essa|tirei agora|fotinha pra vc|foto pra vc|olha essa foto|deitadinha aqui|olha como eu fico)\b/i.test(msg)
     );
 
-    const isInitialGreeting = /^\s*(\/start|oi|oii|oiii|ola|olá|boa tarde|bom dia|boa noite|eai|fala|opa)\s*$/i.test(userOnlyText.trim())
+    const isInitialGreeting = /^\s*(\/start(?:\s+.*)?|oi|oii|oiii|ola|olá|boa tarde|bom dia|boa noite|eai|fala|opa)\s*$/i.test(userOnlyText.trim())
         && recentSalesHistory.filter((m: any) => m.sender === 'user').length <= 1;
 
     let shouldDeliverMedia = (userAskedMedia || botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || '')))
