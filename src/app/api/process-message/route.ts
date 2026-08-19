@@ -1441,7 +1441,17 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     const botMessagesPromiseMedia = (Array.isArray(aiResponse.messages) ? aiResponse.messages : []).some((msg: string) =>
         /\b(toma|olha só|olha so|olha essa|como eu t[oô]|te esperando|aqui pra vc|te mandei|olha a fotinha|olha aqui|olha amor|olha como|separei pra vc|olha o look|olha meu look|olha eu|tirando foto|tirei essa|tirei agora|fotinha pra vc|foto pra vc|olha essa foto|deitadinha aqui|olha como eu fico)\b/i.test(msg)
     );
-    const shouldDeliverMedia = userAskedMedia || botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || ''));
+
+    const isInitialGreeting = /^\s*(\/start|oi|oii|oiii|ola|olá|boa tarde|bom dia|boa noite|eai|fala|opa)\s*$/i.test(userOnlyText.trim())
+        && recentSalesHistory.filter((m: any) => m.sender === 'user').length <= 1;
+
+    let shouldDeliverMedia = (userAskedMedia || botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || '')))
+        && !(isInitialGreeting && !userAskedMedia);
+
+    if (isInitialGreeting && !userAskedMedia) {
+        aiResponse.action = 'none';
+        shouldDeliverMedia = false;
+    }
 
     // Pedido de mídia só vira cobrança quando o lead também manifesta uma compra real.
     // Palavras soltas como "pix" ou "pagar" em uma reclamação não autorizam cobrança.
