@@ -72,7 +72,7 @@ const providerDefaults = (provider: string, model: string): GatewayRatePolicy =>
     const normalizedModel = model.toLowerCase();
 
     if (normalizedProvider === 'groq') {
-        const instant8b = normalizedModel.includes('openai/gpt-oss-20b');
+        const instant8b = normalizedModel.includes('llama-3.1-8b-instant') || normalizedModel.includes('8b');
         return {
             rpm: 30,
             tpm: instant8b ? 6_000 : 8_000,

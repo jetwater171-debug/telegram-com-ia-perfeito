@@ -1,8 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 
-export const DEFAULT_PREVIEW_VISION_MODEL = 'google/gemini-2.5-flash';
-export const DEFAULT_PREVIEW_VISION_FALLBACK_MODEL = 'dots-studio/dots-3-note-preview:free';
+export const DEFAULT_PREVIEW_VISION_MODEL = 'google/gemini-2.0-flash-001';
+export const DEFAULT_PREVIEW_VISION_FALLBACK_MODEL = 'meta-llama/llama-3.2-11b-vision-instruct';
 
 export type PreviewVisionAnalysis = {
     name: string;
@@ -284,7 +284,7 @@ Retorne SOMENTE um JSON válido com a estrutura:
         try {
             const genAI = new GoogleGenerativeAI(settings.geminiKey);
             const geminiModel = genAI.getGenerativeModel({
-                model: 'gemini-3.6-flash',
+                model: 'gemini-2.0-flash',
                 generationConfig: { responseMimeType: 'application/json' },
             });
             const result = await geminiModel.generateContent([
@@ -298,7 +298,7 @@ Retorne SOMENTE um JSON válido com a estrutura:
             ]);
             const text = result.response.text();
             if (text) {
-                return normalizeAnalysis(parseJsonContent(text), 'gemini-3.6-flash-direct');
+                return normalizeAnalysis(parseJsonContent(text), 'gemini-2.0-flash-direct');
             }
         } catch (geminiError: any) {
             console.warn('[PREVIEW VISION] Gemini direto falhou:', geminiError?.message || geminiError);
