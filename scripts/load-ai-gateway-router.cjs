@@ -16,12 +16,13 @@ const { AdaptiveGatewayRouter } = loadedModule.exports;
 const policies = {
     gemini: { rpm: 10, tpm: 250_000, rpd: 1_000, tpd: 4_000_000, maxConcurrency: 6, timeoutMs: 12_000, maxQueueMs: 500 },
     groq: { rpm: 30, tpm: 6_000, rpd: 14_400, tpd: 500_000, maxConcurrency: 4, timeoutMs: 14_000, maxQueueMs: 500 },
+    nvidia: { rpm: 20, tpm: 120_000, rpd: 2_000, tpd: 2_000_000, maxConcurrency: 4, timeoutMs: 16_000, maxQueueMs: 500 },
     cloudflare: { rpm: 30, tpm: 300_000, rpd: 5_000, tpd: 5_000_000, maxConcurrency: 6, timeoutMs: 16_000, maxQueueMs: 500 },
     mistral: { rpm: 10, tpm: 100_000, rpd: 2_000, tpd: 2_000_000, maxConcurrency: 4, timeoutMs: 17_000, maxQueueMs: 500 },
     openrouter: { rpm: 18, tpm: 200_000, rpd: 50, tpd: 2_000_000, maxConcurrency: 3, timeoutMs: 18_000, maxQueueMs: 500 },
     cerebras: { rpm: 5, tpm: 30_000, rpd: 1_000, tpd: 1_000_000, maxConcurrency: 2, timeoutMs: 12_000, maxQueueMs: 500 },
 };
-const weights = { gemini: 57, groq: 18, cloudflare: 12, mistral: 8, openrouter: 5, cerebras: 4 };
+const weights = { gemini: 57, groq: 18, nvidia: 14, cloudflare: 12, mistral: 8, openrouter: 5, cerebras: 4 };
 const candidates = Object.keys(policies).map((provider) => ({
     key: `${provider}:load-model`,
     provider,

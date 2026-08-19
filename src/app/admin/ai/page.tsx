@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_GEMINI_LITE_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from "@/lib/aiModels";
 
-type ProviderKey = "gemini" | "groq" | "cloudflare" | "mistral" | "openrouter" | "cerebras" | "custom";
+type ProviderKey = "gemini" | "groq" | "nvidia" | "cloudflare" | "mistral" | "openrouter" | "cerebras" | "custom";
 type SaveState = "loading" | "idle" | "saving" | "saved" | "error";
 
 type AiSettings = {
@@ -11,6 +11,7 @@ type AiSettings = {
     openrouterApiKeyMasked: string; openrouterApiKeySaved: boolean; openrouterApiKeySource: string;
     geminiApiKeyMasked: string; geminiApiKeySaved: boolean; geminiApiKeySource: string;
     groqApiKeyMasked: string; groqApiKeySaved: boolean; groqApiKeySource: string;
+    nvidiaApiKeyMasked: string; nvidiaApiKeySaved: boolean; nvidiaApiKeySource: string;
     mistralApiKeyMasked: string; mistralApiKeySaved: boolean; mistralApiKeySource: string;
     cerebrasApiKeyMasked: string; cerebrasApiKeySaved: boolean; cerebrasApiKeySource: string;
     cloudflareApiTokenMasked: string; cloudflareApiTokenSaved: boolean; cloudflareApiTokenSource: string;
@@ -22,7 +23,7 @@ type AiSettings = {
     openrouterBaseUrl: string; openrouterReferer: string; openrouterTitle: string;
     openrouterStrategyModel: string; openrouterDraftModel: string; openrouterReviewModel: string; openrouterEvaluatorModel: string;
     geminiStrategyModel: string; geminiDraftModel: string; geminiReviewModel: string; geminiEvaluatorModel: string;
-    groqModel: string; groqStarterModel: string; mistralModel: string; cerebrasModel: string; cloudflareModel: string;
+    groqModel: string; groqStarterModel: string; nvidiaModel: string; mistralModel: string; cerebrasModel: string; cloudflareModel: string;
     cloudflareAccountId: string; customBaseUrl: string; customModel: string; customTiers: string; customWeight: number;
     fishAudioEnabled: boolean; fishAudioVoiceId: string; fishAudioModel: string;
     fishAudioFrequencyPercent: number; fishAudioCooldownMinutes: number; fishAudioMaxChars: number;
@@ -32,10 +33,11 @@ type AiEvent = { at: string; role: string; provider: string; model: string; stat
 type AiStat = { role: string; provider: string; model: string; success?: number; error?: number; skipped?: number };
 type RouterSnapshot = { key: string; inFlight: number; minuteRequests: number; minuteTokens: number; successes: number; failures: number; cooldownMs: number; ewmaLatencyMs: number; lastFailureKind?: string | null };
 
-const PROVIDER_ORDER: ProviderKey[] = ["gemini", "groq", "cloudflare", "mistral", "openrouter", "cerebras", "custom"];
+const PROVIDER_ORDER: ProviderKey[] = ["gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"];
 const PROVIDER_INFO: Record<ProviderKey, { label: string; short: string; description: string; keyUrl: string; keyLabel: string; color: string }> = {
     gemini: { label: "Google Gemini", short: "Principal + visão", description: "Melhor rota geral. Também analisa as fotos enviadas pelos leads.", keyUrl: "https://aistudio.google.com/apikey", keyLabel: "Pegar chave no Google AI Studio", color: "from-blue-400 to-cyan-300" },
     groq: { label: "Groq", short: "Muito rápido", description: "Absorve conversas de texto com baixa latência e reduz a carga do Gemini.", keyUrl: "https://console.groq.com/keys", keyLabel: "Pegar chave na Groq", color: "from-orange-400 to-amber-300" },
+    nvidia: { label: "NVIDIA NIM", short: "Modelos hospedados", description: "Rota oficial NVIDIA com modelos rápidos para distribuir as conversas e aliviar os provedores principais.", keyUrl: "https://build.nvidia.com/settings/api-keys", keyLabel: "Pegar chave na NVIDIA", color: "from-lime-400 to-green-300" },
     cloudflare: { label: "Cloudflare Workers AI", short: "Reserva barata", description: "Boa capacidade diária para o cérebro econômico dos primeiros contatos.", keyUrl: "https://dash.cloudflare.com/profile/api-tokens", keyLabel: "Criar token na Cloudflare", color: "from-amber-400 to-yellow-200" },
     mistral: { label: "Mistral", short: "Fallback oficial", description: "Rota oficial adicional quando os provedores principais estiverem cheios.", keyUrl: "https://console.mistral.ai/api-keys", keyLabel: "Pegar chave na Mistral", color: "from-red-400 to-orange-300" },
     openrouter: { label: "OpenRouter", short: "Agregador", description: "Última reserva com vários modelos e fallback interno automático.", keyUrl: "https://openrouter.ai/settings/keys", keyLabel: "Pegar chave no OpenRouter", color: "from-violet-400 to-fuchsia-300" },
@@ -47,6 +49,7 @@ const emptySettings: AiSettings = {
     openrouterApiKeyMasked: "", openrouterApiKeySaved: false, openrouterApiKeySource: "missing",
     geminiApiKeyMasked: "", geminiApiKeySaved: false, geminiApiKeySource: "missing",
     groqApiKeyMasked: "", groqApiKeySaved: false, groqApiKeySource: "missing",
+    nvidiaApiKeyMasked: "", nvidiaApiKeySaved: false, nvidiaApiKeySource: "missing",
     mistralApiKeyMasked: "", mistralApiKeySaved: false, mistralApiKeySource: "missing",
     cerebrasApiKeyMasked: "", cerebrasApiKeySaved: false, cerebrasApiKeySource: "missing",
     cloudflareApiTokenMasked: "", cloudflareApiTokenSaved: false, cloudflareApiTokenSource: "missing",
@@ -58,7 +61,7 @@ const emptySettings: AiSettings = {
     openrouterBaseUrl: "https://openrouter.ai/api/v1", openrouterReferer: "", openrouterTitle: "Lari Telegram Bot",
     openrouterStrategyModel: DEFAULT_OPENROUTER_MODEL, openrouterDraftModel: DEFAULT_OPENROUTER_MODEL, openrouterReviewModel: DEFAULT_OPENROUTER_MODEL, openrouterEvaluatorModel: DEFAULT_OPENROUTER_MODEL,
     geminiStrategyModel: DEFAULT_GEMINI_LITE_MODEL, geminiDraftModel: DEFAULT_GEMINI_MODEL, geminiReviewModel: DEFAULT_GEMINI_MODEL, geminiEvaluatorModel: DEFAULT_GEMINI_LITE_MODEL,
-    groqModel: "openai/gpt-oss-120b", groqStarterModel: "llama-3.1-8b-instant", mistralModel: "mistral-small-latest", cerebrasModel: "gpt-oss-120b", cloudflareModel: "@cf/openai/gpt-oss-20b",
+    groqModel: "openai/gpt-oss-120b", groqStarterModel: "llama-3.1-8b-instant", nvidiaModel: "meta/llama-3.1-8b-instruct", mistralModel: "mistral-small-latest", cerebrasModel: "gpt-oss-120b", cloudflareModel: "@cf/openai/gpt-oss-20b",
     cloudflareAccountId: "", customBaseUrl: "", customModel: "auto", customTiers: "starter,buyer", customWeight: 5,
     fishAudioEnabled: false, fishAudioVoiceId: "24522123b5804bf691a8450d9187f03e", fishAudioModel: "s2.1-pro-free",
     fishAudioFrequencyPercent: 18, fishAudioCooldownMinutes: 30, fishAudioMaxChars: 240,
@@ -74,6 +77,7 @@ const parseOrder = (value: unknown): ProviderKey[] => {
 const providerSecretMeta = (settings: AiSettings, provider: ProviderKey) => {
     if (provider === "gemini") return { masked: settings.geminiApiKeyMasked, saved: settings.geminiApiKeySaved, source: settings.geminiApiKeySource, payload: "geminiApiKey" };
     if (provider === "groq") return { masked: settings.groqApiKeyMasked, saved: settings.groqApiKeySaved, source: settings.groqApiKeySource, payload: "groqApiKey" };
+    if (provider === "nvidia") return { masked: settings.nvidiaApiKeyMasked, saved: settings.nvidiaApiKeySaved, source: settings.nvidiaApiKeySource, payload: "nvidiaApiKey" };
     if (provider === "cloudflare") return { masked: settings.cloudflareApiTokenMasked, saved: settings.cloudflareApiTokenSaved, source: settings.cloudflareApiTokenSource, payload: "cloudflareApiToken" };
     if (provider === "mistral") return { masked: settings.mistralApiKeyMasked, saved: settings.mistralApiKeySaved, source: settings.mistralApiKeySource, payload: "mistralApiKey" };
     if (provider === "openrouter") return { masked: settings.openrouterApiKeyMasked, saved: settings.openrouterApiKeySaved, source: settings.openrouterApiKeySource, payload: "openrouterApiKey" };
@@ -84,6 +88,7 @@ const providerSecretMeta = (settings: AiSettings, provider: ProviderKey) => {
 const providerModelMeta = (settings: AiSettings, provider: ProviderKey) => {
     if (provider === "gemini") return { field: "geminiDraftModel", value: settings.geminiDraftModel, label: "Modelo da Lari" };
     if (provider === "groq") return { field: "groqStarterModel", value: settings.groqStarterModel, label: "Modelo econômico" };
+    if (provider === "nvidia") return { field: "nvidiaModel", value: settings.nvidiaModel, label: "Modelo" };
     if (provider === "cloudflare") return { field: "cloudflareModel", value: settings.cloudflareModel, label: "Modelo" };
     if (provider === "mistral") return { field: "mistralModel", value: settings.mistralModel, label: "Modelo" };
     if (provider === "openrouter") return { field: "openrouterDraftModel", value: settings.openrouterDraftModel, label: "Modelo principal" };
@@ -203,6 +208,7 @@ export default function AdminAiPage() {
                     apiKey: secretDrafts[provider] || "",
                     accountId: settings.cloudflareAccountId,
                     baseUrl: settings.customBaseUrl,
+                    model: providerModelMeta(settings, provider).value,
                 }),
             });
             const data = await response.json();

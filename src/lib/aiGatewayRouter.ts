@@ -84,6 +84,10 @@ const providerDefaults = (provider: string, model: string): GatewayRatePolicy =>
         };
     }
 
+    if (normalizedProvider === 'nvidia') {
+        return { rpm: 20, tpm: 120_000, rpd: 2_000, tpd: 2_000_000, maxConcurrency: 4, timeoutMs: 16_000, maxQueueMs: 2_400 };
+    }
+
     if (normalizedProvider === 'openrouter') {
         return { rpm: 18, tpm: 200_000, rpd: 50, tpd: 2_000_000, maxConcurrency: 3, timeoutMs: 18_000, maxQueueMs: 2_200 };
     }

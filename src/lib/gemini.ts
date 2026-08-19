@@ -1290,7 +1290,7 @@ const parseRetryAfterMs = (value: string | null) => {
 };
 
 type AiRole = "strategy" | "draft" | "review" | "evaluator";
-type AiProvider = "openrouter" | "gemini" | "groq" | "mistral" | "cerebras" | "cloudflare" | "custom";
+type AiProvider = "openrouter" | "gemini" | "groq" | "nvidia" | "mistral" | "cerebras" | "cloudflare" | "custom";
 
 type AiGatewayConfig = {
     provider: AiProvider;
@@ -1360,6 +1360,8 @@ const AI_SETTING_KEYS = [
     "groq_api_key",
     "groq_model",
     "groq_starter_model",
+    "nvidia_api_key",
+    "nvidia_model",
     "mistral_api_key",
     "mistral_model",
     "cerebras_api_key",
@@ -1382,7 +1384,7 @@ const ROLE_ENV_KEYS: Record<AiRole, string> = {
     evaluator: "AI_EVALUATOR_MODEL_ORDER",
 };
 
-const DEFAULT_PROVIDER_ORDER = "gemini,groq,cloudflare,mistral,openrouter,cerebras,custom";
+const DEFAULT_PROVIDER_ORDER = "gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom";
 const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
     strategy: DEFAULT_OPENROUTER_MODEL,
     draft: DEFAULT_OPENROUTER_MODEL,
@@ -1467,6 +1469,21 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>): AiGatewayC
         },
         tiers: ['buyer', 'premium', 'elite'],
         weight: 18,
+    });
+
+    const nvidiaModel = configured('nvidia_model', 'NVIDIA_DRAFT_MODEL', 'meta/llama-3.1-8b-instruct');
+    addProvider({
+        provider: 'nvidia',
+        apiKey: configured('nvidia_api_key', 'NVIDIA_API_KEY'),
+        baseUrl: process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
+        models: {
+            strategy: process.env.NVIDIA_STRATEGY_MODEL || nvidiaModel,
+            draft: nvidiaModel,
+            review: process.env.NVIDIA_REVIEW_MODEL || nvidiaModel,
+            evaluator: process.env.NVIDIA_EVALUATOR_MODEL || nvidiaModel,
+        },
+        tiers: ['starter', 'buyer', 'premium', 'elite'],
+        weight: 14,
     });
 
     const mistralModel = configured('mistral_model', 'MISTRAL_DRAFT_MODEL', 'mistral-small-latest');
@@ -1600,7 +1617,7 @@ const parseAiModelEntry = (entry: string, role: AiRole, settings: AiRuntimeSetti
         const model = getRoleProviderModel(role, provider, settings);
         return { provider, model, label: `${provider}:${model}` };
     }
-    if (["groq", "mistral", "cerebras", "cloudflare", "custom"].includes(providerOnly)) return null;
+    if (["groq", "nvidia", "mistral", "cerebras", "cloudflare", "custom"].includes(providerOnly)) return null;
 
     const providerMatch = trimmed.match(/^(openrouter|gemini):(.+)$/i);
     if (!providerMatch) {
@@ -1622,7 +1639,7 @@ const parseAiModelOrder = (value: string | null | undefined, role: AiRole, setti
 };
 
 const parseProviderPreference = (value: string | null | undefined) => {
-    const supported: AiProvider[] = ['gemini', 'groq', 'cloudflare', 'mistral', 'openrouter', 'cerebras', 'custom'];
+    const supported: AiProvider[] = ['gemini', 'groq', 'nvidia', 'cloudflare', 'mistral', 'openrouter', 'cerebras', 'custom'];
     const parsed = String(value || '')
         .split(',')
         .map((entry) => entry.trim().toLowerCase().split(':')[0] as AiProvider)

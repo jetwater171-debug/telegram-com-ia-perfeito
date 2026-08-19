@@ -10,14 +10,14 @@ import {
 import { DEFAULT_FISH_AUDIO_SETTINGS, normalizeFishAudioModel } from "@/lib/fishAudio";
 import { aiGatewayRouter } from "@/lib/aiGatewayRouter";
 
-const PROVIDERS = ["gemini", "groq", "cloudflare", "mistral", "openrouter", "cerebras", "custom"] as const;
+const PROVIDERS = ["gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"] as const;
 type ProviderKey = typeof PROVIDERS[number];
 
 const CONFIG_KEYS = [
-    "openrouter_api_key", "gemini_api_key", "groq_api_key", "mistral_api_key", "cerebras_api_key",
+    "openrouter_api_key", "gemini_api_key", "groq_api_key", "nvidia_api_key", "mistral_api_key", "cerebras_api_key",
     "cloudflare_ai_api_token", "cloudflare_account_id", "ai_custom_gateway_api_key", "ai_custom_gateway_base_url",
     "ai_custom_gateway_model", "ai_custom_gateway_tiers", "ai_custom_gateway_weight",
-    "groq_model", "groq_starter_model", "mistral_model", "cerebras_model", "cloudflare_model",
+    "groq_model", "groq_starter_model", "nvidia_model", "mistral_model", "cerebras_model", "cloudflare_model",
     "openrouter_base_url", "openrouter_referer", "openrouter_title",
     "ai_model_order", "ai_strategy_model_order", "ai_draft_model_order", "ai_review_model_order", "ai_evaluator_model_order",
     "ai_strategy_enabled", "ai_review_enabled", "ai_evaluator_enabled", "ai_shared_rate_limit_enabled",
@@ -43,6 +43,7 @@ const DEFAULTS = {
     gemini_evaluator_model: normalizeGeminiModelName(process.env.GEMINI_EVALUATOR_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_LITE_MODEL),
     groq_model: process.env.GROQ_DRAFT_MODEL || "openai/gpt-oss-120b",
     groq_starter_model: process.env.GROQ_STARTER_MODEL || "llama-3.1-8b-instant",
+    nvidia_model: process.env.NVIDIA_DRAFT_MODEL || "meta/llama-3.1-8b-instruct",
     mistral_model: process.env.MISTRAL_DRAFT_MODEL || "mistral-small-latest",
     cerebras_model: process.env.CEREBRAS_DRAFT_MODEL || "gpt-oss-120b",
     cloudflare_model: process.env.CLOUDFLARE_DRAFT_MODEL || "@cf/openai/gpt-oss-20b",
@@ -101,6 +102,7 @@ const buildSettings = (map: Record<string, string>) => {
     const openrouter = secretState(map, "openrouter_api_key", "OPENROUTER_API_KEY");
     const gemini = secretState(map, "gemini_api_key", "GEMINI_API_KEY");
     const groq = secretState(map, "groq_api_key", "GROQ_API_KEY");
+    const nvidia = secretState(map, "nvidia_api_key", "NVIDIA_API_KEY");
     const mistral = secretState(map, "mistral_api_key", "MISTRAL_API_KEY");
     const cerebras = secretState(map, "cerebras_api_key", "CEREBRAS_API_KEY");
     const cloudflare = secretState(map, "cloudflare_ai_api_token", "CLOUDFLARE_AI_API_TOKEN");
@@ -111,6 +113,7 @@ const buildSettings = (map: Record<string, string>) => {
         openrouterApiKeyMasked: openrouter.masked, openrouterApiKeySaved: openrouter.saved, openrouterApiKeySource: openrouter.source,
         geminiApiKeyMasked: gemini.masked, geminiApiKeySaved: gemini.saved, geminiApiKeySource: gemini.source,
         groqApiKeyMasked: groq.masked, groqApiKeySaved: groq.saved, groqApiKeySource: groq.source,
+        nvidiaApiKeyMasked: nvidia.masked, nvidiaApiKeySaved: nvidia.saved, nvidiaApiKeySource: nvidia.source,
         mistralApiKeyMasked: mistral.masked, mistralApiKeySaved: mistral.saved, mistralApiKeySource: mistral.source,
         cerebrasApiKeyMasked: cerebras.masked, cerebrasApiKeySaved: cerebras.saved, cerebrasApiKeySource: cerebras.source,
         cloudflareApiTokenMasked: cloudflare.masked, cloudflareApiTokenSaved: cloudflare.saved, cloudflareApiTokenSource: cloudflare.source,
@@ -126,6 +129,7 @@ const buildSettings = (map: Record<string, string>) => {
         customWeight: Number(map.ai_custom_gateway_weight || process.env.AI_CUSTOM_GATEWAY_WEIGHT || 5),
         groqModel: map.groq_model || DEFAULTS.groq_model,
         groqStarterModel: map.groq_starter_model || DEFAULTS.groq_starter_model,
+        nvidiaModel: map.nvidia_model || DEFAULTS.nvidia_model,
         mistralModel: map.mistral_model || DEFAULTS.mistral_model,
         cerebrasModel: map.cerebras_model || DEFAULTS.cerebras_model,
         cloudflareModel: map.cloudflare_model || DEFAULTS.cloudflare_model,
@@ -194,6 +198,7 @@ export async function POST(req: NextRequest) {
             { key: "gemini_evaluator_model", value: normalizeGeminiModelName(body.geminiEvaluatorModel, DEFAULTS.gemini_evaluator_model) },
             { key: "groq_model", value: cleanText(body.groqModel, DEFAULTS.groq_model) },
             { key: "groq_starter_model", value: cleanText(body.groqStarterModel, DEFAULTS.groq_starter_model) },
+            { key: "nvidia_model", value: cleanText(body.nvidiaModel, DEFAULTS.nvidia_model) },
             { key: "mistral_model", value: cleanText(body.mistralModel, DEFAULTS.mistral_model) },
             { key: "cerebras_model", value: cleanText(body.cerebrasModel, DEFAULTS.cerebras_model) },
             { key: "cloudflare_model", value: cleanText(body.cloudflareModel, DEFAULTS.cloudflare_model) },
@@ -213,6 +218,7 @@ export async function POST(req: NextRequest) {
         const secretInputs: Array<[string, unknown]> = [
             ["openrouter_api_key", body.openrouterApiKey], ["gemini_api_key", body.geminiApiKey],
             ["groq_api_key", body.groqApiKey], ["mistral_api_key", body.mistralApiKey],
+            ["nvidia_api_key", body.nvidiaApiKey],
             ["cerebras_api_key", body.cerebrasApiKey], ["cloudflare_ai_api_token", body.cloudflareApiToken],
             ["ai_custom_gateway_api_key", body.customApiKey], ["fish_audio_api_key", body.fishAudioApiKey],
         ];
@@ -251,6 +257,7 @@ export async function PUT(req: NextRequest) {
         } else {
             const config = {
                 groq: { key: readSecret(body.apiKey) || readSecret(map.groq_api_key) || readSecret(process.env.GROQ_API_KEY), base: "https://api.groq.com/openai/v1" },
+                nvidia: { key: readSecret(body.apiKey) || readSecret(map.nvidia_api_key) || readSecret(process.env.NVIDIA_API_KEY), base: "https://integrate.api.nvidia.com/v1" },
                 mistral: { key: readSecret(body.apiKey) || readSecret(map.mistral_api_key) || readSecret(process.env.MISTRAL_API_KEY), base: "https://api.mistral.ai/v1" },
                 cerebras: { key: readSecret(body.apiKey) || readSecret(map.cerebras_api_key) || readSecret(process.env.CEREBRAS_API_KEY), base: "https://api.cerebras.ai/v1" },
                 cloudflare: { key: readSecret(body.apiKey) || readSecret(map.cloudflare_ai_api_token) || readSecret(process.env.CLOUDFLARE_AI_API_TOKEN), base: "" },
@@ -261,6 +268,13 @@ export async function PUT(req: NextRequest) {
                 const accountId = cleanText(body.accountId || map.cloudflare_account_id || process.env.CLOUDFLARE_ACCOUNT_ID);
                 if (!accountId) throw new Error("informe o Account ID da Cloudflare");
                 response = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search`, { headers: { Authorization: `Bearer ${config.key}` } });
+            } else if (provider === "nvidia") {
+                const model = cleanText(body.model || map.nvidia_model || DEFAULTS.nvidia_model);
+                response = await fetchWithTimeout(`${config.base}/chat/completions`, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${config.key}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({ model, messages: [{ role: "user", content: "Responda apenas OK" }], max_tokens: 2, temperature: 0 }),
+                });
             } else {
                 if (!config.base) throw new Error("informe a URL base do gateway");
                 response = await fetchWithTimeout(`${config.base}/models`, { headers: { Authorization: `Bearer ${config.key}` } });

@@ -55,6 +55,11 @@ const candidate = (key, weight = 10, overrides = {}) => ({
     assert.equal(groqInstant.rpd, 14_400);
     const groqOverride = resolveGatewayRatePolicy('groq', 'llama-3.1-8b-instant', { GROQ_GATEWAY_RPM: '17' });
     assert.equal(groqOverride.rpm, 17);
+    const nvidia = resolveGatewayRatePolicy('nvidia', 'meta/llama-3.1-8b-instruct', {});
+    assert.equal(nvidia.rpm, 20);
+    assert.equal(nvidia.maxConcurrency, 4);
+    const nvidiaOverride = resolveGatewayRatePolicy('nvidia', 'meta/llama-3.1-8b-instruct', { NVIDIA_GATEWAY_RPM: '11' });
+    assert.equal(nvidiaOverride.rpm, 11);
 
     const fallbackRouter = new AdaptiveGatewayRouter();
     const first = candidate('primary:model', 20, { maxConcurrency: 1 });
@@ -92,7 +97,7 @@ const candidate = (key, weight = 10, overrides = {}) => ({
         (error) => error instanceof GatewayCapacityError,
     );
 
-    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 concurrency=1 rpm=1 circuit=1 env_limits=1');
+    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 concurrency=1 rpm=1 circuit=1 env_limits=1 nvidia=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

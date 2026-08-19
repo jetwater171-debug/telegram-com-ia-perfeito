@@ -36,12 +36,12 @@ A memória por lead guarda fatos confirmados, assuntos pendentes, tom, desejos, 
 
 1. Gemini AI Studio: melhor rota geral e obrigatória para visão; a cota real varia por modelo e projeto.
 2. Groq: maior volume gratuito previsível para texto curto e baixa latência; o limite diário de tokens pesa antes do RPD nos modelos grandes.
-3. Cloudflare Workers AI: 10.000 neurons/dia e bom encaixe para o primeiro cérebro barato.
-4. Mistral Free mode: API oficial sem cartão, boa reserva; a cota exata aparece por organização no painel.
-5. OpenRouter: ótimo agregador/fallback, mas o free puro é baixo (50 req/dia; 1.000/dia depois de adicionar US$ 10 em créditos).
-6. Cerebras: muito rápido, porém hoje é trial de US$ 5/30 dias, não uma franquia grátis renovável.
-7. GitHub Models e Hugging Face: úteis para protótipo e avaliação, não para o caminho principal do bot.
-8. NVIDIA NIM, AwanLLM e self-host com vLLM/Ollama: entram depois de um teste real de conta, preço, licença e latência; self-host é a única rota de volume realmente controlável.
+3. NVIDIA NIM: rota oficial hospedada e OpenAI-compatible para desenvolvimento, ativada somente quando a chave NVIDIA existe.
+4. Cloudflare Workers AI: 10.000 neurons/dia e bom encaixe para o primeiro cérebro barato.
+5. Mistral Free mode: API oficial sem cartão, boa reserva; a cota exata aparece por organização no painel.
+6. OpenRouter: ótimo agregador/fallback, mas o free puro é baixo (50 req/dia; 1.000/dia depois de adicionar US$ 10 em créditos).
+7. Cerebras: muito rápido, porém hoje é trial de US$ 5/30 dias, não uma franquia grátis renovável.
+8. GitHub Models, Hugging Face, AwanLLM e self-host com vLLM/Ollama: entram depois de teste real de conta, preço, licença e latência; self-host é a única rota de volume realmente controlável.
 
 **Laboratório isolado:** FreeLLMAPI, OmniRoute/9Router, AI-Worker-Proxy, GeminiHydra e outros gateways OpenAI-compatible podem usar `AI_CUSTOM_GATEWAY_*` quando rodam em infraestrutura e chaves próprias. Eles agregam fallback, mas não criam cota nova.
 
@@ -54,13 +54,13 @@ OPENROUTER_API_KEY=sk-or-...
 OPENROUTER_REFERER=https://seu-dominio.com
 OPENROUTER_TITLE=Lari Telegram Bot
 
-# Ordem de provedores. O multi-IA e entre OpenRouter e Gemini.
-AI_MODEL_ORDER=openrouter,gemini
+# Ordem de provedores. Provedor sem chave e ignorado automaticamente.
+AI_MODEL_ORDER=gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom
 
 # Ordens por etapa, opcionais.
-AI_STRATEGY_MODEL_ORDER=openrouter,gemini
-AI_DRAFT_MODEL_ORDER=openrouter,gemini
-AI_REVIEW_MODEL_ORDER=openrouter,gemini
+AI_STRATEGY_MODEL_ORDER=gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom
+AI_DRAFT_MODEL_ORDER=gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom
+AI_REVIEW_MODEL_ORDER=gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom
 
 # Modelos usados dentro de cada provedor.
 OPENROUTER_DRAFT_MODEL=z-ai/glm-4.5-air:free
@@ -69,6 +69,8 @@ GEMINI_DRAFT_MODEL=gemini-3.6-flash
 # Provedores oficiais diretos opcionais. So entram quando a respectiva chave existe.
 GROQ_API_KEY=gsk_...
 GROQ_DRAFT_MODEL=openai/gpt-oss-120b
+NVIDIA_API_KEY=nvapi-...
+NVIDIA_DRAFT_MODEL=meta/llama-3.1-8b-instruct
 MISTRAL_API_KEY=...
 MISTRAL_DRAFT_MODEL=mistral-small-latest
 CEREBRAS_API_KEY=...
@@ -107,6 +109,8 @@ GEMINI_GATEWAY_RPM=10
 GEMINI_GATEWAY_TPM=250000
 GROQ_GATEWAY_RPM=30
 GROQ_GATEWAY_TPM=6000
+NVIDIA_GATEWAY_RPM=20
+NVIDIA_GATEWAY_CONCURRENCY=4
 CLOUDFLARE_GATEWAY_CONCURRENCY=6
 AI_SHARED_RATE_LIMIT_ENABLED=true
 ```
