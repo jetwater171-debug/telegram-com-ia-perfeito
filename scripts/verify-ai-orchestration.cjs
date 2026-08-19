@@ -33,6 +33,7 @@ assert.equal(starter.separateStrategy, true);
 assert.equal(starter.reviewMode, 'critical');
 assert.equal(starter.evaluator, false);
 assert.equal(starter.historyMessageLimit, 80);
+assert.equal(starter.historyMaxEntries, 80);
 assert.equal(shouldRunAiReview(starter, true), true);
 
 assert.equal(resolveAiOrchestrationPlan(AI_ORCHESTRATION_THRESHOLDS.buyer - 0.01).tier, 'starter');
@@ -40,6 +41,7 @@ assert.equal(resolveAiOrchestrationPlan(AI_ORCHESTRATION_THRESHOLDS.buyer - 0.01
 const buyer = resolveAiOrchestrationPlan(AI_ORCHESTRATION_THRESHOLDS.buyer);
 assert.equal(buyer.tier, 'buyer');
 assert.equal(buyer.separateStrategy, true);
+assert.equal(buyer.historyMaxEntries, 80);
 assert.equal(shouldRunAiReview(buyer, false), false);
 assert.equal(shouldRunAiReview(buyer, true), true);
 
@@ -47,11 +49,13 @@ const premium = resolveAiOrchestrationPlan(AI_ORCHESTRATION_THRESHOLDS.premium);
 assert.equal(premium.tier, 'premium');
 assert.equal(shouldRunAiReview(premium, false), true);
 assert.equal(premium.evaluator, false);
+assert.equal(premium.historyMaxEntries, 100);
 
 const elite = resolveAiOrchestrationPlan(AI_ORCHESTRATION_THRESHOLDS.elite);
 assert.equal(elite.tier, 'elite');
 assert.equal(elite.evaluator, true);
 assert.equal(elite.historyMessageLimit, 120);
+assert.equal(elite.historyMaxEntries, 120);
 
 const vipPriceQuestion = evaluateSalesTiming({ userText: 'quanto custa o vip?' });
 assert.equal(vipPriceQuestion.activeProduct, 'vip');

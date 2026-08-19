@@ -1769,7 +1769,16 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         lastBotContent
     });
     const relationshipStageBeforeTurn = String(leadMemory.relationship_stage || 'new').trim().toLowerCase();
-    if (!relationshipStageBeforeTurn || relationshipStageBeforeTurn === 'new' || relationshipStageBeforeTurn === 'unknown') {
+    const episodeStartedAtMs = Date.parse(String(leadMemory.metadata?.conversation_started_at || ''));
+    const episodeLeadTurns = Number.isFinite(episodeStartedAtMs)
+        ? recentSalesHistory.filter((message: any) => message.sender === 'user'
+            && Date.parse(String(message.created_at || '')) >= episodeStartedAtMs).length
+        : Number.POSITIVE_INFINITY;
+    const isEarlyConversationEpisode = isConversationStart || episodeLeadTurns <= 3;
+    if (!relationshipStageBeforeTurn
+        || relationshipStageBeforeTurn === 'new'
+        || relationshipStageBeforeTurn === 'unknown'
+        || isEarlyConversationEpisode) {
         safeMessages = refineNewRelationshipMessages(safeMessages, {
             userText: userOnlyText,
             lastBotContent,

@@ -55,8 +55,9 @@ const eightyMessages = Array.from({ length: 80 }, (_, index) => ({
     sender: index % 2 === 0 ? 'user' : 'bot',
     content: `mensagem ${index + 1} com contexto real`,
 }));
-const cleanHistory = buildCleanAiHistory(eightyMessages, 1_100, 44, 16_000);
-assert.equal(cleanHistory.length, 44);
+const cleanHistory = buildCleanAiHistory(eightyMessages, 1_100, 80, 24_000);
+assert.equal(cleanHistory.length, 80);
+assert.match(cleanHistory[0].parts[0].text, /mensagem 1/);
 assert.match(cleanHistory.at(-1).parts[0].text, /mensagem 80/);
 
 const geminiSource = fs.readFileSync(path.resolve(__dirname, '../src/lib/gemini.ts'), 'utf8');
@@ -65,6 +66,9 @@ assert.match(geminiSource, /NÚCLEO HUMANO QUE VALE EM QUALQUER SITUAÇÃO/);
 assert.match(geminiSource, /INTELIGÊNCIA SOCIAL POR TRÁS DA LARI/);
 assert.match(geminiSource, /revisão silenciosa/);
 assert.match(geminiSource, /filterConversationEpisodeMessages/);
+assert.match(geminiSource, /Mensagens do lead neste episodio/);
+assert.match(geminiSource, /isNewRelationship/);
 assert.match(processSource, /refineNewRelationshipMessages/);
+assert.match(processSource, /isEarlyConversationEpisode/);
 
 console.log('CONVERSATION_BRAIN_OK history=80 separate_brain=1 episode_reset=1 first_contact=1 persona=1 self_review=1');

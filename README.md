@@ -20,15 +20,15 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 O bot usa um gateway com fallback por provedor e inteligencia progressiva por valor confirmado:
 
-1. **Starter (R$ 0–19,89):** uma chamada econômica reúne leitura, memória e escrita da Lari.
+1. **Starter (R$ 0–19,89):** cérebro geral econômico separado + Lari; revisão extra em risco de começo estranho, PIX, mídia ou baixa confiança.
 2. **Buyer (R$ 19,90–99,99):** cérebro central separado + Lari; revisão extra apenas em PIX, baixa confiança, começo estranho ou encontro.
 3. **Premium (R$ 100–199,99):** cérebro + Lari + revisão em todos os turnos, com janela de contexto maior.
-4. **Elite (R$ 200+):** cérebro + Lari + revisão + avaliadora final, com até 100 mensagens recentes consultadas e memória persistente.
+4. **Elite (R$ 200+):** cérebro + Lari + revisão + avaliadora final, com até 120 mensagens recentes consultadas e memória persistente.
 5. **Backend:** continua sendo a autoridade para preço, aceite, PIX, deduplicação e entrega de mídia em todos os níveis.
 
 O VIP possui preço único de **R$ 19,90**. Foto, vídeo, áudio personalizado, chamada e demais produtos seguem a oferta adaptativa do pedido real do lead. O aumento de inteligência melhora continuidade e atendimento; não libera pressão por vulnerabilidade emocional ou financeira.
 
-A memória por lead guarda fatos confirmados, assuntos pendentes, tom, desejos, produtos, recusas e objeções. O histórico enviado ao modelo é limitado à janela recente; a memória preserva a continuidade sem reenviar a conversa inteira.
+A memória por lead guarda fatos confirmados, assuntos pendentes, tom, desejos, produtos, recusas e objeções. Starter e Buyer consultam até 80 mensagens recentes, Premium até 100 e Elite até 120. Cada `/start` abre um episódio novo: fatos úteis continuam privados na memória, mas falas íntimas, ofertas e ganchos da conversa anterior não voltam para o novo primeiro contato.
 
 ### Ranking operacional de provedores
 

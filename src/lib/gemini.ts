@@ -2268,7 +2268,11 @@ const mergeBrainAndDraftMemory = (brainPatch: any, draftPatch: any) => {
 
 const makeLocalFallbackResponse = (
     message: string,
-    context?: { currentStats?: LeadStats | null },
+    context?: {
+        currentStats?: LeadStats | null;
+        leadMemory?: any;
+        isConversationStart?: boolean;
+    },
     media?: { mimeType: string, data: string }
 ): AIResponse => {
     const text = (message || '').toLowerCase();
@@ -2284,7 +2288,9 @@ const makeLocalFallbackResponse = (
     const wantsPrice = !wantsMedia && /\b(quanto custa|qual o valor|qual o preco|qual o preço|quanto e|quanto é|fica quanto|quero comprar|como faco pra comprar|como faço pra comprar)\b/i.test(text);
     const isSexual = /\b(nude|nudes|pelada|nua|bunda|peito|peitos|pau|buceta|gozar|tes[aã]o|safada|putaria|comer|chupar|meter)\b/i.test(text);
     const noMoney = !wantsMedia && /\b(caro|sem dinheiro|so tenho|só tenho|liso|desconto|faz por)\b/i.test(text);
-    if (/\/(?:start)\b/i.test(text)) {
+    const relationshipStage = String(context?.leadMemory?.relationship_stage || 'new').trim().toLowerCase();
+    const isNewRelationship = !relationshipStage || relationshipStage === 'new' || relationshipStage === 'unknown';
+    if (context?.isConversationStart || /\/(?:start)\b/i.test(text)) {
         return {
             internal_thought: "Fallback local: abertura leve, sem intimidade precoce.",
             lead_classification: "desconhecido",
@@ -2346,9 +2352,11 @@ const makeLocalFallbackResponse = (
             lead_classification: "desconhecido",
             lead_stats: stats,
             current_state: "CONNECTION",
-            messages: /\b(to bem|tô bem|estou bem|bem e voce|bem e vc)\b/i.test(text)
-                ? ["que bomm kkk", "como foi seu dia?"]
-                : ["oiii, tudo bem?", "como vc se chama?"],
+            messages: isNewRelationship
+                ? (/\b(to bem|tô bem|estou bem|bem e voce|bem e vc)\b/i.test(text)
+                    ? ["que bomm kkk", "como vc se chama?"]
+                    : ["oiii, tudo bem?", "como vc se chama?"])
+                : ["eaii kkk", "me conta, como vc ta?"],
             action: "none",
             extracted_user_name: null,
             audio_transcription: null,
@@ -2449,13 +2457,15 @@ const makeLocalFallbackResponse = (
     return {
         internal_thought: hasAudio
             ? "Fallback local: audio recebido, responder com entusiasmo e sensualidade."
-            : "Fallback local: manter conversa natural, carinhosa e humana.",
+            : "Fallback local: manter conversa natural sem inventar intimidade.",
         lead_classification: "desconhecido",
         lead_stats: stats,
         current_state: "CONNECTION",
         messages: hasAudio
             ? ["ouvi sua voz aqui", "adorei o seu jeitinho de falar comigo", "me deixou com água na boca"]
-            : ["entendii kkk", "e como foi seu dia?"],
+            : isNewRelationship
+                ? ["to te acompanhando", "continua, quero entender direitinho"]
+                : ["entendii kkk", "continua, fiquei curiosa"],
         action: "none",
         extracted_user_name: null,
         audio_transcription: null,
@@ -2589,6 +2599,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         context?.leadMemory?.metadata?.conversation_started_at,
         context?.isConversationStart,
     );
+    const episodeLeadMessageCount = promptMessages.filter((message: any) => message.sender === 'user').length;
 
     const purchaseHistory = (purchasesResult.data || [])
         .filter((message: any) => message?.payment_data?.paid === true
@@ -2647,6 +2658,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 # INTELIGENCIA PROGRESSIVA DESTE LEAD — CONTEXTO INTERNO
 - Nivel: ${orchestration.tier} (${orchestration.label}).
 - Total confirmado: R$ ${orchestration.totalPaid.toFixed(2).replace('.', ',')}.
+- Mensagens do lead neste episodio: ${episodeLeadMessageCount}.
 - Modo: ${orchestration.objective}.
 - O aumento de inteligencia melhora memoria, coerencia, personalizacao e qualidade. Ele nunca autoriza pressao, culpa, urgencia falsa, exploracao de solidao, dificuldade financeira ou dependencia emocional.
 - Depois de uma compra, primeiro confirme entrega e satisfacao. Uma nova oferta so entra quando combinar com um pedido, preferencia ou abertura real do lead.
@@ -2659,7 +2671,7 @@ ${purchaseHistoryText}
     // Agrupa os varios baloes do mesmo turno e garante history valido para o SDK Gemini.
     const cleanHistory = buildCleanAiHistory(
         promptMessages || [],
-        orchestration.tier === 'elite' ? 1_400 : orchestration.tier === 'premium' ? 1_100 : 900,
+        orchestration.tier === 'elite' ? 1_600 : orchestration.tier === 'premium' ? 1_400 : orchestration.tier === 'buyer' ? 1_200 : 1_100,
         orchestration.historyMaxEntries,
         orchestration.historyMaxChars,
     );
@@ -3028,7 +3040,11 @@ Faca a avaliacao final.`
             // Se ate a recuperacao textual falhar, nunca deixe o lead no vacuo.
             if (media?.mimeType?.startsWith('image/')) {
                 console.error('[AI Gateway] Recuperacao de foto esgotada; usando resposta local de emergencia.');
-                return makeLocalFallbackResponse(userMessage, { currentStats }, media);
+                return makeLocalFallbackResponse(userMessage, {
+                    currentStats,
+                    leadMemory: context?.leadMemory,
+                    isConversationStart: context?.isConversationStart,
+                }, media);
             }
 
             // Se esgotou todas as tentativas com todas as IAs reais

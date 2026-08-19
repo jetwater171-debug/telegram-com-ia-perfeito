@@ -40,8 +40,8 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             reviewMode: 'always',
             evaluator: true,
             historyMessageLimit: 120,
-            historyMaxEntries: 64,
-            historyMaxChars: 26_000,
+            historyMaxEntries: 120,
+            historyMaxChars: 44_000,
             promptBlockMaxChars: 20_000,
             objective: 'maxima continuidade, personalizacao e controle de qualidade',
         };
@@ -56,8 +56,8 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             reviewMode: 'always',
             evaluator: false,
             historyMessageLimit: 100,
-            historyMaxEntries: 56,
-            historyMaxChars: 22_000,
+            historyMaxEntries: 100,
+            historyMaxChars: 34_000,
             promptBlockMaxChars: 18_000,
             objective: 'planejamento separado e revisao completa em todo turno',
         };
@@ -72,8 +72,8 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             reviewMode: 'critical',
             evaluator: false,
             historyMessageLimit: 80,
-            historyMaxEntries: 48,
-            historyMaxChars: 18_000,
+            historyMaxEntries: 80,
+            historyMaxChars: 28_000,
             promptBlockMaxChars: 16_000,
             objective: 'cerebro separado para continuidade com revisao nos momentos criticos',
         };
@@ -87,8 +87,8 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
         reviewMode: 'critical',
         evaluator: false,
         historyMessageLimit: 80,
-        historyMaxEntries: 44,
-        historyMaxChars: 16_000,
+        historyMaxEntries: 80,
+        historyMaxChars: 24_000,
         promptBlockMaxChars: 16_000,
         objective: 'cerebro geral barato separado + Lari, com revisao quando a naturalidade estiver em risco',
     };
