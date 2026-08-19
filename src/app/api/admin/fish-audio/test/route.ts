@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
             voiceId: String(body.fishAudioVoiceId || map.fish_audio_voice_id || DEFAULT_FISH_AUDIO_SETTINGS.voiceId),
             model: String(body.fishAudioModel || map.fish_audio_model || DEFAULT_FISH_AUDIO_SETTINGS.model),
         });
-        const plainText = String(body.text || "Oi amor, passei rapidinho pra te mandar um áudio. Como você tá?").slice(0, 240);
+        const plainText = String(body.text || "Oi amor, passei rapidinho pra te mandar um áudio. Como você tá?");
         const expressiveText = buildExpressiveSpeech({ messageText: plainText, userText: plainText, maxChars: 240 });
         const audio = await generateFishAudio({ settings, text: expressiveText });
 

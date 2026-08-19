@@ -7,7 +7,7 @@ import {
     normalizeGeminiModelName,
     normalizeOpenRouterPrimaryModel,
 } from "@/lib/aiModels";
-import { DEFAULT_FISH_AUDIO_SETTINGS } from "@/lib/fishAudio";
+import { DEFAULT_FISH_AUDIO_SETTINGS, normalizeFishAudioModel } from "@/lib/fishAudio";
 
 const CONFIG_KEYS = [
     "openrouter_api_key",
@@ -116,10 +116,10 @@ export async function GET() {
                 fishAudioApiKeySaved: Boolean(readSecret(map.fish_audio_api_key)),
                 fishAudioEnabled: map.fish_audio_enabled === "true",
                 fishAudioVoiceId: map.fish_audio_voice_id || DEFAULT_FISH_AUDIO_SETTINGS.voiceId,
-                fishAudioModel: map.fish_audio_model || DEFAULT_FISH_AUDIO_SETTINGS.model,
+                fishAudioModel: normalizeFishAudioModel(map.fish_audio_model || DEFAULT_FISH_AUDIO_SETTINGS.model),
                 fishAudioFrequencyPercent: Number(map.fish_audio_frequency_percent || DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent),
                 fishAudioCooldownMinutes: Number(map.fish_audio_cooldown_minutes || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes),
-                fishAudioMaxChars: Number(map.fish_audio_max_chars || DEFAULT_FISH_AUDIO_SETTINGS.maxChars),
+                fishAudioMaxChars: Math.min(320, Math.max(60, Number(map.fish_audio_max_chars) || DEFAULT_FISH_AUDIO_SETTINGS.maxChars)),
                 openrouterBaseUrl: map.openrouter_base_url || DEFAULTS.openrouter_base_url,
                 openrouterReferer: map.openrouter_referer || DEFAULTS.openrouter_referer,
                 openrouterTitle: map.openrouter_title || DEFAULTS.openrouter_title,
@@ -173,10 +173,10 @@ export async function POST(req: NextRequest) {
             { key: "gemini_evaluator_model", value: normalizeGeminiModelName(body.geminiEvaluatorModel, DEFAULTS.gemini_evaluator_model) },
             { key: "fish_audio_enabled", value: body.fishAudioEnabled === true ? "true" : "false" },
             { key: "fish_audio_voice_id", value: String(body.fishAudioVoiceId || DEFAULT_FISH_AUDIO_SETTINGS.voiceId).trim() },
-            { key: "fish_audio_model", value: String(body.fishAudioModel || DEFAULT_FISH_AUDIO_SETTINGS.model).trim() },
+            { key: "fish_audio_model", value: normalizeFishAudioModel(body.fishAudioModel || DEFAULT_FISH_AUDIO_SETTINGS.model) },
             { key: "fish_audio_frequency_percent", value: String(Math.min(100, Math.max(1, Number(body.fishAudioFrequencyPercent) || DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent))) },
             { key: "fish_audio_cooldown_minutes", value: String(Math.min(1440, Math.max(1, Number(body.fishAudioCooldownMinutes) || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes))) },
-            { key: "fish_audio_max_chars", value: String(Math.min(500, Math.max(60, Number(body.fishAudioMaxChars) || DEFAULT_FISH_AUDIO_SETTINGS.maxChars))) },
+            { key: "fish_audio_max_chars", value: String(Math.min(320, Math.max(60, Number(body.fishAudioMaxChars) || DEFAULT_FISH_AUDIO_SETTINGS.maxChars))) },
         ];
 
         const openrouterApiKey = String(body.openrouterApiKey || "").trim();

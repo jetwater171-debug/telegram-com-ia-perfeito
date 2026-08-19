@@ -1774,7 +1774,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
 
     let audioSpokenText = '';
     if (userWantsAudio && fishAudioSettings.enabled && fishAudioSettings.apiKey && fishAudioSettings.voiceId) {
-        const combined = outgoingToSend.join('. ').slice(0, fishAudioSettings.maxChars);
+        const combined = outgoingToSend.join('. ');
         if (combined.length >= 8 && !isUnsafeForVoice(combined)) {
             outgoingToSend = [combined];
             preferredAudioIndex = 0;

@@ -15,20 +15,23 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 export const DEFAULT_FISH_AUDIO_SETTINGS: Omit<FishAudioSettings, "apiKey"> = {
     enabled: false,
     voiceId: "24522123b5804bf691a8450d9187f03e",
-    model: "s2.1-pro-free",
+    model: "s2-pro",
     frequencyPercent: 18,
     cooldownMinutes: 30,
-    maxChars: 280,
+    maxChars: 240,
 };
+
+export const normalizeFishAudioModel = (value?: string | null) =>
+    String(value || '').trim().toLowerCase() === 's1' ? 's1' : 's2-pro';
 
 export const normalizeFishAudioSettings = (input: Partial<FishAudioSettings>): FishAudioSettings => ({
     apiKey: String(input.apiKey || "").trim(),
     enabled: input.enabled === true,
     voiceId: String(input.voiceId || DEFAULT_FISH_AUDIO_SETTINGS.voiceId).trim(),
-    model: String(input.model || DEFAULT_FISH_AUDIO_SETTINGS.model).trim(),
+    model: normalizeFishAudioModel(input.model || DEFAULT_FISH_AUDIO_SETTINGS.model),
     frequencyPercent: clamp(Number(input.frequencyPercent) || DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent, 1, 100),
     cooldownMinutes: clamp(Number(input.cooldownMinutes) || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes, 1, 1440),
-    maxChars: clamp(Number(input.maxChars) || DEFAULT_FISH_AUDIO_SETTINGS.maxChars, 60, 500),
+    maxChars: clamp(Number(input.maxChars) || DEFAULT_FISH_AUDIO_SETTINGS.maxChars, 60, 320),
 });
 
 const deterministicPercent = (seed: string) => {
@@ -99,18 +102,40 @@ export const cleanTextForSpeech = (input: string, maxChars = 320) => {
         .trim();
     text = expandChatWriting(text);
     text = text
-        .replace(/\bkk{2,}\b/giu, "ha ha ha")
-        .replace(/\brsrs+\b/giu, "he he")
+        .replace(/\bkk{2,}\b/giu, "haha")
+        .replace(/\brsrs+\b/giu, "hehe")
         .replace(/\bvdd\b/giu, "verdade")
         .replace(/\bbjs\b/giu, "beijos")
         .replace(/\btd\b/giu, "tudo")
         .replace(/\bobg\b/giu, "obrigada");
 
-    text = text.slice(0, maxChars).trim();
-    // Suaviza pontuação para criar pausas respiratórias e sensuais realistas
-    text = text.replace(/([,;])\s*/g, "$1 ... ");
-    text = text.replace(/([.!?])\s*/g, "$1 ... ");
-    if (text && !/[.!?…]$/u.test(text)) text += "...";
+    // Pontuacao normal cria pausas melhores que reticencias artificiais em cada frase.
+    text = text
+        .replace(/\s*([,;:])\s*/g, '$1 ')
+        .replace(/\s*([.!?])\s*/g, '$1 ')
+        .replace(/\.{3,}|…{2,}/gu, '…')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (text.length > maxChars) {
+        const candidate = text.slice(0, maxChars + 1);
+        const sentenceBoundary = Math.max(
+            candidate.lastIndexOf('. '),
+            candidate.lastIndexOf('! '),
+            candidate.lastIndexOf('? '),
+        );
+        const minimumNaturalBoundary = Math.floor(maxChars * 0.55);
+        const wordBoundary = candidate.lastIndexOf(' ');
+        const cutAt = sentenceBoundary >= minimumNaturalBoundary
+            ? sentenceBoundary + 1
+            : wordBoundary >= minimumNaturalBoundary
+                ? wordBoundary
+                : maxChars;
+        text = candidate.slice(0, cutAt).trim();
+    }
+
+    text = text.replace(/[,:;\-–—]+$/u, '').trim();
+    if (text && !/[.!?…]$/u.test(text)) text += '.';
     return text;
 };
 
@@ -128,30 +153,21 @@ export const buildExpressiveSpeech = ({
     const speech = cleanTextForSpeech(messageText, maxChars);
     const context = `${userText} ${emotionalContext} ${messageText}`.toLowerCase();
 
-    // Tags acústicas expressivas, ofegantes e com textura humana
-    let cues = "[whispering][sensual][breathing][soft tone]";
-    let prefixVocal = "hummm... ";
+    // S2-Pro funciona melhor com uma instrucao natural por trecho curto.
+    // Muitas tags simultaneas fazem a voz oscilar e terminar de forma artificial.
+    let cue = "[speaks warmly and naturally]";
 
     if (/(putaria|goz|tes[aã]o|fud|met|chup|safad|pelad|nude|molhad|calcinha|peit|bunda|delic|pau|gostos)/iu.test(context)) {
-        cues = "[whispering][sensual][moaning softly][breathing]";
-        prefixVocal = "ai... ";
+        cue = "[whispers playfully]";
     } else if (/(triste|sozinh|carente|carinho|abraç|chamego|dengo|saudade)/iu.test(context)) {
-        cues = "[whispering][soft tone][warm and playful]";
-        prefixVocal = "vem cá... ";
+        cue = "[speaks softly and tenderly]";
     } else if (/(segredo|ningu[eé]m|escondid|só nosso|noite|cama)/iu.test(context)) {
-        cues = "[whispering][sensual][mysterious]";
-        prefixVocal = "fala baixinho... ";
+        cue = "[whispers softly]";
     } else if (/(kkk|haha|engraç|rir|brinc)/iu.test(context)) {
-        cues = "[whispering][chuckling][warm and teasing]";
-        prefixVocal = "olha... ";
+        cue = "[laughs softly, then speaks playfully]";
     }
 
-    // Evita duplicar introduções se a frase já começa naturalmente com interjeição
-    if (/^(oi|oii|eai|olá|hum|ai|vem|amor|nossa|olha|sabe)/i.test(speech)) {
-        return `${cues} ${speech}`.trim();
-    }
-
-    return `${cues} ${prefixVocal}${speech}`.trim();
+    return `${cue} ${speech}`.trim();
 };
 
 export const generateFishAudio = async ({
@@ -175,20 +191,19 @@ export const generateFishAudio = async ({
         body: JSON.stringify({
             text,
             reference_id: normalized.voiceId,
-            format: "mp3",
+            format: "opus",
+            sample_rate: 48000,
+            opus_bitrate: 64000,
             latency: "normal",
-            temperature: 0.80,
-            top_p: 0.80,
-            repetition_penalty: 1.12,
-            chunk_length: 220,
+            temperature: 0.70,
+            top_p: 0.70,
+            repetition_penalty: 1.20,
+            chunk_length: 300,
+            min_chunk_length: 50,
+            max_new_tokens: 1024,
+            early_stop_threshold: 1,
             normalize: true,
             condition_on_previous_chunks: true,
-            prosody: {
-                speed: 0.94,
-                volume: 0,
-                normalize_loudness: true,
-            },
-            features: ["quality-guard"],
         }),
         signal: AbortSignal.timeout(30_000),
     });
@@ -200,6 +215,15 @@ export const generateFishAudio = async ({
     }
 
     const audio = Buffer.from(await response.arrayBuffer());
-    if (audio.length < 100) throw new Error("Fish Audio retornou áudio vazio");
+    if (audio.length < 1000) throw new Error("Fish Audio retornou áudio vazio ou incompleto");
+    if (audio.subarray(0, 4).toString('ascii') !== 'OggS') {
+        throw new Error("Fish Audio retornou um arquivo Opus inválido");
+    }
+    console.log('[FISH AUDIO] Gerado com sucesso', {
+        model: normalized.model,
+        inputChars: text.length,
+        bytes: audio.length,
+        format: 'opus',
+    });
     return audio;
 };

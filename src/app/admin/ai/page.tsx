@@ -77,10 +77,10 @@ const emptySettings: AiSettings = {
     fishAudioApiKeySaved: false,
     fishAudioEnabled: false,
     fishAudioVoiceId: "24522123b5804bf691a8450d9187f03e",
-    fishAudioModel: "s2.1-pro-free",
+    fishAudioModel: "s2-pro",
     fishAudioFrequencyPercent: 18,
     fishAudioCooldownMinutes: 30,
-    fishAudioMaxChars: 280,
+    fishAudioMaxChars: 240,
 };
 
 const providerLabels: Record<ProviderKey, string> = {
@@ -496,8 +496,8 @@ export default function AdminAiPage() {
                                         onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioModel: event.target.value }))}
                                         className={inputClass}
                                     >
-                                        <option value="s2.1-pro-free">S2.1 Pro Free</option>
-                                        <option value="s2.1-pro">S2.1 Pro</option>
+                                        <option value="s2-pro">S2-Pro (recomendado)</option>
+                                        <option value="s1">S1 (legado)</option>
                                     </select>
                                 </Field>
                             </div>
@@ -526,7 +526,7 @@ export default function AdminAiPage() {
                                     <input
                                         type="number"
                                         min="60"
-                                        max="500"
+                                        max="320"
                                         value={settings.fishAudioMaxChars}
                                         onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioMaxChars: Number(event.target.value) }))}
                                         className={inputClass}
