@@ -64,8 +64,8 @@ export default function AdminPreviewsPage() {
     const [loadingPage, setLoadingPage] = useState(true);
     const [message, setMessage] = useState("");
     const [modelSettings, setModelSettings] = useState({
-        primaryModel: "google/gemini-3.7-flash",
-        fallbackModel: "qwen/qwen3.8-27b",
+        primaryModel: "google/gemini-2.5-flash",
+        fallbackModel: "qwen/qwen-2.5-vl-72b-instruct",
         openRouterConfigured: false,
     });
     const [manual, setManual] = useState({ name: "", description: "", tags: "" });

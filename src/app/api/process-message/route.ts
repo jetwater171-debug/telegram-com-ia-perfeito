@@ -3,7 +3,7 @@ import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode, sendTelegramVoice } from '@/lib/telegram';
 import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
-import { calculateLeadScore, markLeadPaid, toStoredLeadScore } from '@/lib/leadScoring';
+import { calculateLeadScore, markLeadPaid, parseLeadScore, toStoredLeadScore } from '@/lib/leadScoring';
 import { shapeConversationBubbles } from '@/lib/conversationBubbles';
 import {
     mergeLeadMemoryPatch,
@@ -81,6 +81,14 @@ const detectCityFromText = (input: string): string | null => {
 
     const parts = city.split(/\s+/).slice(0, 3);
     return parts.join(' ');
+};
+
+const detectDeviceFromUserAgent = (userAgent: unknown) => {
+    const ua = String(userAgent || '').toLowerCase();
+    if (/iphone|ipad|ios/.test(ua)) return 'iPhone';
+    if (/android/.test(ua)) return 'Android';
+    if (/windows|macintosh|linux/.test(ua)) return 'Desktop';
+    return 'Unknown';
 };
 
 const detectLeadMemorySignals = (userText: string, botTexts: string[], aiResponse: any, currentMemory: any) => {
@@ -302,9 +310,32 @@ const removeGenericBotPhrases = (messages: string[]) => {
         /não tenho gravado/i,
         /nao tenho foto/i,
         /não tenho foto/i,
+        /\b(?:ainda\s+)?n[aã]o\s+tenho\b/i,
+        /\bn[aã]o\s+(?:achei|encontrei)\s+(?:uma|essa|nenhuma)?\s*(?:foto|previa|prévia|imagem|video|vídeo)?\b/i,
     ];
-    const filtered = messages.filter((msg) => !blocked.some((pattern) => pattern.test(msg)));
-    return filtered.length > 0 ? filtered : messages;
+    return messages.filter((msg) => !blocked.some((pattern) => pattern.test(msg)));
+};
+
+const isPrematureMediaReaction = (message: string) => {
+    const text = normalizeLoopText(message);
+    return /\b(o que achou|oq achou|me fala o que achou|gostou|curtiu|achou gostosa|achou bonita)\b/i.test(text)
+        || /\b(ta aqui|tá aqui|te mandei|acabei de mandar|ja mandei|já mandei)\b/i.test(text);
+};
+
+const buildNaturalMediaSetup = (userText: string, action?: string, suggested?: string) => {
+    const safeSuggestion = String(suggested || '').trim();
+    if (safeSuggestion && !isPrematureMediaReaction(safeSuggestion)) return safeSuggestion;
+
+    if (/video/i.test(String(action || '')) || /\bvideo|vídeo\b/i.test(userText)) {
+        return 'calma que vou separar um videozinho gostoso pra vc';
+    }
+    if (/\b(leite|condensado|doce|lambuzad)\b/i.test(userText)) {
+        return 'essa ideia foi bem especifica kkk deixa eu escolher uma gostosa pra vc';
+    }
+    if (/\b(bunda|de 4|de quatro|costas|por tras|por trás)\b/i.test(userText)) {
+        return 'calma que vou escolher uma de costas bem gostosa pra vc';
+    }
+    return 'calma que vou escolher uma fotinha gostosa pra vc';
 };
 
 const removeDuplicateNormalizedMessages = (messages: string[]) => {
@@ -333,7 +364,7 @@ const applyConversationQualityGuards = (messages: string[], opts: {
     out = removeAnsweredCityQuestions(out, opts.hasCity, opts.userAskedCity);
     out = reduceOpeningRepetition(out, opts.lastBotContent);
     out = removeDuplicateNormalizedMessages(out);
-    return out.length > 0 ? out : messages;
+    return out;
 };
 
 const extractPrices = (text: string) => {
@@ -892,7 +923,54 @@ export async function POST(req: NextRequest) {
     }
 
     const detectedCity = detectCityFromText(userOnlyText);
-    const leadMemory = normalizeLeadMemory(session.lead_memory);
+    let leadMemory = normalizeLeadMemory(session.lead_memory);
+    const missingAttribution = !leadMemory.metadata?.redirect_timezone
+        || !leadMemory.metadata?.redirect_user_agent
+        || !leadMemory.metadata?.redirect_country;
+    if (missingAttribution) {
+        const { data: redirectRow } = await supabase
+            .from('lead_redirects')
+            .select('code,ip,user_agent,referer,country,region,city,timezone,source_url,utm,metadata,clicked_at,created_at')
+            .or(`session_id.eq.${session.id},telegram_chat_id.eq.${chatId}`)
+            .order('clicked_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (redirectRow) {
+            leadMemory = {
+                ...leadMemory,
+                metadata: {
+                    ...(leadMemory.metadata || {}),
+                    redirect_code: redirectRow.code || leadMemory.metadata?.redirect_code || '',
+                    redirect_ip: redirectRow.ip || leadMemory.metadata?.redirect_ip || '',
+                    redirect_utm: redirectRow.utm || leadMemory.metadata?.redirect_utm || {},
+                    redirect_query_params: redirectRow.metadata?.query_params || leadMemory.metadata?.redirect_query_params || {},
+                    redirect_source_url: redirectRow.source_url || leadMemory.metadata?.redirect_source_url || '',
+                    redirect_referer: redirectRow.referer || leadMemory.metadata?.redirect_referer || '',
+                    redirect_clicked_at: redirectRow.clicked_at || redirectRow.created_at || leadMemory.metadata?.redirect_clicked_at || '',
+                    redirect_city: redirectRow.city || leadMemory.metadata?.redirect_city || '',
+                    redirect_region: redirectRow.region || leadMemory.metadata?.redirect_region || '',
+                    redirect_country: redirectRow.country || leadMemory.metadata?.redirect_country || '',
+                    redirect_timezone: redirectRow.timezone || leadMemory.metadata?.redirect_timezone || '',
+                    redirect_accept_language: redirectRow.metadata?.accept_language || leadMemory.metadata?.redirect_accept_language || '',
+                    redirect_user_agent: redirectRow.user_agent || leadMemory.metadata?.redirect_user_agent || '',
+                },
+                updated_at: new Date().toISOString(),
+            };
+            const attributionPatch: any = { lead_memory: leadMemory };
+            if ((!session.user_city || session.user_city === 'Unknown') && redirectRow.city) {
+                attributionPatch.user_city = redirectRow.city;
+                session.user_city = redirectRow.city;
+            }
+            if (!session.device_type || session.device_type === 'Unknown') {
+                const detectedDevice = detectDeviceFromUserAgent(redirectRow.user_agent);
+                if (detectedDevice !== 'Unknown') {
+                    attributionPatch.device_type = detectedDevice;
+                    session.device_type = detectedDevice;
+                }
+            }
+            await supabase.from('sessions').update(attributionPatch).eq('id', session.id);
+        }
+    }
     const redirectCity = typeof leadMemory.metadata?.redirect_city === 'string' ? leadMemory.metadata.redirect_city.trim() : '';
     const storedCity = typeof session.user_city === 'string' ? session.user_city.trim() : '';
     let userCity = storedCity || redirectCity;
@@ -913,6 +991,23 @@ export async function POST(req: NextRequest) {
     const context = {
         userCity: hasCity ? userCity : undefined,
         isHighTicket: session.device_type === 'iPhone',
+        leadProfile: {
+            deviceType: String(session.device_type || 'Unknown'),
+            city: userCity || '',
+            region: String(leadMemory.metadata?.redirect_region || ''),
+            country: String(leadMemory.metadata?.redirect_country || ''),
+            timezone: String(leadMemory.metadata?.redirect_timezone || ''),
+            language: String(leadMemory.metadata?.redirect_accept_language || ''),
+            userAgent: String(leadMemory.metadata?.redirect_user_agent || ''),
+            sourceUrl: String(leadMemory.metadata?.redirect_source_url || ''),
+            referer: String(leadMemory.metadata?.redirect_referer || ''),
+            utm: leadMemory.metadata?.redirect_utm && typeof leadMemory.metadata.redirect_utm === 'object'
+                ? leadMemory.metadata.redirect_utm
+                : {},
+            queryParams: leadMemory.metadata?.redirect_query_params && typeof leadMemory.metadata.redirect_query_params === 'object'
+                ? leadMemory.metadata.redirect_query_params
+                : {},
+        },
         totalPaid: session.total_paid || 0,
         currentStats: session.lead_score,
         minutesSinceOffer,
@@ -1108,8 +1203,15 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         || /\b(manda|mostra|envia|quero ver|deixa ver|solta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo|uma)\b/i.test(userOnlyText)
         || /\b(quero te ver|qualquer foto|manda qualquer|me mostra vc|me mostra você)\b/i.test(userOnlyText);
 
-    // Se o lead pediu prévia/foto e NÃO pediu explicitamente para comprar VIP/chamada/produto pago, NUNCA gere PIX
-    const explicitPaidPurchaseIntent = /\b(vip|vitalicio|vitalício|mensal|chamada|call|comprar vip|assinar|pagar|passa o pix|manda o pix)\b/i.test(userOnlyText);
+    // Pedido de mídia só vira cobrança quando o lead também manifesta uma compra real.
+    // Palavras soltas como "pix" ou "pagar" em uma reclamação não autorizam cobrança.
+    const explicitTransactionRequest = /\b(quero comprar|vou comprar|quero pagar|vou pagar|pode cobrar|gera(?:r)? (?:o )?pix|manda (?:o )?pix|passa (?:o )?pix|qual (?:o )?(?:preco|preço|valor)|quanto custa)\b/i.test(userOnlyText);
+    const explicitPaidProduct = /\b(vip|vitalicio|vitalício|mensal|chamada|videochamada|call|whatsapp|numero pessoal|número pessoal|personalizad[oa]|sob encomenda|video completo|vídeo completo|audio erotico|áudio erótico)\b/i.test(userOnlyText);
+    const rejectsPaymentNow = /\b(?:nao|não|sem)\b.{0,28}\b(?:pix|pagar|pagamento|cobrar)\b/i.test(userOnlyText)
+        || /\b(?:pedi|quero|manda)\b.{0,30}\b(?:previa|prévia|foto)\b.{0,30}\b(?:nao|não|sem)\b.{0,12}\bpix\b/i.test(userOnlyText);
+    const explicitPaidPurchaseIntent = !rejectsPaymentNow
+        && explicitTransactionRequest
+        && (explicitPaidProduct || /\bpix\b/i.test(userOnlyText));
     if (userAskedMedia && !explicitPaidPurchaseIntent && aiResponse.action === 'generate_pix_payment') {
         console.log('[PROCESSADOR] Bloqueando PIX indevido para pedido de prévia/foto. Redirecionando para envio de prévia.');
         aiResponse.action = 'send_custom_preview';
@@ -1144,7 +1246,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         }).catch((error: any) => {
             console.warn('[PREVIAS] Falha ao registrar ideia sugerida pelo lead:', error?.message || error);
         });
-    } else if (aiResponse.action === 'none' && userAskedPhoto) {
+    } else if (userAskedPhoto) {
         try {
             const requestedSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
             let query = supabase
@@ -1180,7 +1282,22 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         totalPaid: Number(session.total_paid || 0),
         includeContextBoosts: false,
     });
-    aiResponse.lead_stats = toStoredLeadScore(deterministicScore);
+    const deterministicStoredScore = toStoredLeadScore(deterministicScore);
+    const brainScore = parseLeadScore(aiResponse.lead_stats, deterministicScore.score);
+    const previousScore = parseLeadScore(session.lead_score);
+    const reconcileScore = (key: 'tarado' | 'financeiro' | 'carente' | 'sentimental') => {
+        // Os sinais objetivos continuam sendo a âncora; o cérebro geral adiciona a
+        // leitura contextual (histórico, aparelho, localização, tom e memória).
+        const contextualDelta = (brainScore[key] - previousScore[key]) * 0.35;
+        return Math.max(0, Math.min(100, Math.round(deterministicScore.score[key] + contextualDelta)));
+    };
+    aiResponse.lead_stats = {
+        ...deterministicStoredScore,
+        tarado: reconcileScore('tarado'),
+        financeiro: Number(session.total_paid || 0) > 0 ? 100 : reconcileScore('financeiro'),
+        carente: reconcileScore('carente'),
+        sentimental: reconcileScore('sentimental'),
+    };
 
     console.log("📊 [STATS UPDATE] ANTES:", JSON.stringify(session.lead_score));
     console.log("📊 [STATS UPDATE] DEPOIS (IA):", JSON.stringify(aiResponse.lead_stats));
@@ -1339,6 +1456,9 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         extractedName: aiResponse.extracted_user_name,
         lastBotContent
     });
+    if (safeMessages.length === 0 && !userAskedMedia) {
+        safeMessages = ['me conta melhor amor, quero entender vc'];
+    }
     if (cityQuestion && hasCity) {
         const forcedCityAnswer = `sou de ${userCity} amor, e vc?`;
         const withoutGenericCity = safeMessages.filter((msg: string) => {
@@ -1381,9 +1501,18 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     }
 
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none')) && (userAskedMedia || aiResponse.action === 'send_custom_preview');
-    const naturalMediaSetup = safeMessages[0] || contextualMedia?.intro || 'olha o que separei pra vc amor';
+    const setupIndex = isMediaDeliveryTurn
+        ? safeMessages.findIndex((message: string) => !isPrematureMediaReaction(message))
+        : -1;
+    const naturalMediaSetup = isMediaDeliveryTurn
+        ? buildNaturalMediaSetup(
+            userOnlyText,
+            aiResponse.action,
+            setupIndex >= 0 ? safeMessages[setupIndex] : contextualMedia?.intro,
+        )
+        : '';
     const deferredMediaMessages = isMediaDeliveryTurn
-        ? (safeMessages.length > 1 ? safeMessages.slice(1) : [])
+        ? safeMessages.filter((_: string, index: number) => index !== setupIndex)
         : [];
     let outgoingToSend = isMediaDeliveryTurn ? [naturalMediaSetup] : safeMessages;
     let operationalLeadMemory = updatedLeadMemory;

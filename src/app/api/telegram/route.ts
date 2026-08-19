@@ -188,7 +188,10 @@ export async function POST(req: NextRequest) {
                         redirect_referer: redirectRow.referer || '',
                         redirect_clicked_at: redirectRow.clicked_at || redirectRow.created_at || '',
                         redirect_city: city || '',
+                        redirect_region: redirectRow.region || '',
                         redirect_country: redirectRow.country || '',
+                        redirect_timezone: redirectRow.timezone || '',
+                        redirect_accept_language: redirectRow.metadata?.accept_language || '',
                         redirect_user_agent: redirectRow.user_agent || ''
                     },
                     updated_at: new Date().toISOString()
