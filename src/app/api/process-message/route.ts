@@ -978,6 +978,7 @@ export async function POST(req: NextRequest) {
 
     const combinedText = filteredGroupMessages.map((m: any) => m.content).join("\n");
     const userOnlyText = filteredGroupMessages.filter((m: any) => m.sender === 'user').map((m: any) => m.content).join("\n");
+    const isConversationStart = /^\/start(?:\s+\S+)?$/i.test(userOnlyText.trim());
     const lastGroupedUserAt = filteredGroupMessages
         .filter((m: any) => m.sender === 'user' && m.created_at)
         .map((m: any) => String(m.created_at))
@@ -1069,6 +1070,29 @@ export async function POST(req: NextRequest) {
             await supabase.from('sessions').update({ user_city: detectedCity }).eq('id', session.id);
         }
     }
+    if (isConversationStart) {
+        // /start abre uma nova conversa mental sem apagar os fatos privados do lead.
+        // O cerebro volta ao estagio inicial e nao reaproveita uma venda/gancho antigo.
+        const freshMetadata = { ...(leadMemory.metadata || {}) } as Record<string, unknown>;
+        for (const key of [
+            'sales_nurture_product', 'sales_nurture_turns', 'sales_nurture_updated_at',
+            'sales_checkout_ready', 'sales_offer_seen', 'sales_offer_value', 'sales_offer_tier',
+        ]) delete freshMetadata[key];
+        leadMemory = {
+            ...leadMemory,
+            dominant_type: 'desconhecido',
+            emotional_context: 'inicio de uma nova conversa',
+            relationship_stage: 'new',
+            next_personal_step: 'conhecer naturalmente sem presumir intimidade ou retorno',
+            conversation_hooks: [],
+            last_offer: '',
+            metadata: {
+                ...freshMetadata,
+                conversation_started_at: new Date().toISOString(),
+            },
+            updated_at: new Date().toISOString(),
+        };
+    }
     const hasCity = Boolean(userCity);
     const cityQuestion = /(de onde (voce|vc|você) e|vc e de onde|você é de onde|qual (sua|a) cidade|onde (voce|vc|você) mora)/i.test(userOnlyText);
     const salesTiming = evaluateSalesTiming({
@@ -1121,7 +1145,8 @@ export async function POST(req: NextRequest) {
         currentStats: session.lead_score,
         minutesSinceOffer,
         extraScript,
-        leadMemory
+        leadMemory,
+        isConversationStart,
     };
 
     const extractFileAndCaption = (input: string) => {
@@ -1269,6 +1294,9 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
 
     if (combinedText.includes(triggerPrefix)) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o admin pediu para iniciar a venda agora. Use o contexto da conversa e leve para proposta/preco de forma natural.]`;
+    }
+    if (isConversationStart) {
+        finalUserMessage = `${finalUserMessage}\n\n[INICIO DE CONVERSA: /start e uma entrada tecnica. Trate como primeiro contato desta conversa. Nao diga sumido, saudade, voltou, finalmente ou qualquer frase de reencontro. Nao existe resposta fixa: apenas converse no estagio real de desconhecidos.]`;
     }
     if (repetition.repeats >= 2) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead repetiu a mesma mensagem ${repetition.repeats}x ("${repetition.last}"). Responda diferente, quebre o loop e puxe o assunto com algo novo e humano. Nao repita a mesma frase.]`;
@@ -1532,7 +1560,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         userOnlyText,
         Array.isArray(aiResponse.messages) ? aiResponse.messages : [],
         aiResponse,
-        session.lead_memory
+        leadMemory
     );
     let updatedLeadMemory = mergeLeadMemoryPatch(detectedLeadMemory, aiResponse.lead_memory_patch);
     if (salesTiming.activeProduct && salesTiming.salesContextActive) {

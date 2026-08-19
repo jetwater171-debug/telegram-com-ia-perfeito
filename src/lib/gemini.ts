@@ -2018,6 +2018,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     minutesSinceOffer?: number;
     extraScript?: string;
     leadMemory?: any;
+    isConversationStart?: boolean;
     leadProfile?: {
         deviceType?: string;
         city?: string;
@@ -2120,8 +2121,11 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 
     // O perfil persistente guarda a historia longa; o modelo recebe apenas a janela recente.
     const dbMessages = [...(messagesResult.data || [])].reverse();
+    // /start inicia um novo episodio: fatos persistentes continuam no perfil, mas
+    // falas antigas nao podem fazer a Lari tratar o lead como "sumido" ou retorno.
+    const promptMessages = context?.isConversationStart ? [] : dbMessages;
 
-    const recentBotMessages = (dbMessages || [])
+    const recentBotMessages = (promptMessages || [])
         .filter((m: any) => m.sender === 'bot' && typeof m.content === 'string' && !m.content.startsWith('[M'))
         .slice(-8)
         .map((m: any) => String(m.content || '').trim())
@@ -2158,7 +2162,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     ) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.";
 
     // Agrupa os varios baloes do mesmo turno e garante history valido para o SDK Gemini.
-    const cleanHistory = buildCleanAiHistory(dbMessages || []);
+    const cleanHistory = buildCleanAiHistory(promptMessages || []);
 
     // 3. Montar Mensagem Atual (Com ou sem mídia)
     const currentMessageParts: any[] = [{ text: userMessage }];
@@ -2327,7 +2331,7 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
             const earlyDraftText = (jsonResponse.messages || []).map((message) => String(message || '')).join(' ');
             const earlyConversationReviewNeeded = String(strategy?.relationship_stage || 'new') === 'new'
                 && ((jsonResponse.messages || []).length > 2
-                    || /\b(am(or|orzinho)|anjo|vida|bb|lindo)\b|\b(deitad|banho|quarto|que horas sao|o que vc veio buscar|me conta sobre vc)\b/i.test(earlyDraftText));
+                    || /\b(am(or|orzinho)|anjo|vida|bb|lindo|sumid[oa]|saudade|voltou|finalmente)\b|\b(deitad|banho|quarto|que horas sao|o que vc veio buscar|me conta sobre vc)\b/i.test(earlyDraftText));
             const criticalReviewNeeded = ["generate_pix_payment", "check_payment_status"].includes(String(jsonResponse.action || ""))
                 || Number(strategy?.confidence || 0) < 0.4
                 || earlyConversationReviewNeeded;
@@ -2348,7 +2352,7 @@ Reprove/corrija tambem se a action de midia nao combina com o que o lead falou, 
 Reprove/corrija se o lead falou putaria explicita e a Lari respondeu fofa, fria, desviando assunto ou perguntando algo generico em vez de continuar a fantasia.
 Reprove/corrija se a ultima mensagem termina com reticencias, suspense vazio ou frase pendurada sem conduzir o lead.
 Reprove/corrija se ela repete promessa de VIP para lead desconfiado, pergunta nome/cidade ja conhecida, manda mais de 4 baloes fora de fantasia quente, ou contradiz preco/desconto.
-Se relationship_stage for new, reprove se usar intimidade precoce, apelido carinhoso, cama/banho/quarto como muleta, pergunta de qualificacao comercial ou mais de dois baloes sem necessidade. Corrija pensando como uma menina que ainda esta conhecendo a pessoa, sem usar frase fixa.
+Se relationship_stage for new, reprove se usar intimidade precoce, apelido carinhoso, linguagem de reencontro como "sumido", "saudade" ou "voltou", cama/banho/quarto como muleta, pergunta de qualificacao comercial ou mais de dois baloes sem necessidade. Corrija pensando como uma menina que ainda esta conhecendo a pessoa, sem usar frase fixa.
 Se corrigir, devolva mensagens melhores no mesmo estilo da Lari. Nao explique para o lead.
 Retorne JSON com: approved, score, issues, messages, action, current_state, preview_id e payment_details.`;
 
