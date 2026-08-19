@@ -23,7 +23,7 @@ import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previ
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
 import { buildDeliveredPreviewCaption } from '@/lib/previewMoment';
 import { evaluateSalesTiming, extractExplicitBudget, guardPrematureSaleMessages } from '@/lib/salesTiming';
-import { buildFirstContactGreeting } from '@/lib/conversationOpening';
+import { buildFirstContactGreeting, buildNameIntroductionReply } from '@/lib/conversationOpening';
 
 export const maxDuration = 120;
 
@@ -986,6 +986,8 @@ export async function POST(req: NextRequest) {
         .at(-1) || new Date().toISOString();
     const repetition = detectRepetition(filteredGroupMessages);
     const deterministicOpening = buildFirstContactGreeting(userOnlyText, Boolean(lastBotMsg));
+    const deterministicNameReply = buildNameIntroductionReply(userOnlyText, lastBotMsg?.content || '');
+    const deterministicConversationReply = deterministicOpening || deterministicNameReply?.messages || null;
     console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
 
     const lastOfferAt = lastOfferMsg?.created_at ? new Date(lastOfferMsg.created_at).getTime() : null;
@@ -1290,24 +1292,30 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         hasMedia: Boolean(mediaData),
     });
     let aiResponse: Awaited<ReturnType<typeof sendMessageToGemini>>;
-    if (deterministicOpening) {
-        // A primeira saudacao nao depende da IA: fica rapida, previsivel e nunca
-        // inventa intimidade, rotina ou pergunta estranha antes de saber o nome.
+    if (deterministicConversationReply) {
+        // Os dois primeiros passos nao dependem da IA: ficam leves e previsiveis,
+        // sem inventar intimidade, rotina ou qualificacao comercial precoce.
         aiResponse = {
-            internal_thought: 'Abertura inicial neutra; descobrir o nome antes de criar familiaridade.',
+            internal_thought: deterministicOpening
+                ? 'Abertura inicial neutra; descobrir o nome antes de criar familiaridade.'
+                : 'O lead informou o nome; reagir com leveza e puxar apenas um assunto cotidiano.',
             lead_classification: 'desconhecido',
             lead_stats: session.lead_score || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
-            messages: deterministicOpening,
+            messages: deterministicConversationReply,
             action: 'none',
-            current_state: 'WELCOME',
-            extracted_user_name: null,
+            current_state: deterministicOpening ? 'WELCOME' : 'CONNECTION',
+            extracted_user_name: deterministicNameReply?.name || null,
             audio_transcription: null,
             preview_id: null,
             preview_request: null,
             payment_details: null,
             lead_memory_patch: {
                 relationship_stage: 'new',
-                next_personal_step: 'descobrir o nome e reagir naturalmente antes de outro assunto',
+                next_personal_step: deterministicOpening
+                    ? 'descobrir o nome e reagir naturalmente antes de outro assunto'
+                    : 'ouvir como foi o dia e aprofundar somente o assunto que ele abrir',
+                known_facts: deterministicNameReply ? [`nome informado: ${deterministicNameReply.name}`] : [],
+                conversation_hooks: deterministicNameReply ? ['perguntou como foi o dia'] : [],
             },
         } as Awaited<ReturnType<typeof sendMessageToGemini>>;
     } else {
