@@ -23,7 +23,6 @@ import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previ
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
 import { buildDeliveredPreviewCaption } from '@/lib/previewMoment';
 import { evaluateSalesTiming, extractExplicitBudget, guardPrematureSaleMessages } from '@/lib/salesTiming';
-import { buildFirstContactGreeting, buildNameIntroductionReply } from '@/lib/conversationOpening';
 
 export const maxDuration = 120;
 
@@ -985,9 +984,6 @@ export async function POST(req: NextRequest) {
         .sort()
         .at(-1) || new Date().toISOString();
     const repetition = detectRepetition(filteredGroupMessages);
-    const deterministicOpening = buildFirstContactGreeting(userOnlyText, Boolean(lastBotMsg));
-    const deterministicNameReply = buildNameIntroductionReply(userOnlyText, lastBotMsg?.content || '');
-    const deterministicConversationReply = deterministicOpening || deterministicNameReply?.messages || null;
     console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
 
     const lastOfferAt = lastOfferMsg?.created_at ? new Date(lastOfferMsg.created_at).getTime() : null;
@@ -1090,12 +1086,13 @@ export async function POST(req: NextRequest) {
         `- Pode gerar PIX agora: ${salesTiming.canGeneratePayment ? 'sim' : 'nao; falta aceite ou pedido direto de pagamento'}.`,
         offerPlan
             ? `- Oferta indicada: ${offerPlan.format}, R$ ${offerPlan.value.toFixed(2).replace('.', ',')} (${offerPlan.description}).`
-            : '- Ainda nao existe oferta definida; descubra desejo e contexto sem inventar produto ou renda.',
+            : '- Ainda nao existe oferta definida; mantenha a conversa natural e deixe desejo/contexto aparecerem sem pergunta de qualificacao.',
         offerPlan?.explicitBudget
             ? `- O lead declarou limite/disposicao de R$ ${offerPlan.explicitBudget.toFixed(2).replace('.', ',')}; nunca ultrapasse esse valor.`
             : '- Nao ha limite financeiro declarado. Nao presuma renda por aparelho, cidade ou localizacao.',
         '- Se o desejo mudar, abandone a oferta anterior e aqueça o novo desejo antes de precificar.',
         '- Venda o resultado que ele pediu; para pouco dinheiro, reduza o escopo do mesmo desejo em vez de empurrar outro produto.',
+        '- Este plano pertence apenas ao cerebro. Se a relacao ainda for nova, nao deixe a intencao comercial aparecer na fala da Lari.',
     ].join('\n');
     extraScript = [extraScript, adaptiveSalesDirective].filter(Boolean).join('\n\n');
 
@@ -1292,43 +1289,15 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         hasMedia: Boolean(mediaData),
     });
     let aiResponse: Awaited<ReturnType<typeof sendMessageToGemini>>;
-    if (deterministicConversationReply) {
-        // Os dois primeiros passos nao dependem da IA: ficam leves e previsiveis,
-        // sem inventar intimidade, rotina ou qualificacao comercial precoce.
-        aiResponse = {
-            internal_thought: deterministicOpening
-                ? 'Abertura inicial neutra; descobrir o nome antes de criar familiaridade.'
-                : 'O lead informou o nome; reagir com leveza e puxar apenas um assunto cotidiano.',
-            lead_classification: 'desconhecido',
-            lead_stats: session.lead_score || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
-            messages: deterministicConversationReply,
-            action: 'none',
-            current_state: deterministicOpening ? 'WELCOME' : 'CONNECTION',
-            extracted_user_name: deterministicNameReply?.name || null,
-            audio_transcription: null,
-            preview_id: null,
-            preview_request: null,
-            payment_details: null,
-            lead_memory_patch: {
-                relationship_stage: 'new',
-                next_personal_step: deterministicOpening
-                    ? 'descobrir o nome e reagir naturalmente antes de outro assunto'
-                    : 'ouvir como foi o dia e aprofundar somente o assunto que ele abrir',
-                known_facts: deterministicNameReply ? [`nome informado: ${deterministicNameReply.name}`] : [],
-                conversation_hooks: deterministicNameReply ? ['perguntou como foi o dia'] : [],
-            },
-        } as Awaited<ReturnType<typeof sendMessageToGemini>>;
-    } else {
-        const typingHeartbeat = setInterval(() => {
-            void sendTelegramAction(botToken, chatId, 'typing').catch((error: any) => {
-                console.warn('[PROCESSADOR] Falha ao renovar digitando:', error?.message || error);
-            });
-        }, 4000);
-        try {
-            aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
-        } finally {
-            clearInterval(typingHeartbeat);
-        }
+    const typingHeartbeat = setInterval(() => {
+        void sendTelegramAction(botToken, chatId, 'typing').catch((error: any) => {
+            console.warn('[PROCESSADOR] Falha ao renovar digitando:', error?.message || error);
+        });
+    }, 4000);
+    try {
+        aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
+    } finally {
+        clearInterval(typingHeartbeat);
     }
     console.log("[PROCESSADOR] Resposta gerada", {
         sessionId: session.id,
@@ -1701,7 +1670,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         : [String(aiResponse.messages || '')].filter(Boolean);
 
     let safeMessages = removeLeadEchoes(
-        outgoingMessages.length > 0 ? outgoingMessages : ['amor?'],
+        outgoingMessages.length > 0 ? outgoingMessages : ['oii?'],
         userOnlyText,
     )
         .map((m: string) => sanitizeOutgoingMessage(m))
@@ -1710,9 +1679,8 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     const lastBotContent = lastBotMsg?.content || '';
     safeMessages = applyConversationQualityGuards(safeMessages, {
         userText: userOnlyText,
-        // O nome de perfil do Telegram pode ser apelido ou nome falso. Na abertura
-        // perguntamos como a pessoa prefere ser chamada, como numa conversa normal.
-        sessionName: deterministicOpening ? null : session.user_name,
+        // O perfil do Telegram nao prova como um lead novo prefere ser chamado.
+        sessionName: lastBotMsg ? session.user_name : null,
         hasCity,
         userAskedCity: cityQuestion,
         extractedName: aiResponse.extracted_user_name,
