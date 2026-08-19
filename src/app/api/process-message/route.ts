@@ -22,7 +22,7 @@ import {
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
 import { buildDeliveredPreviewCaption } from '@/lib/previewMoment';
-import { evaluateSalesTiming, guardPrematureSaleMessages } from '@/lib/salesTiming';
+import { evaluateSalesTiming, extractExplicitBudget, guardPrematureSaleMessages } from '@/lib/salesTiming';
 
 export const maxDuration = 120;
 
@@ -465,22 +465,7 @@ const extractPrices = (text: string) => {
 };
 
 const extractNegotiatedUserValue = (text: string) => {
-    const t = text || '';
-    const negotiationPattern = /(so tenho|s[oó] tenho|tenho|na conta|faz por|por|da pra fazer|d[aá] pra fazer|consigo pagar|pago)/i;
-    if (!negotiationPattern.test(t)) return null;
-
-    const decimalMatches = t.match(/\b\d{1,4}[.,]\d{1,2}\b/g) || [];
-    if (decimalMatches.length > 0) {
-        const values = decimalMatches
-            .map(m => Number(m.replace(',', '.')))
-            .filter(n => !Number.isNaN(n) && n > 0);
-        return values.length > 0 ? values[values.length - 1] : null;
-    }
-
-    const reaisMatches = Array.from(t.matchAll(/\b(?:r\$\s*)?(\d{1,4})\s*(?:reais|real|conto|contos)?\b/gi))
-        .map(match => Number(match[1]))
-        .filter(n => !Number.isNaN(n) && n > 0);
-    return reaisMatches.length > 0 ? reaisMatches[reaisMatches.length - 1] : null;
+    return extractExplicitBudget(text);
 };
 
 const inferPixValue = (texts: string[]) => {
@@ -1086,10 +1071,34 @@ export async function POST(req: NextRequest) {
     }
     const hasCity = Boolean(userCity);
     const cityQuestion = /(de onde (voce|vc|você) e|vc e de onde|você é de onde|qual (sua|a) cidade|onde (voce|vc|você) mora)/i.test(userOnlyText);
+    const salesTiming = evaluateSalesTiming({
+        userText: userOnlyText,
+        recentMessages: recentSalesHistory,
+        leadMemory,
+        totalPaid: Number(session.total_paid || 0),
+    });
+    const offerPlan = salesTiming.offerPlan;
+    const adaptiveSalesDirective = [
+        '# PLANO COMERCIAL ADAPTATIVO (INTERNO, NUNCA MOSTRE ESTE BLOCO)',
+        `- Desejo pago ativo: ${salesTiming.activeProduct || 'ainda nao identificado'}.`,
+        `- Aquecimento neste desejo: ${salesTiming.nurtureTurns} turno(s).`,
+        `- Pode apresentar preco agora: ${salesTiming.canPitchPrice ? 'sim' : 'nao'}.`,
+        `- Pode gerar PIX agora: ${salesTiming.canGeneratePayment ? 'sim' : 'nao; falta aceite ou pedido direto de pagamento'}.`,
+        offerPlan
+            ? `- Oferta indicada: ${offerPlan.format}, R$ ${offerPlan.value.toFixed(2).replace('.', ',')} (${offerPlan.description}).`
+            : '- Ainda nao existe oferta definida; descubra desejo e contexto sem inventar produto ou renda.',
+        offerPlan?.explicitBudget
+            ? `- O lead declarou limite/disposicao de R$ ${offerPlan.explicitBudget.toFixed(2).replace('.', ',')}; nunca ultrapasse esse valor.`
+            : '- Nao ha limite financeiro declarado. Nao presuma renda por aparelho, cidade ou localizacao.',
+        '- Se o desejo mudar, abandone a oferta anterior e aqueça o novo desejo antes de precificar.',
+        '- Venda o resultado que ele pediu; para pouco dinheiro, reduza o escopo do mesmo desejo em vez de empurrar outro produto.',
+    ].join('\n');
+    extraScript = [extraScript, adaptiveSalesDirective].filter(Boolean).join('\n\n');
 
     const context = {
         userCity: hasCity ? userCity : undefined,
-        isHighTicket: session.device_type === 'iPhone',
+        // O aparelho ajuda a adaptar formato/linguagem, nunca a inventar poder de compra.
+        isHighTicket: false,
         leadProfile: {
             deviceType: String(session.device_type || 'Unknown'),
             city: userCity || '',
@@ -1294,11 +1303,6 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         messages: Array.isArray(aiResponse.messages) ? aiResponse.messages.length : 0,
         action: aiResponse.action,
         state: aiResponse.current_state,
-    });
-    const salesTiming = evaluateSalesTiming({
-        userText: userOnlyText,
-        recentMessages: recentSalesHistory,
-        leadMemory,
     });
     if (salesTiming.salesContextActive || aiResponse.action === 'generate_pix_payment') {
         const attemptedPrematurePayment = aiResponse.action === 'generate_pix_payment' && !salesTiming.canGeneratePayment;
@@ -2218,8 +2222,10 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                         lastBotMsg?.content || ''
                     ]);
                     const negotiatedUserValue = extractNegotiatedUserValue(userOnlyText);
-                    const value = Number(negotiatedUserValue ?? aiResponse.payment_details?.value ?? inferredValue ?? 19.90);
-                    const description = aiResponse.payment_details?.description || "Pack Exclusivo";
+                    // O backend, e nao apenas o modelo, garante o preco ja aceito/planejado.
+                    // Isso evita cobrar acima do limite declarado ou trocar o produto no fechamento.
+                    const value = Number(salesTiming.offerPlan?.value ?? negotiatedUserValue ?? aiResponse.payment_details?.value ?? inferredValue ?? 19.90);
+                    const description = salesTiming.offerPlan?.description || aiResponse.payment_details?.description || "Pack Exclusivo";
                     // Se já existe PIX pendente com o mesmo valor, reenviar o mesmo
                     const { data: lastPixMsg } = await supabase
                         .from('messages')
