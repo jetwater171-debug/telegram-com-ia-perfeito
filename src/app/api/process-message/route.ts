@@ -1161,6 +1161,9 @@ export async function POST(req: NextRequest) {
         offerPlan?.explicitBudget
             ? `- O lead declarou limite/disposicao de R$ ${offerPlan.explicitBudget.toFixed(2).replace('.', ',')}; nunca ultrapasse esse valor.`
             : '- Nao ha limite financeiro declarado. Nao presuma renda por aparelho, cidade ou localizacao.',
+        salesTiming.fixedVipBudgetGap
+            ? '- O VIP custa R$ 19,90 e o limite declarado e menor. Nao gere PIX do VIP nem invente desconto; esclareca o valor uma vez e deixe o lead escolher outro produto menor se quiser.'
+            : '',
         '- Se o desejo mudar, abandone a oferta anterior e aqueça o novo desejo antes de precificar.',
         '- Venda o resultado que ele pediu; para pouco dinheiro, reduza o escopo do mesmo desejo em vez de empurrar outro produto.',
         '- Este plano pertence apenas ao cerebro. Se a relacao ainda for nova, nao deixe a intencao comercial aparecer na fala da Lari.',

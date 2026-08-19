@@ -8,45 +8,31 @@ import {
     normalizeOpenRouterPrimaryModel,
 } from "@/lib/aiModels";
 import { DEFAULT_FISH_AUDIO_SETTINGS, normalizeFishAudioModel } from "@/lib/fishAudio";
+import { aiGatewayRouter } from "@/lib/aiGatewayRouter";
+
+const PROVIDERS = ["gemini", "groq", "cloudflare", "mistral", "openrouter", "cerebras", "custom"] as const;
+type ProviderKey = typeof PROVIDERS[number];
 
 const CONFIG_KEYS = [
-    "openrouter_api_key",
-    "gemini_api_key",
-    "openrouter_base_url",
-    "openrouter_referer",
-    "openrouter_title",
-    "ai_model_order",
-    "ai_strategy_model_order",
-    "ai_draft_model_order",
-    "ai_review_model_order",
-    "ai_evaluator_model_order",
-    "ai_strategy_enabled",
-    "ai_review_enabled",
-    "ai_evaluator_enabled",
-    "openrouter_strategy_model",
-    "openrouter_draft_model",
-    "openrouter_review_model",
-    "openrouter_evaluator_model",
-    "gemini_strategy_model",
-    "gemini_draft_model",
-    "gemini_review_model",
-    "gemini_evaluator_model",
-    "ai_gateway_recent_events",
-    "ai_gateway_stats",
-    "fish_audio_api_key",
-    "fish_audio_enabled",
-    "fish_audio_voice_id",
-    "fish_audio_model",
-    "fish_audio_frequency_percent",
-    "fish_audio_cooldown_minutes",
-    "fish_audio_max_chars",
+    "openrouter_api_key", "gemini_api_key", "groq_api_key", "mistral_api_key", "cerebras_api_key",
+    "cloudflare_ai_api_token", "cloudflare_account_id", "ai_custom_gateway_api_key", "ai_custom_gateway_base_url",
+    "ai_custom_gateway_model", "ai_custom_gateway_tiers", "ai_custom_gateway_weight",
+    "groq_model", "groq_starter_model", "mistral_model", "cerebras_model", "cloudflare_model",
+    "openrouter_base_url", "openrouter_referer", "openrouter_title",
+    "ai_model_order", "ai_strategy_model_order", "ai_draft_model_order", "ai_review_model_order", "ai_evaluator_model_order",
+    "ai_strategy_enabled", "ai_review_enabled", "ai_evaluator_enabled", "ai_shared_rate_limit_enabled",
+    "openrouter_strategy_model", "openrouter_draft_model", "openrouter_review_model", "openrouter_evaluator_model",
+    "gemini_strategy_model", "gemini_draft_model", "gemini_review_model", "gemini_evaluator_model",
+    "ai_gateway_recent_events", "ai_gateway_stats",
+    "fish_audio_api_key", "fish_audio_enabled", "fish_audio_voice_id", "fish_audio_model",
+    "fish_audio_frequency_percent", "fish_audio_cooldown_minutes", "fish_audio_max_chars",
 ];
 
 const DEFAULTS = {
     openrouter_base_url: "https://openrouter.ai/api/v1",
     openrouter_referer: process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
     openrouter_title: "Lari Telegram Bot",
-    provider_order: "openrouter,gemini",
+    provider_order: PROVIDERS.join(","),
     openrouter_strategy_model: process.env.OPENROUTER_STRATEGY_MODEL || DEFAULT_OPENROUTER_MODEL,
     openrouter_draft_model: process.env.OPENROUTER_DRAFT_MODEL || DEFAULT_OPENROUTER_MODEL,
     openrouter_review_model: process.env.OPENROUTER_REVIEW_MODEL || DEFAULT_OPENROUTER_MODEL,
@@ -55,6 +41,11 @@ const DEFAULTS = {
     gemini_draft_model: normalizeGeminiModelName(process.env.GEMINI_DRAFT_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_MODEL),
     gemini_review_model: normalizeGeminiModelName(process.env.GEMINI_REVIEW_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_MODEL),
     gemini_evaluator_model: normalizeGeminiModelName(process.env.GEMINI_EVALUATOR_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_LITE_MODEL),
+    groq_model: process.env.GROQ_DRAFT_MODEL || "openai/gpt-oss-120b",
+    groq_starter_model: process.env.GROQ_STARTER_MODEL || "llama-3.1-8b-instant",
+    mistral_model: process.env.MISTRAL_DRAFT_MODEL || "mistral-small-latest",
+    cerebras_model: process.env.CEREBRAS_DRAFT_MODEL || "gpt-oss-120b",
+    cloudflare_model: process.env.CLOUDFLARE_DRAFT_MODEL || "@cf/openai/gpt-oss-20b",
 };
 
 const maskSecret = (value?: string | null) => {
@@ -71,33 +62,98 @@ const readSecret = (value?: string | null) => {
 };
 
 const parseJson = (value: string, fallback: any) => {
-    try {
-        return JSON.parse(value || "");
-    } catch {
-        return fallback;
-    }
+    try { return JSON.parse(value || ""); } catch { return fallback; }
+};
+
+const cleanText = (value: unknown, fallback = "", maxLength = 500) => String(value || fallback).trim().slice(0, maxLength);
+const clampNumber = (value: unknown, min: number, max: number, fallback: number) => {
+    const number = Number(value);
+    return Math.min(max, Math.max(min, Number.isFinite(number) ? number : fallback));
 };
 
 const normalizeProviderOrder = (value?: string) => {
     const parts = String(value || "")
         .split(",")
-        .map((item) => item.trim().toLowerCase())
-        .filter(Boolean)
-        .map((item) => item.split(":")[0])
-        .filter((item) => item === "openrouter" || item === "gemini");
-
-    const unique = Array.from(new Set(parts));
-    return unique.length ? unique.join(",") : DEFAULTS.provider_order;
+        .map((item) => item.trim().toLowerCase().split(":")[0] as ProviderKey)
+        .filter((item): item is ProviderKey => PROVIDERS.includes(item));
+    const legacyTwoProviderOrder = parts.length > 0 && parts.every((provider) => provider === "openrouter" || provider === "gemini");
+    if (legacyTwoProviderOrder) return PROVIDERS.join(",");
+    return Array.from(new Set([...parts, ...PROVIDERS])).join(",");
 };
 
 const loadMap = async () => {
-    const { data, error } = await supabase
-        .from("bot_settings")
-        .select("key,value")
-        .in("key", CONFIG_KEYS);
-
+    const { data, error } = await supabase.from("bot_settings").select("key,value").in("key", CONFIG_KEYS);
     if (error) throw error;
     return Object.fromEntries((data || []).map((item: any) => [item.key, item.value || ""])) as Record<string, string>;
+};
+
+const secretState = (map: Record<string, string>, settingKey: string, envKey: string) => {
+    const database = readSecret(map[settingKey]);
+    const environment = readSecret(process.env[envKey]);
+    return {
+        masked: maskSecret(database || environment),
+        saved: Boolean(database),
+        source: database ? "database" : environment ? "vercel" : "missing",
+    };
+};
+
+const buildSettings = (map: Record<string, string>) => {
+    const openrouter = secretState(map, "openrouter_api_key", "OPENROUTER_API_KEY");
+    const gemini = secretState(map, "gemini_api_key", "GEMINI_API_KEY");
+    const groq = secretState(map, "groq_api_key", "GROQ_API_KEY");
+    const mistral = secretState(map, "mistral_api_key", "MISTRAL_API_KEY");
+    const cerebras = secretState(map, "cerebras_api_key", "CEREBRAS_API_KEY");
+    const cloudflare = secretState(map, "cloudflare_ai_api_token", "CLOUDFLARE_AI_API_TOKEN");
+    const custom = secretState(map, "ai_custom_gateway_api_key", "AI_CUSTOM_GATEWAY_API_KEY");
+    const fish = secretState(map, "fish_audio_api_key", "FISH_AUDIO_API_KEY");
+
+    return {
+        openrouterApiKeyMasked: openrouter.masked, openrouterApiKeySaved: openrouter.saved, openrouterApiKeySource: openrouter.source,
+        geminiApiKeyMasked: gemini.masked, geminiApiKeySaved: gemini.saved, geminiApiKeySource: gemini.source,
+        groqApiKeyMasked: groq.masked, groqApiKeySaved: groq.saved, groqApiKeySource: groq.source,
+        mistralApiKeyMasked: mistral.masked, mistralApiKeySaved: mistral.saved, mistralApiKeySource: mistral.source,
+        cerebrasApiKeyMasked: cerebras.masked, cerebrasApiKeySaved: cerebras.saved, cerebrasApiKeySource: cerebras.source,
+        cloudflareApiTokenMasked: cloudflare.masked, cloudflareApiTokenSaved: cloudflare.saved, cloudflareApiTokenSource: cloudflare.source,
+        customApiKeyMasked: custom.masked, customApiKeySaved: custom.saved, customApiKeySource: custom.source,
+        fishAudioApiKeyMasked: fish.masked, fishAudioApiKeySaved: fish.saved, fishAudioApiKeySource: fish.source,
+        openrouterBaseUrl: map.openrouter_base_url || DEFAULTS.openrouter_base_url,
+        openrouterReferer: map.openrouter_referer || DEFAULTS.openrouter_referer,
+        openrouterTitle: map.openrouter_title || DEFAULTS.openrouter_title,
+        cloudflareAccountId: map.cloudflare_account_id || process.env.CLOUDFLARE_ACCOUNT_ID || "",
+        customBaseUrl: map.ai_custom_gateway_base_url || process.env.AI_CUSTOM_GATEWAY_BASE_URL || "",
+        customModel: map.ai_custom_gateway_model || process.env.AI_CUSTOM_DRAFT_MODEL || "auto",
+        customTiers: map.ai_custom_gateway_tiers || process.env.AI_CUSTOM_GATEWAY_TIERS || "starter,buyer",
+        customWeight: Number(map.ai_custom_gateway_weight || process.env.AI_CUSTOM_GATEWAY_WEIGHT || 5),
+        groqModel: map.groq_model || DEFAULTS.groq_model,
+        groqStarterModel: map.groq_starter_model || DEFAULTS.groq_starter_model,
+        mistralModel: map.mistral_model || DEFAULTS.mistral_model,
+        cerebrasModel: map.cerebras_model || DEFAULTS.cerebras_model,
+        cloudflareModel: map.cloudflare_model || DEFAULTS.cloudflare_model,
+        aiModelOrder: normalizeProviderOrder(map.ai_model_order || map.ai_draft_model_order || DEFAULTS.provider_order),
+        aiStrategyModelOrder: normalizeProviderOrder(map.ai_strategy_model_order || DEFAULTS.provider_order),
+        aiDraftModelOrder: normalizeProviderOrder(map.ai_draft_model_order || DEFAULTS.provider_order),
+        aiReviewModelOrder: normalizeProviderOrder(map.ai_review_model_order || DEFAULTS.provider_order),
+        aiEvaluatorModelOrder: normalizeProviderOrder(map.ai_evaluator_model_order || DEFAULTS.provider_order),
+        aiStrategyEnabled: map.ai_strategy_enabled !== "false",
+        aiReviewEnabled: map.ai_review_enabled !== "false",
+        aiEvaluatorEnabled: map.ai_evaluator_enabled !== "false",
+        aiSharedRateLimitEnabled: map.ai_shared_rate_limit_enabled !== "false",
+        sharedRateLimitReady: Boolean(readSecret(process.env.SUPABASE_SERVICE_ROLE_KEY)),
+        openrouterStrategyModel: normalizeOpenRouterPrimaryModel(map.openrouter_strategy_model || DEFAULTS.openrouter_strategy_model),
+        openrouterDraftModel: normalizeOpenRouterPrimaryModel(map.openrouter_draft_model || DEFAULTS.openrouter_draft_model),
+        openrouterReviewModel: normalizeOpenRouterPrimaryModel(map.openrouter_review_model || DEFAULTS.openrouter_review_model),
+        openrouterEvaluatorModel: normalizeOpenRouterPrimaryModel(map.openrouter_evaluator_model || DEFAULTS.openrouter_evaluator_model),
+        geminiStrategyModel: normalizeGeminiModelName(map.gemini_strategy_model, DEFAULTS.gemini_strategy_model),
+        geminiDraftModel: normalizeGeminiModelName(map.gemini_draft_model, DEFAULTS.gemini_draft_model),
+        geminiReviewModel: normalizeGeminiModelName(map.gemini_review_model, DEFAULTS.gemini_review_model),
+        geminiEvaluatorModel: normalizeGeminiModelName(map.gemini_evaluator_model, DEFAULTS.gemini_evaluator_model),
+        fishAudioEnabled: map.fish_audio_enabled === "true",
+        fishAudioVoiceId: map.fish_audio_voice_id || DEFAULT_FISH_AUDIO_SETTINGS.voiceId,
+        fishAudioModel: normalizeFishAudioModel(map.fish_audio_model || DEFAULT_FISH_AUDIO_SETTINGS.model),
+        fishAudioFrequencyPercent: Number(map.fish_audio_frequency_percent || DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent),
+        fishAudioCooldownMinutes: Number(map.fish_audio_cooldown_minutes || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes),
+        fishAudioMaxChars: Math.min(320, Math.max(60, Number(map.fish_audio_max_chars) || DEFAULT_FISH_AUDIO_SETTINGS.maxChars)),
+    };
 };
 
 export async function GET() {
@@ -105,44 +161,7 @@ export async function GET() {
         const map = await loadMap();
         const statsMap = parseJson(map.ai_gateway_stats || "{}", {});
         const stats = Object.values(statsMap).sort((a: any, b: any) => Number(b.error || 0) - Number(a.error || 0));
-
-        return NextResponse.json({
-            settings: {
-                openrouterApiKeyMasked: maskSecret(readSecret(map.openrouter_api_key) || readSecret(process.env.OPENROUTER_API_KEY)),
-                geminiApiKeyMasked: maskSecret(readSecret(map.gemini_api_key) || readSecret(process.env.GEMINI_API_KEY)),
-                openrouterApiKeySaved: Boolean(readSecret(map.openrouter_api_key)),
-                geminiApiKeySaved: Boolean(readSecret(map.gemini_api_key)),
-                fishAudioApiKeyMasked: maskSecret(readSecret(map.fish_audio_api_key) || readSecret(process.env.FISH_AUDIO_API_KEY)),
-                fishAudioApiKeySaved: Boolean(readSecret(map.fish_audio_api_key)),
-                fishAudioEnabled: map.fish_audio_enabled === "true",
-                fishAudioVoiceId: map.fish_audio_voice_id || DEFAULT_FISH_AUDIO_SETTINGS.voiceId,
-                fishAudioModel: normalizeFishAudioModel(map.fish_audio_model || DEFAULT_FISH_AUDIO_SETTINGS.model),
-                fishAudioFrequencyPercent: Number(map.fish_audio_frequency_percent || DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent),
-                fishAudioCooldownMinutes: Number(map.fish_audio_cooldown_minutes || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes),
-                fishAudioMaxChars: Math.min(320, Math.max(60, Number(map.fish_audio_max_chars) || DEFAULT_FISH_AUDIO_SETTINGS.maxChars)),
-                openrouterBaseUrl: map.openrouter_base_url || DEFAULTS.openrouter_base_url,
-                openrouterReferer: map.openrouter_referer || DEFAULTS.openrouter_referer,
-                openrouterTitle: map.openrouter_title || DEFAULTS.openrouter_title,
-                aiModelOrder: map.ai_model_order || "",
-                aiStrategyModelOrder: normalizeProviderOrder(map.ai_strategy_model_order),
-                aiDraftModelOrder: normalizeProviderOrder(map.ai_draft_model_order),
-                aiReviewModelOrder: normalizeProviderOrder(map.ai_review_model_order),
-                aiEvaluatorModelOrder: normalizeProviderOrder(map.ai_evaluator_model_order),
-                aiStrategyEnabled: map.ai_strategy_enabled !== "false",
-                aiReviewEnabled: map.ai_review_enabled !== "false",
-                aiEvaluatorEnabled: map.ai_evaluator_enabled !== "false",
-                openrouterStrategyModel: normalizeOpenRouterPrimaryModel(map.openrouter_strategy_model || DEFAULTS.openrouter_strategy_model),
-                openrouterDraftModel: normalizeOpenRouterPrimaryModel(map.openrouter_draft_model || DEFAULTS.openrouter_draft_model),
-                openrouterReviewModel: normalizeOpenRouterPrimaryModel(map.openrouter_review_model || DEFAULTS.openrouter_review_model),
-                openrouterEvaluatorModel: normalizeOpenRouterPrimaryModel(map.openrouter_evaluator_model || DEFAULTS.openrouter_evaluator_model),
-                geminiStrategyModel: normalizeGeminiModelName(map.gemini_strategy_model, DEFAULTS.gemini_strategy_model),
-                geminiDraftModel: normalizeGeminiModelName(map.gemini_draft_model, DEFAULTS.gemini_draft_model),
-                geminiReviewModel: normalizeGeminiModelName(map.gemini_review_model, DEFAULTS.gemini_review_model),
-                geminiEvaluatorModel: normalizeGeminiModelName(map.gemini_evaluator_model, DEFAULTS.gemini_evaluator_model),
-            },
-            recentEvents: parseJson(map.ai_gateway_recent_events || "[]", []),
-            stats,
-        });
+        return NextResponse.json({ settings: buildSettings(map), recentEvents: parseJson(map.ai_gateway_recent_events || "[]", []), stats, routerSnapshot: aiGatewayRouter.snapshot() });
     } catch (error: any) {
         return NextResponse.json({ error: error?.message || "erro" }, { status: 500 });
     }
@@ -151,18 +170,20 @@ export async function GET() {
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
+        const providerOrder = normalizeProviderOrder(body.aiModelOrder || body.aiDraftModelOrder);
         const rows: { key: string; value: string }[] = [
-            { key: "openrouter_base_url", value: String(body.openrouterBaseUrl || DEFAULTS.openrouter_base_url).trim() },
-            { key: "openrouter_referer", value: String(body.openrouterReferer || DEFAULTS.openrouter_referer).trim() },
-            { key: "openrouter_title", value: String(body.openrouterTitle || DEFAULTS.openrouter_title).trim() },
-            { key: "ai_model_order", value: normalizeProviderOrder(body.aiModelOrder) },
-            { key: "ai_strategy_model_order", value: normalizeProviderOrder(body.aiStrategyModelOrder) },
-            { key: "ai_draft_model_order", value: normalizeProviderOrder(body.aiDraftModelOrder) },
-            { key: "ai_review_model_order", value: normalizeProviderOrder(body.aiReviewModelOrder) },
-            { key: "ai_evaluator_model_order", value: normalizeProviderOrder(body.aiEvaluatorModelOrder) },
+            { key: "openrouter_base_url", value: cleanText(body.openrouterBaseUrl, DEFAULTS.openrouter_base_url) },
+            { key: "openrouter_referer", value: cleanText(body.openrouterReferer, DEFAULTS.openrouter_referer) },
+            { key: "openrouter_title", value: cleanText(body.openrouterTitle, DEFAULTS.openrouter_title) },
+            { key: "ai_model_order", value: providerOrder },
+            { key: "ai_strategy_model_order", value: normalizeProviderOrder(body.aiStrategyModelOrder || providerOrder) },
+            { key: "ai_draft_model_order", value: normalizeProviderOrder(body.aiDraftModelOrder || providerOrder) },
+            { key: "ai_review_model_order", value: normalizeProviderOrder(body.aiReviewModelOrder || providerOrder) },
+            { key: "ai_evaluator_model_order", value: normalizeProviderOrder(body.aiEvaluatorModelOrder || providerOrder) },
             { key: "ai_strategy_enabled", value: body.aiStrategyEnabled === false ? "false" : "true" },
             { key: "ai_review_enabled", value: body.aiReviewEnabled === false ? "false" : "true" },
             { key: "ai_evaluator_enabled", value: body.aiEvaluatorEnabled === false ? "false" : "true" },
+            { key: "ai_shared_rate_limit_enabled", value: body.aiSharedRateLimitEnabled === false ? "false" : "true" },
             { key: "openrouter_strategy_model", value: normalizeOpenRouterPrimaryModel(body.openrouterStrategyModel || DEFAULTS.openrouter_strategy_model) },
             { key: "openrouter_draft_model", value: normalizeOpenRouterPrimaryModel(body.openrouterDraftModel || DEFAULTS.openrouter_draft_model) },
             { key: "openrouter_review_model", value: normalizeOpenRouterPrimaryModel(body.openrouterReviewModel || DEFAULTS.openrouter_review_model) },
@@ -171,26 +192,86 @@ export async function POST(req: NextRequest) {
             { key: "gemini_draft_model", value: normalizeGeminiModelName(body.geminiDraftModel, DEFAULTS.gemini_draft_model) },
             { key: "gemini_review_model", value: normalizeGeminiModelName(body.geminiReviewModel, DEFAULTS.gemini_review_model) },
             { key: "gemini_evaluator_model", value: normalizeGeminiModelName(body.geminiEvaluatorModel, DEFAULTS.gemini_evaluator_model) },
+            { key: "groq_model", value: cleanText(body.groqModel, DEFAULTS.groq_model) },
+            { key: "groq_starter_model", value: cleanText(body.groqStarterModel, DEFAULTS.groq_starter_model) },
+            { key: "mistral_model", value: cleanText(body.mistralModel, DEFAULTS.mistral_model) },
+            { key: "cerebras_model", value: cleanText(body.cerebrasModel, DEFAULTS.cerebras_model) },
+            { key: "cloudflare_model", value: cleanText(body.cloudflareModel, DEFAULTS.cloudflare_model) },
+            { key: "cloudflare_account_id", value: cleanText(body.cloudflareAccountId) },
+            { key: "ai_custom_gateway_base_url", value: cleanText(body.customBaseUrl, "", 1000) },
+            { key: "ai_custom_gateway_model", value: cleanText(body.customModel, "auto") },
+            { key: "ai_custom_gateway_tiers", value: cleanText(body.customTiers, "starter,buyer") },
+            { key: "ai_custom_gateway_weight", value: String(clampNumber(body.customWeight, 1, 40, 5)) },
             { key: "fish_audio_enabled", value: body.fishAudioEnabled === true ? "true" : "false" },
-            { key: "fish_audio_voice_id", value: String(body.fishAudioVoiceId || DEFAULT_FISH_AUDIO_SETTINGS.voiceId).trim() },
+            { key: "fish_audio_voice_id", value: cleanText(body.fishAudioVoiceId, DEFAULT_FISH_AUDIO_SETTINGS.voiceId) },
             { key: "fish_audio_model", value: normalizeFishAudioModel(body.fishAudioModel || DEFAULT_FISH_AUDIO_SETTINGS.model) },
-            { key: "fish_audio_frequency_percent", value: String(Math.min(100, Math.max(1, Number(body.fishAudioFrequencyPercent) || DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent))) },
-            { key: "fish_audio_cooldown_minutes", value: String(Math.min(1440, Math.max(1, Number(body.fishAudioCooldownMinutes) || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes))) },
-            { key: "fish_audio_max_chars", value: String(Math.min(320, Math.max(60, Number(body.fishAudioMaxChars) || DEFAULT_FISH_AUDIO_SETTINGS.maxChars))) },
+            { key: "fish_audio_frequency_percent", value: String(clampNumber(body.fishAudioFrequencyPercent, 1, 100, DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent)) },
+            { key: "fish_audio_cooldown_minutes", value: String(clampNumber(body.fishAudioCooldownMinutes, 1, 1440, DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes)) },
+            { key: "fish_audio_max_chars", value: String(clampNumber(body.fishAudioMaxChars, 60, 320, DEFAULT_FISH_AUDIO_SETTINGS.maxChars)) },
         ];
 
-        const openrouterApiKey = String(body.openrouterApiKey || "").trim();
-        const geminiApiKey = String(body.geminiApiKey || "").trim();
-        const fishAudioApiKey = String(body.fishAudioApiKey || "").trim();
-        if (openrouterApiKey && !openrouterApiKey.includes("*")) rows.push({ key: "openrouter_api_key", value: openrouterApiKey });
-        if (geminiApiKey && !geminiApiKey.includes("*")) rows.push({ key: "gemini_api_key", value: geminiApiKey });
-        if (fishAudioApiKey && !fishAudioApiKey.includes("*")) rows.push({ key: "fish_audio_api_key", value: fishAudioApiKey });
+        const secretInputs: Array<[string, unknown]> = [
+            ["openrouter_api_key", body.openrouterApiKey], ["gemini_api_key", body.geminiApiKey],
+            ["groq_api_key", body.groqApiKey], ["mistral_api_key", body.mistralApiKey],
+            ["cerebras_api_key", body.cerebrasApiKey], ["cloudflare_ai_api_token", body.cloudflareApiToken],
+            ["ai_custom_gateway_api_key", body.customApiKey], ["fish_audio_api_key", body.fishAudioApiKey],
+        ];
+        for (const [key, rawValue] of secretInputs) {
+            const value = cleanText(rawValue, "", 4000);
+            if (value && !value.includes("*")) rows.push({ key, value });
+        }
 
         const { error } = await supabase.from("bot_settings").upsert(rows);
         if (error) throw error;
-        return NextResponse.json({ ok: true });
+        return NextResponse.json({ ok: true, savedAt: new Date().toISOString() });
     } catch (error: any) {
         return NextResponse.json({ error: error?.message || "erro" }, { status: 500 });
+    }
+}
+
+const fetchWithTimeout = (url: string, init: RequestInit = {}) => fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
+
+export async function PUT(req: NextRequest) {
+    try {
+        const body = await req.json();
+        const provider = cleanText(body.provider).toLowerCase() as ProviderKey;
+        if (!PROVIDERS.includes(provider)) return NextResponse.json({ error: "provedor inválido" }, { status: 400 });
+        const map = await loadMap();
+        const startedAt = Date.now();
+        let response: Response;
+
+        if (provider === "gemini") {
+            const key = readSecret(body.apiKey) || readSecret(map.gemini_api_key) || readSecret(process.env.GEMINI_API_KEY);
+            if (!key) throw new Error("cole ou salve a chave Gemini primeiro");
+            response = await fetchWithTimeout(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`);
+        } else if (provider === "openrouter") {
+            const key = readSecret(body.apiKey) || readSecret(map.openrouter_api_key) || readSecret(process.env.OPENROUTER_API_KEY);
+            if (!key) throw new Error("cole ou salve a chave OpenRouter primeiro");
+            response = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", { headers: { Authorization: `Bearer ${key}` } });
+        } else {
+            const config = {
+                groq: { key: readSecret(body.apiKey) || readSecret(map.groq_api_key) || readSecret(process.env.GROQ_API_KEY), base: "https://api.groq.com/openai/v1" },
+                mistral: { key: readSecret(body.apiKey) || readSecret(map.mistral_api_key) || readSecret(process.env.MISTRAL_API_KEY), base: "https://api.mistral.ai/v1" },
+                cerebras: { key: readSecret(body.apiKey) || readSecret(map.cerebras_api_key) || readSecret(process.env.CEREBRAS_API_KEY), base: "https://api.cerebras.ai/v1" },
+                cloudflare: { key: readSecret(body.apiKey) || readSecret(map.cloudflare_ai_api_token) || readSecret(process.env.CLOUDFLARE_AI_API_TOKEN), base: "" },
+                custom: { key: readSecret(body.apiKey) || readSecret(map.ai_custom_gateway_api_key) || readSecret(process.env.AI_CUSTOM_GATEWAY_API_KEY), base: cleanText(body.baseUrl || map.ai_custom_gateway_base_url || process.env.AI_CUSTOM_GATEWAY_BASE_URL, "", 1000).replace(/\/$/, "") },
+            }[provider];
+            if (!config?.key) throw new Error(`cole ou salve a chave ${provider} primeiro`);
+            if (provider === "cloudflare") {
+                const accountId = cleanText(body.accountId || map.cloudflare_account_id || process.env.CLOUDFLARE_ACCOUNT_ID);
+                if (!accountId) throw new Error("informe o Account ID da Cloudflare");
+                response = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search`, { headers: { Authorization: `Bearer ${config.key}` } });
+            } else {
+                if (!config.base) throw new Error("informe a URL base do gateway");
+                response = await fetchWithTimeout(`${config.base}/models`, { headers: { Authorization: `Bearer ${config.key}` } });
+            }
+        }
+
+        const text = await response.text();
+        if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 240)}`);
+        return NextResponse.json({ ok: true, latencyMs: Date.now() - startedAt, provider });
+    } catch (error: any) {
+        return NextResponse.json({ error: error?.message || "teste falhou" }, { status: 400 });
     }
 }
 

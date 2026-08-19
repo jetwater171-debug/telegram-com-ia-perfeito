@@ -1,5 +1,7 @@
 export type SalesProduct = 'video_call' | 'social_meetup' | 'vip' | 'custom_photo' | 'custom_video' | 'private_number' | 'private_chat' | 'erotic_audio' | 'evaluation' | 'gift';
 
+export const VIP_PRICE = 19.90;
+
 export type AdaptiveOfferPlan = {
     product: SalesProduct;
     tier: 'entry' | 'core' | 'premium' | 'voluntary';
@@ -147,9 +149,9 @@ const PRODUCT_OFFERS: Record<Exclude<SalesProduct, 'gift'>, {
         premium: [750, 'Encontro Estendido com a Lari', 'um encontro estendido de ate quatro horas, sujeito a confirmacao de disponibilidade'],
     },
     vip: {
-        entry: [14.90, 'VIP Mensal Promocional', 'um mes de acesso ao VIP'],
-        core: [24.90, 'VIP Vitalicio Lari', 'acesso vitalicio ao VIP completo'],
-        premium: [34.80, 'VIP Vitalicio + Avaliacao', 'VIP vitalicio com avaliacao personalizada'],
+        entry: [VIP_PRICE, 'VIP Lari', 'acesso ao VIP da Lari'],
+        core: [VIP_PRICE, 'VIP Lari', 'acesso ao VIP da Lari'],
+        premium: [VIP_PRICE, 'VIP Lari', 'acesso ao VIP da Lari'],
     },
     custom_photo: {
         entry: [9.90, 'Foto Personalizada Simples', 'uma foto personalizada simples'],
@@ -220,6 +222,17 @@ const createOfferPlan = ({
             description: 'Encontro com Larissa Morais',
             format: 'um encontro de ate duas horas, com transporte combinado separadamente',
             explicitBudget: null,
+            valueSource: 'standard',
+        };
+    }
+    if (product === 'vip') {
+        return {
+            product,
+            tier: 'core',
+            value: VIP_PRICE,
+            description: 'VIP Lari',
+            format: 'acesso ao VIP da Lari',
+            explicitBudget,
             valueSource: 'standard',
         };
     }
@@ -295,8 +308,11 @@ export const evaluateSalesTiming = ({
     const acceptedOffer = recentOffer && isOfferAcceptance(userText);
     const salesContextActive = Boolean(detectedProduct || engagedContinuation || directCheckout || askedPrice || acceptedOffer);
     const canPitchPrice = directCheckout || askedPrice || recentOffer || nurtureTurns >= 3;
-    const canGeneratePayment = directCheckout || acceptedOffer;
     const explicitBudget = extractExplicitBudget(userText);
+    const fixedVipBudgetGap = activeProduct === 'vip'
+        && explicitBudget !== null
+        && explicitBudget < VIP_PRICE;
+    const canGeneratePayment = (directCheckout || acceptedOffer) && !fixedVipBudgetGap;
     const offerPlan = createOfferPlan({
         product: activeProduct,
         explicitBudget,
@@ -316,6 +332,7 @@ export const evaluateSalesTiming = ({
         acceptedOffer,
         canPitchPrice,
         canGeneratePayment,
+        fixedVipBudgetGap,
         explicitBudget,
         recentOfferValue: recentOfferDetails?.value ?? null,
         offerPlan,

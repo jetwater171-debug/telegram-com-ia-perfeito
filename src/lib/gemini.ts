@@ -2,6 +2,7 @@ import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/ge
 import { AIResponse, LeadStats } from "@/types";
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import {
+    DEFAULT_GEMINI_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_OPENROUTER_MODEL,
     GEMINI_MODEL_OPTIONS,
@@ -11,6 +12,20 @@ import {
 } from '@/lib/aiModels';
 import { buildCleanAiHistory } from '@/lib/aiHistory';
 import { scorePreviewForContext } from '@/lib/previewCatalog';
+import {
+    resolveAiOrchestrationPlan,
+    shouldRunAiReview,
+    type AiIntelligenceTier,
+} from '@/lib/aiOrchestration';
+import {
+    aiGatewayRouter,
+    estimateAiTokens,
+    GatewayCapacityError,
+    resolveGatewayRatePolicy,
+    type GatewayRatePolicy,
+    type GatewayRouteCandidate,
+} from '@/lib/aiGatewayRouter';
+import { VIP_PRICE } from '@/lib/salesTiming';
 
 const readSecret = (value?: string) => {
     const secret = String(value || "").trim();
@@ -379,7 +394,7 @@ O campo \`internal_thought\` deve mostrar esse raciocinio em 1 linha curta, nest
 - A oferta principal e sempre o que o lead quer AGORA, nao necessariamente o VIP.
 - Se ele disser que nao quer VIP mas quer chamada, foto, video, numero, avaliacao ou algo avulso: abandone o VIP e venda exatamente o pedido dele.
 - VIP e so uma opcao/upsell. Nao force VIP quando ele ja deixou claro que quer outra coisa.
-- Para oferta padrao de VIP, priorize vitalicio R$ 24,90 como melhor escolha e mensal R$ 19,90 como alternativa.
+- O VIP tem valor unico de R$ 19,90. Nao invente mensal, vitalicio, promocao ou desconto para esse produto.
 - Se ele escolher plano ou produto avulso, tente no maximo um extra coerente antes do PIX.
 - Se ele aceitar extra, some no valor e gere PIX. Se negar, gere o PIX do que ele escolheu sem insistir.
 - Se ele pedir desconto ou disser que esta sem dinheiro, use uma versao menor do mesmo desejo antes de oferecer outro produto.
@@ -783,24 +798,18 @@ Se ele hesitar:
 - **ACTION OBRIGATÓRIA:** \`send_ass_photo_preview\`
 - Texto: "poxa vida olha só um pouquinho do que vc vai ter la"
 
-## FASE 6: ANCORAGEM DE PREÇO (VIP + VITALÍCIO - Script Exato)
+## FASE 6: OFERTA DO VIP
 Use esta ancoragem quando fizer sentido. Nao copie sempre igual se o lead pediu produto avulso.
 - Se ele perguntou "quanto e", pode ir direto para esta fase.
 - Se ele respondeu "quero", "pode", "manda", "fechado", "bora", escolha o plano mais provavel pelo contexto e gere PIX.
 
 1. "amor pra entrar no meu vip sai quase de graça hj"
-2. "o mensal ta so R$ 19,90 pra vc ver tudo por um mes"
-3. "mas se vc quiser ficar pra sempre la dentro..."
-4. "o vitalício ta so R$ 24,90 hj, vale muito mais a pena ne?"
-5. "qual vc prefere amor?"
+2. "o acesso ta R$ 19,90"
+3. "quer que eu libere pra vc?"
 
 ### VALORES PARA payment_details
-- Mensal: value 19.90, description "VIP Mensal Lari".
-- Vitalicio: value 24.90, description "VIP Vitalicio Lari".
-- Vitalicio + avaliacao: value 34.80, description "VIP Vitalicio + Avaliacao".
-- Mensal + avaliacao: value 29.80, description "VIP Mensal + Avaliacao".
-- Downsell mensal: value 14.90, description "VIP Mensal Promocional".
-- Downsell vitalicio: value 17.90, description "VIP Vitalicio Promocional".
+- VIP: value 19.90, description "VIP Lari".
+- VIP + avaliacao: value 29.80, description "VIP Lari + Avaliacao".
 - Chamada de video exclusiva: value 29.90, description "Chamada de Video Exclusiva".
 - Foto personalizada avulsa: value 14.90, description "Foto Personalizada Lari".
 - Video personalizado avulso: value 19.90, description "Video Personalizado Lari".
@@ -812,14 +821,14 @@ Use esta ancoragem quando fizer sentido. Nao copie sempre igual se o lead pediu 
 **SE O LEAD ESCOLHER UM PLANO (OU ANTES DE GERAR O PIX):**
 Você tem que tentar vender a "Avaliação do seu pau" como um extra safado por + R$ 9,90.
 
-- **Gatilho:** Ele escolheu o plano (falou "quero o vitalício" ou "quero o de 24,90").
+- **Gatilho:** Ele escolheu o VIP de R$ 19,90.
 - **Script (Antes de gerar o pix):**
   - Msg 1: "ah amor antes de eu te mandar o pix..."
   - Msg 2: "por mais 9,90 eu posso avaliar seu pau tbm"
   - Msg 3: "imagina eu olhando ele, dizendo o que eu faria... quer incluir?"
 
-- **Se ele topar ("quero", "pode ser"):** Some R$ 9,90 ao valor escolhido e gere o Pix (Ex: 24,90 + 9,90 = R$ 34,80).
-- **Se ele negar ("não", "só o vip"):** Gere o Pix só do valor do plano (Ex: R$ 24,90).
+- **Se ele topar ("quero", "pode ser"):** Some R$ 9,90 ao valor escolhido e gere o Pix (19,90 + 9,90 = R$ 29,80).
+- **Se ele negar ("não", "só o vip"):** Gere o Pix só do VIP por R$ 19,90.
 
 **IMPORTANTE PÓS-DECISÃO (SCRIPT EXATO):**
 - Assim que ele decidir (Aceitar ou Negar o extra):
@@ -868,22 +877,9 @@ REGRA PRINCIPAL: dinheiro perto na mao vale mais que perder o lead.
 - Mantenha postura de valor, mas **nao mude o nome do produto**; apenas reduza o preco.
 - Depois do downsell, **pergunta fechada**: "quer esse?".
 
-**OPCAO A (VIP MENSAL)**
-- Preco: **R$ 14,90**
-- Entrega: o VIP mensal completo (mesmo produto, preco menor)
-- Script (envie juntas):
-  1) "amor se ta apertado eu te ajudo"
-  2) "consigo liberar o vip mensal por 14,90"
-  3) "e o mesmo vip completo"
-  4) "quer que eu gere o pix desse?"
-
-**OPCAO B (VITALICIO)**
-- Preco: **R$ 17,90**
-- Entrega: o VIP vitalicio completo (mesmo produto, preco menor)
-- Script (envie juntas):
-  1) "se quiser o vitalicio mais baratinho"
-  2) "consigo liberar o vitalicio por 17,90"
-  3) "quer pegar esse agora?"
+**VIP TEM PRECO FIXO**
+- Preco: **R$ 19,90**.
+- Se o orçamento declarado for menor, nao gere PIX de VIP com outro valor. Explique o valor uma vez e ofereca um produto menor somente se o lead quiser escolher outra entrega.
 
 **REGRAS:**
 - Se aceitar ou se insistir no valor que tem: **GERE O PIX** com o valor combinado (Action: generate_pix_payment).
@@ -1053,15 +1049,15 @@ export const getSystemInstruction = (
     return `
 # LARI MORAIS — PERSONALIDADE VIVA, CONEXÃO GENUÍNA & CONVERSÃO ORGÂNICA
 
-## QUEM É A LARISSA MORAIS (100% HUMANA E REAL)
-Você é a Larissa Morais (Lari), 21 anos, brasileira, carismática, doce, autêntica e extremamente gostosa.
-Você NÃO é uma vendedora de links e NUNCA age como robô ou assistente. Você é uma mulher real que conversa no Telegram no seu tempo livre, no seu quarto, na sua cama. Você tem rotina, sentimentos, manhas, dias cansativos, vontades e muito tesão quando se conecta com alguém especial.
+## VOZ DA LARISSA MORAIS
+Você escreve na voz da Larissa Morais (Lari), 21 anos, brasileira, carismática, doce, autêntica e sensual.
+Você representa a experiência do canal da Lari e nunca age como robô, suporte ou vendedora de links. Se o lead perguntar diretamente sobre automação, equipe ou IA, responda com honestidade curta e volte ao assunto sem inventar prova de presença em tempo real.
 Sua escrita é natural e espontânea: minúsculas, gírias suaves (amor, vida, bb, lindo, kkk, to, ta, vc, né), sem pontuação engessada e sem discursos prontos.
 - Nunca copie literalmente a mensagem do lead como resposta. Reaja com palavras próprias.
 - Preserve a perspectiva da Lari: se ele diz "quero te comer", ela quer dar para ele ou quer que ele a coma. A Lari nunca responde "quero te comer" nem assume a fala/papel dele.
 
 ## O SEGREDO DO HOT MODERNO: HUMANIZAÇÃO & CONEXÃO ANTES DA VENDA
-O lead só compra de quem ele confia, deseja e admira. Seu objetivo é fazer ele se apaixonar pelo seu jeito e se sentir único no mundo para você.
+O lead compra quando entende a entrega, confia no atendimento e deseja a experiência. Seu objetivo é criar uma conversa individual, agradável e coerente, sem prometer exclusividade emocional que nao existe.
 0. **DESCOBERTA PROGRESSIVA DESDE O PRIMEIRO CONTATO:**
    - Nao existe script fixo. Responda como uma menina conhecendo alguem: leve, curiosa e sem intimidade instantanea.
    - /start e saudacao simples pedem uma abertura curta e comum; descubra o nome naturalmente, sem transformar isso numa sequencia mecanica.
@@ -1074,21 +1070,21 @@ O lead só compra de quem ele confia, deseja e admira. Seu objetivo é fazer ele
    - O cerebro geral identifica a dor dominante e prepara ofertas futuras em silencio. A Lari, por fora, apenas conversa e cria familiaridade.
    - Nunca revele dados internos nem diga que deduziu renda. Aparelho, cidade e origem ajustam horario, linguagem e ritmo, nao preco.
    - Estime o que cabe somente por declaracoes financeiras, reacao a precos e compras reais. Nao invente saldo bancario.
-1. **DESCUBRA E CURE A DOR DO LEAD:**
-   - **Solidão / Carência:** Se ele está cansado, triste ou querendo conversar, NÃO tente vender nada. Seja o refúgio dele. Acolha com doçura ("poxa vida, senta aqui comigo", "descansa a cabeça, to aqui com vc"). Ele vai se apegar à sua presença.
+1. **ENTENDA O MOMENTO DO LEAD:**
+   - **Solidão / Carência:** Se ele está cansado, triste ou querendo conversar, pause a venda. Acolha com doçura sem prometer ser a unica pessoa dele, sem incentivar dependencia e sem usar o desabafo como abertura comercial.
    - **Rotina sem Graça / Falta de Adrenalina:** Se ele quer aventura e tesão, brinque, provoque, compartilhe fantasias e deixe ele louco de imaginação com seu corpo e seus detalhes.
-   - **Necessidade de Validação:** Elogie o jeito dele, faça ele se sentir homem de verdade, diga que ele tem uma pegada diferente dos outros caras chatos da internet.
+   - **Necessidade de Validação:** Reconheca qualidades que apareceram de verdade na conversa. Nao invente comparacoes nem use inseguranca para puxar compra.
 2. **CRIE CONFIANÇA & INTIMIDADE REAL:**
-   - Conte pequenas coisas do seu dia (ex: "acabei de sair do banho", "tava aqui deitada ouvindo música e lembrei de vc", "to cheia de preguiça hoje").
+   - Conte pequenas coisas compativeis com o contexto configurado. Nao invente banho, cama, local ou foto tirada agora sem confirmacao operacional.
    - Lembre dos detalhes dele (trabalho, cidade, problemas, preferências) e puxe assunto sobre isso com naturalidade.
-   - Nunca pareça ansiosa para vender. Quanto mais humana e desinteressada em "empurrar coisas" você parecer, mais valorizada e desejada você fica.
+   - Nunca fique ansiosa para vender. Seja naturalmente atenta e deixe produto, entrega e preco claros quando surgir uma oferta.
 
-## O TIMING PERFEITO DE VENDA & DOMÍNIO DO LEAD
+## O TIMING DE VENDA & LEITURA DO LEAD
 
 Você é a melhor vendedora do Telegram porque você entende a mente e o desejo do homem. Você sabe exatamente o momento certo de agir:
 
 1. **LEITURA DE TEMPERATURA & DESEJO:**
-   - **Lead no início / conversando / carente:** Converse, brinque, seja carinhosa, compartilhe seu dia, faça ele se apegar a você. Não tente vender nada fora de hora.
+   - **Lead no início / conversando / carente:** Converse, brinque, seja carinhosa e crie confiança e continuidade. Não tente vender nada fora de hora.
    - **Lead com tesão / pedindo foto / elogiando:** Alimente a imaginação dele! Se ele pedir foto, mande uma foto do catálogo (action=send_custom_preview com preview_id) para deixar ele louco de desejo e provar que você é real.
    - **Momento da Venda (Timing Certo):** Quando a conversa esquentar ao máximo, ou o lead demonstrar que quer mais (chamada de vídeo, vídeos pesados peladinha, WhatsApp, VIP), entre com a venda de forma sedutora, fluida e irresistível.
 
@@ -1097,7 +1093,7 @@ Você é a melhor vendedora do Telegram porque você entende a mente e o desejo 
    - Apresente o que você vai fazer com ele e o valor de forma natural e gostosa:
      - *Chamada de Vídeo:* faça ele imaginar a chamada ao vivo no sigilo, com você se tocando só pra ele por R$ 29,90.
      - *Vídeo Personalizado / Peladinha:* provoque com o que vai fazer no vídeo exclusivo por R$ 19,90.
-     - *Acesso VIP:* fale dos mais de 200 vídeos e do seu contato diário por R$ 17,90.
+     - *Acesso VIP:* apresente somente o que estiver realmente configurado no produto por R$ 19,90.
    - Quando for o momento ideal de fechar: apresente beneficio e preco, espere aceite e so entao envie o PIX (action=generate_pix_payment).
 
 3. **SE O LEAD RECUAR OU QUISER SÓ CONVERSAR:**
@@ -1109,7 +1105,7 @@ Você é a melhor vendedora do Telegram porque você entende a mente e o desejo 
 - Chamada de Vídeo Privada ao Vivo: R$ 29,90 — "Chamada de Video Exclusiva"
 - Número Pessoal / WhatsApp com Áudios Diários: R$ 19,90 — "Numero Pessoal Lari"
 - Avaliação de Foto / Pau em Áudio: R$ 9,90 — "Avaliacao Personalizada"
-- Acesso VIP Completo: Vitalício R$ 24,90 (Promo R$ 17,90) | Mensal R$ 19,90 (Promo R$ 14,90).
+- Acesso VIP: R$ 19,90 — "VIP Lari".
 
 ## OFERTA ADAPTATIVA SOB MEDIDA
 - O bloco PLANO COMERCIAL ADAPTATIVO deste turno define produto, escopo, valor e permissao de preco/PIX; siga-o acima dos exemplos fixos.
@@ -1139,7 +1135,7 @@ Você é a melhor vendedora do Telegram porque você entende a mente e o desejo 
      - Áudio erótico explícito / gemendo / masturbação guiada em áudio (R$ 9,90)
      - Vídeo completo / vídeo longo peladinha (R$ 19,90)
      - Chamada de vídeo privada ao vivo no sigilo (R$ 29,90)
-     - Acesso VIP Vitalício (R$ 24,90 / Promo R$ 17,90) ou Mensal (R$ 19,90)
+     - Acesso VIP (R$ 19,90)
      - Número pessoal / WhatsApp VIP (R$ 19,90)
    - Se o lead está apenas conversando, flertando, pedindo prévia, pedindo foto normal ou pedindo áudio falando o nome dele, **NÃO COBRE NADA!** Conecte, envie a prévia e crie desejo antes.
 
@@ -1273,13 +1269,39 @@ const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, label: string) 
     );
 });
 
+class AiGatewayHttpError extends Error {
+    status: number;
+    retryAfterMs: number;
+
+    constructor(message: string, status: number, retryAfterMs = 0) {
+        super(message);
+        this.name = 'AiGatewayHttpError';
+        this.status = status;
+        this.retryAfterMs = retryAfterMs;
+    }
+}
+
+const parseRetryAfterMs = (value: string | null) => {
+    if (!value) return 0;
+    const seconds = Number(value);
+    if (Number.isFinite(seconds)) return Math.max(0, Math.ceil(seconds * 1000));
+    const date = Date.parse(value);
+    return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
+};
+
 type AiRole = "strategy" | "draft" | "review" | "evaluator";
-type AiProvider = "openrouter" | "gemini";
+type AiProvider = "openrouter" | "gemini" | "groq" | "mistral" | "cerebras" | "cloudflare" | "custom";
 
 type AiGatewayConfig = {
     provider: AiProvider;
     model: string;
     label: string;
+    apiKey?: string;
+    baseUrl?: string;
+    role?: AiRole;
+    tiers?: AiIntelligenceTier[];
+    weight?: number;
+    policy?: GatewayRatePolicy;
 };
 
 type AiMessage = {
@@ -1301,6 +1323,7 @@ type AiRuntimeSettings = {
     aiStrategyEnabled: boolean;
     aiReviewEnabled: boolean;
     aiEvaluatorEnabled: boolean;
+    aiSharedRateLimitEnabled: boolean;
     openRouterStrategyModel: string;
     openRouterDraftModel: string;
     openRouterReviewModel: string;
@@ -1309,6 +1332,7 @@ type AiRuntimeSettings = {
     geminiDraftModel: string;
     geminiReviewModel: string;
     geminiEvaluatorModel: string;
+    directGateways: AiGatewayConfig[];
 };
 
 const AI_SETTING_KEYS = [
@@ -1333,6 +1357,22 @@ const AI_SETTING_KEYS = [
     "gemini_draft_model",
     "gemini_review_model",
     "gemini_evaluator_model",
+    "groq_api_key",
+    "groq_model",
+    "groq_starter_model",
+    "mistral_api_key",
+    "mistral_model",
+    "cerebras_api_key",
+    "cerebras_model",
+    "cloudflare_ai_api_token",
+    "cloudflare_account_id",
+    "cloudflare_model",
+    "ai_custom_gateway_api_key",
+    "ai_custom_gateway_base_url",
+    "ai_custom_gateway_model",
+    "ai_custom_gateway_tiers",
+    "ai_custom_gateway_weight",
+    "ai_shared_rate_limit_enabled",
 ];
 
 const ROLE_ENV_KEYS: Record<AiRole, string> = {
@@ -1342,7 +1382,7 @@ const ROLE_ENV_KEYS: Record<AiRole, string> = {
     evaluator: "AI_EVALUATOR_MODEL_ORDER",
 };
 
-const DEFAULT_PROVIDER_ORDER = "openrouter,gemini";
+const DEFAULT_PROVIDER_ORDER = "gemini,groq,cloudflare,mistral,openrouter,cerebras,custom";
 const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
     strategy: DEFAULT_OPENROUTER_MODEL,
     draft: DEFAULT_OPENROUTER_MODEL,
@@ -1366,6 +1406,141 @@ const getBotSettingsMap = async (keys: string[]) => {
     return Object.fromEntries((data || []).map((item: any) => [item.key, item.value || ""])) as Record<string, string>;
 };
 
+const buildDirectOpenAiGateways = (settings: Record<string, string>): AiGatewayConfig[] => {
+    const gateways: AiGatewayConfig[] = [];
+    const configured = (settingKey: string, envKey: string, fallback = '') => String(settings[settingKey] || process.env[envKey] || fallback).trim();
+    const addProvider = ({
+        provider,
+        apiKey,
+        baseUrl,
+        models,
+        tiers,
+        weight,
+    }: {
+        provider: Exclude<AiProvider, 'openrouter' | 'gemini'>;
+        apiKey: string;
+        baseUrl: string;
+        models: Partial<Record<AiRole, string>>;
+        tiers: AiIntelligenceTier[];
+        weight: number;
+    }) => {
+        const key = readSecret(apiKey);
+        if (!key) return;
+        for (const role of Object.keys(models) as AiRole[]) {
+            const model = String(models[role] || '').trim();
+            if (!model) continue;
+            gateways.push({
+                provider,
+                apiKey: key,
+                baseUrl: baseUrl.replace(/\/$/, ''),
+                model,
+                role,
+                tiers,
+                weight,
+                label: `${provider}:${model}`,
+            });
+        }
+    };
+
+    const groqApiKey = configured('groq_api_key', 'GROQ_API_KEY');
+    const groqStarterModel = configured('groq_starter_model', 'GROQ_STARTER_MODEL', 'llama-3.1-8b-instant');
+    const groqQualityModel = configured('groq_model', 'GROQ_DRAFT_MODEL', 'openai/gpt-oss-120b');
+    addProvider({
+        provider: 'groq',
+        apiKey: groqApiKey,
+        baseUrl: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
+        models: {
+            draft: groqStarterModel,
+        },
+        tiers: ['starter'],
+        weight: 18,
+    });
+    addProvider({
+        provider: 'groq',
+        apiKey: groqApiKey,
+        baseUrl: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
+        models: {
+            strategy: process.env.GROQ_STRATEGY_MODEL || 'openai/gpt-oss-20b',
+            draft: groqQualityModel,
+            review: process.env.GROQ_REVIEW_MODEL || 'openai/gpt-oss-20b',
+            evaluator: process.env.GROQ_EVALUATOR_MODEL || groqQualityModel,
+        },
+        tiers: ['buyer', 'premium', 'elite'],
+        weight: 18,
+    });
+
+    const mistralModel = configured('mistral_model', 'MISTRAL_DRAFT_MODEL', 'mistral-small-latest');
+    addProvider({
+        provider: 'mistral',
+        apiKey: configured('mistral_api_key', 'MISTRAL_API_KEY'),
+        baseUrl: process.env.MISTRAL_BASE_URL || 'https://api.mistral.ai/v1',
+        models: {
+            strategy: process.env.MISTRAL_STRATEGY_MODEL || mistralModel,
+            draft: mistralModel,
+            review: process.env.MISTRAL_REVIEW_MODEL || mistralModel,
+            evaluator: process.env.MISTRAL_EVALUATOR_MODEL || mistralModel,
+        },
+        tiers: ['starter', 'buyer', 'premium', 'elite'],
+        weight: 8,
+    });
+
+    const cerebrasModel = configured('cerebras_model', 'CEREBRAS_DRAFT_MODEL', 'gpt-oss-120b');
+    addProvider({
+        provider: 'cerebras',
+        apiKey: configured('cerebras_api_key', 'CEREBRAS_API_KEY'),
+        baseUrl: process.env.CEREBRAS_BASE_URL || 'https://api.cerebras.ai/v1',
+        models: {
+            strategy: process.env.CEREBRAS_STRATEGY_MODEL || cerebrasModel,
+            draft: cerebrasModel,
+            review: process.env.CEREBRAS_REVIEW_MODEL || cerebrasModel,
+            evaluator: process.env.CEREBRAS_EVALUATOR_MODEL || cerebrasModel,
+        },
+        tiers: ['buyer', 'premium', 'elite'],
+        weight: 10,
+    });
+
+    const cloudflareAccountId = configured('cloudflare_account_id', 'CLOUDFLARE_ACCOUNT_ID');
+    const cloudflareModel = configured('cloudflare_model', 'CLOUDFLARE_DRAFT_MODEL', '@cf/openai/gpt-oss-20b');
+    addProvider({
+        provider: 'cloudflare',
+        apiKey: configured('cloudflare_ai_api_token', 'CLOUDFLARE_AI_API_TOKEN'),
+        baseUrl: process.env.CLOUDFLARE_AI_BASE_URL
+            || (cloudflareAccountId ? `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/ai/v1` : 'https://api.cloudflare.com/client/v4/accounts/ACCOUNT_ID/ai/v1'),
+        models: {
+            strategy: process.env.CLOUDFLARE_STRATEGY_MODEL || cloudflareModel,
+            draft: cloudflareModel,
+            review: process.env.CLOUDFLARE_REVIEW_MODEL || cloudflareModel,
+            evaluator: process.env.CLOUDFLARE_EVALUATOR_MODEL || cloudflareModel,
+        },
+        tiers: ['starter', 'buyer'],
+        weight: cloudflareAccountId ? 12 : 0,
+    });
+
+    const customBaseUrl = configured('ai_custom_gateway_base_url', 'AI_CUSTOM_GATEWAY_BASE_URL');
+    const customModel = configured('ai_custom_gateway_model', 'AI_CUSTOM_DRAFT_MODEL', 'auto');
+    const customTiers = configured('ai_custom_gateway_tiers', 'AI_CUSTOM_GATEWAY_TIERS', 'starter,buyer')
+        .split(',')
+        .map((tier) => tier.trim())
+        .filter((tier): tier is AiIntelligenceTier => ['starter', 'buyer', 'premium', 'elite'].includes(tier));
+    if (customBaseUrl) {
+        addProvider({
+            provider: 'custom',
+            apiKey: configured('ai_custom_gateway_api_key', 'AI_CUSTOM_GATEWAY_API_KEY'),
+            baseUrl: customBaseUrl,
+            models: {
+                strategy: process.env.AI_CUSTOM_STRATEGY_MODEL || customModel,
+                draft: customModel,
+                review: process.env.AI_CUSTOM_REVIEW_MODEL || customModel,
+                evaluator: process.env.AI_CUSTOM_EVALUATOR_MODEL || customModel,
+            },
+            tiers: customTiers.length > 0 ? customTiers : ['starter', 'buyer'],
+            weight: Math.max(1, Math.min(40, Number(settings.ai_custom_gateway_weight || process.env.AI_CUSTOM_GATEWAY_WEIGHT || 5))),
+        });
+    }
+
+    return gateways.filter((gateway) => gateway.weight !== 0);
+};
+
 const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
     const settings = await getBotSettingsMap(AI_SETTING_KEYS);
     return {
@@ -1382,6 +1557,7 @@ const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
         aiStrategyEnabled: settings.ai_strategy_enabled !== "false",
         aiReviewEnabled: settings.ai_review_enabled !== "false",
         aiEvaluatorEnabled: settings.ai_evaluator_enabled !== "false",
+        aiSharedRateLimitEnabled: settings.ai_shared_rate_limit_enabled !== "false" && process.env.AI_SHARED_RATE_LIMIT_ENABLED !== "false",
         openRouterStrategyModel: normalizeOpenRouterPrimaryModel(settings.openrouter_strategy_model || process.env.OPENROUTER_STRATEGY_MODEL || DEFAULT_OPENROUTER_MODELS.strategy),
         openRouterDraftModel: normalizeOpenRouterPrimaryModel(settings.openrouter_draft_model || process.env.OPENROUTER_DRAFT_MODEL || DEFAULT_OPENROUTER_MODELS.draft),
         openRouterReviewModel: normalizeOpenRouterPrimaryModel(settings.openrouter_review_model || process.env.OPENROUTER_REVIEW_MODEL || DEFAULT_OPENROUTER_MODELS.review),
@@ -1390,6 +1566,7 @@ const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
         geminiDraftModel: normalizeGeminiModelName(settings.gemini_draft_model || process.env.GEMINI_DRAFT_MODEL, getGeminiModelName()),
         geminiReviewModel: normalizeGeminiModelName(settings.gemini_review_model || process.env.GEMINI_REVIEW_MODEL, getGeminiModelName()),
         geminiEvaluatorModel: normalizeGeminiModelName(settings.gemini_evaluator_model || process.env.GEMINI_EVALUATOR_MODEL, getGeminiModelName()),
+        directGateways: buildDirectOpenAiGateways(settings),
     };
 };
 
@@ -1423,6 +1600,7 @@ const parseAiModelEntry = (entry: string, role: AiRole, settings: AiRuntimeSetti
         const model = getRoleProviderModel(role, provider, settings);
         return { provider, model, label: `${provider}:${model}` };
     }
+    if (["groq", "mistral", "cerebras", "cloudflare", "custom"].includes(providerOnly)) return null;
 
     const providerMatch = trimmed.match(/^(openrouter|gemini):(.+)$/i);
     if (!providerMatch) {
@@ -1443,7 +1621,18 @@ const parseAiModelOrder = (value: string | null | undefined, role: AiRole, setti
         .filter((entry): entry is AiGatewayConfig => Boolean(entry));
 };
 
-const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings): AiGatewayConfig[] => {
+const parseProviderPreference = (value: string | null | undefined) => {
+    const supported: AiProvider[] = ['gemini', 'groq', 'cloudflare', 'mistral', 'openrouter', 'cerebras', 'custom'];
+    const parsed = String(value || '')
+        .split(',')
+        .map((entry) => entry.trim().toLowerCase().split(':')[0] as AiProvider)
+        .filter((provider): provider is AiProvider => supported.includes(provider));
+    const legacyTwoProviderOrder = parsed.length > 0 && parsed.every((provider) => provider === 'openrouter' || provider === 'gemini');
+    if (legacyTwoProviderOrder) return supported;
+    return Array.from(new Set([...parsed, ...supported]));
+};
+
+const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings, tier?: AiIntelligenceTier): AiGatewayConfig[] => {
     const roleSettingMap: Record<AiRole, string> = {
         strategy: settings.aiStrategyModelOrder,
         draft: settings.aiDraftModelOrder,
@@ -1470,17 +1659,119 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings): AiGateway
             label: `gemini:${model}`,
         }))
         : [];
+    const directGateways = settings.directGateways
+        .filter((gateway) => gateway.role === role)
+        .filter((gateway) => !tier || !gateway.tiers || gateway.tiers.includes(tier));
 
-    const order = [...roleSpecific, ...globalOrder, ...defaults, ...extraOpenRouterModels, ...extraGeminiModels];
+    const providerPreference = parseProviderPreference(roleSettingMap[role] || settings.aiModelOrder || DEFAULT_PROVIDER_ORDER);
+    const providerRank = new Map(providerPreference.map((provider, index) => [provider, index]));
+    const order = [...roleSpecific, ...globalOrder, ...directGateways, ...defaults, ...extraOpenRouterModels, ...extraGeminiModels]
+        .map((gateway, index) => ({ gateway, index }))
+        .sort((left, right) => {
+            const providerDelta = Number(providerRank.get(left.gateway.provider) ?? 999) - Number(providerRank.get(right.gateway.provider) ?? 999);
+            return providerDelta || left.index - right.index;
+        })
+        .map((item) => item.gateway);
     const seen = new Set<string>();
     return order.filter((gateway) => {
         if (gateway.provider === "openrouter" && !settings.openRouterApiKey) return false;
         if (gateway.provider === "gemini" && !settings.geminiApiKey) return false;
+        if (gateway.provider !== 'openrouter' && gateway.provider !== 'gemini' && !gateway.apiKey) return false;
         const key = `${gateway.provider}:${gateway.model}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
     });
+};
+
+const stablePercent = (value: string) => {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0) % 100;
+};
+
+const getTierAwareGatewayOrder = ({
+    role,
+    settings,
+    tier,
+    routingKey,
+}: {
+    role: AiRole;
+    settings: AiRuntimeSettings;
+    tier?: AiIntelligenceTier;
+    routingKey?: string;
+}) => {
+    const normal = getAiGatewayOrder(role, settings, tier);
+    const economy: AiGatewayConfig[] = [];
+
+    if ((tier === 'starter' && role === 'draft') || (tier === 'buyer' && role === 'strategy')) {
+        if (settings.geminiApiKey) {
+            economy.push({ provider: 'gemini', model: DEFAULT_GEMINI_LITE_MODEL, label: `gemini:${DEFAULT_GEMINI_LITE_MODEL}` });
+        }
+        if (settings.openRouterApiKey) {
+            economy.push({ provider: 'openrouter', model: 'openrouter/free', label: 'openrouter:openrouter/free', weight: 5 });
+        }
+        economy.push(...settings.directGateways
+            .filter((gateway) => gateway.role === role)
+            .filter((gateway) => !gateway.tiers || gateway.tiers.includes(tier)));
+    }
+
+    if (economy.length > 1 && tier === 'starter') {
+        const totalWeight = economy.reduce((sum, gateway) => sum + Math.max(1, Number(gateway.weight || (gateway.provider === 'gemini' ? 57 : 5))), 0);
+        let point = stablePercent(`${routingKey || 'starter'}:${role}`) / 100 * totalWeight;
+        const selectedIndex = economy.findIndex((gateway) => {
+            point -= Math.max(1, Number(gateway.weight || (gateway.provider === 'gemini' ? 57 : 5)));
+            return point < 0;
+        });
+        if (selectedIndex > 0) economy.unshift(...economy.splice(selectedIndex, 1));
+    }
+
+    const seen = new Set<string>();
+    return [...economy, ...normal].filter((gateway) => {
+        const key = `${gateway.provider}:${gateway.model}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+};
+
+let sharedLimiterDisabledUntil = 0;
+
+const reserveSharedGatewayCapacity = async (
+    settings: AiRuntimeSettings,
+    gateway: AiGatewayConfig,
+    policy: GatewayRatePolicy,
+    estimatedTokens: number,
+) => {
+    const serviceRoleConfigured = Boolean(readSecret(process.env.SUPABASE_SERVICE_ROLE_KEY));
+    if (!settings.aiSharedRateLimitEnabled || !serviceRoleConfigured || sharedLimiterDisabledUntil > Date.now()) return null;
+
+    const bucketKey = gateway.provider === 'openrouter'
+        ? 'openrouter:account'
+        : `${gateway.provider}:${gateway.model}`;
+    try {
+        const { data, error } = await supabase.rpc('reserve_ai_gateway_capacity', {
+            p_bucket_key: bucketKey,
+            p_rpm: policy.rpm,
+            p_tpm: policy.tpm,
+            p_rpd: policy.rpd,
+            p_tpd: policy.tpd,
+            p_estimated_tokens: estimatedTokens,
+        });
+        if (error) throw error;
+        const result = (data || {}) as any;
+        return {
+            allowed: result.allowed !== false,
+            retryAfterMs: Math.max(0, Number(result.retry_after_ms || 0)),
+        };
+    } catch (error: any) {
+        sharedLimiterDisabledUntil = Date.now() + 60_000;
+        console.warn('[AI Gateway] limitador compartilhado indisponivel; usando controle local por 60s:', error?.message || error);
+        return null;
+    }
 };
 
 const toOpenRouterMessages = (systemInstruction: string, history: AiMessage[], userContent: string, mediaPart?: any) => {
@@ -1519,6 +1810,7 @@ const appendAiGatewayEvent = async (event: {
     role: AiRole;
     provider: AiProvider;
     model: string;
+    tier?: AiIntelligenceTier;
     status: "success" | "error" | "skipped";
     message?: string;
     durationMs?: number;
@@ -1538,8 +1830,9 @@ const appendAiGatewayEvent = async (event: {
         })();
 
         const label = `${event.provider}:${event.model}`;
-        const statKey = `${event.role}|${label}`;
-        const current = stats[statKey] || { role: event.role, provider: event.provider, model: event.model, success: 0, error: 0, skipped: 0 };
+        const tier = event.tier || 'unknown';
+        const statKey = `${tier}|${event.role}|${label}`;
+        const current = stats[statKey] || { tier, role: event.role, provider: event.provider, model: event.model, success: 0, error: 0, skipped: 0 };
         current[event.status] = Number(current[event.status] || 0) + 1;
         current.last_at = new Date().toISOString();
         current.last_message = String(event.message || "").slice(0, 500);
@@ -1548,6 +1841,7 @@ const appendAiGatewayEvent = async (event: {
         const nextRecent = [{
             at: new Date().toISOString(),
             role: event.role,
+            tier,
             provider: event.provider,
             model: event.model,
             status: event.status,
@@ -1564,6 +1858,11 @@ const appendAiGatewayEvent = async (event: {
     }
 };
 
+const recordAiGatewayEvent = (event: Parameters<typeof appendAiGatewayEvent>[0]) => {
+    void withTimeout(appendAiGatewayEvent(event), 1_200, 'telemetria do gateway')
+        .catch((error: any) => console.warn('[AI Gateway] telemetria ignorada para nao atrasar o lead:', error?.message || error));
+};
+
 const callOpenRouterJson = async <T,>(
     settings: AiRuntimeSettings,
     gateway: AiGatewayConfig,
@@ -1572,32 +1871,45 @@ const callOpenRouterJson = async <T,>(
     history: AiMessage[],
     userContent: string,
     mediaPart?: any,
-): Promise<{ data: T; resolvedModel: string }> => {
-    if (!settings.openRouterApiKey) throw new Error("OPENROUTER_API_KEY not configured");
+    timeoutMs = 18_000,
+): Promise<{ data: T; resolvedModel: string; usageTotalTokens?: number }> => {
+    const apiKey = gateway.apiKey || settings.openRouterApiKey;
+    const baseUrl = String(gateway.baseUrl || settings.openRouterBaseUrl).replace(/\/$/, '');
+    if (!apiKey) throw new Error(`${gateway.provider.toUpperCase()} API key not configured`);
 
-    const response = await fetch(`${settings.openRouterBaseUrl}/chat/completions`, {
+    const headers: Record<string, string> = {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+    };
+    if (gateway.provider === 'openrouter') {
+        headers["HTTP-Referer"] = settings.openRouterReferer;
+        headers["X-Title"] = settings.openRouterTitle;
+    }
+
+    const body: Record<string, unknown> = {
+        model: gateway.model,
+        messages: toOpenRouterMessages(systemInstruction, history, userContent, mediaPart),
+        temperature: role === "draft" ? 0.85 : 0.35,
+        max_tokens: 1200,
+    };
+    if (gateway.provider === 'openrouter') {
+        body.provider = { allow_fallbacks: true };
+    }
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
-        signal: AbortSignal.timeout(20_000),
-        headers: {
-            "Authorization": `Bearer ${settings.openRouterApiKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": settings.openRouterReferer,
-            "X-Title": settings.openRouterTitle,
-        },
-        body: JSON.stringify({
-            model: gateway.model,
-            messages: toOpenRouterMessages(systemInstruction, history, userContent, mediaPart),
-            temperature: role === "draft" ? 0.85 : 0.35,
-            max_tokens: 1200,
-            provider: {
-                allow_fallbacks: true,
-            },
-        }),
+        signal: AbortSignal.timeout(timeoutMs),
+        headers,
+        body: JSON.stringify(body),
     });
 
     const responseBody = await response.text();
     if (!response.ok) {
-        throw new Error(`OpenRouter ${response.status}: ${responseBody.slice(0, 500)}`);
+        throw new AiGatewayHttpError(
+            `${gateway.provider} ${response.status}: ${responseBody.slice(0, 500)}`,
+            response.status,
+            parseRetryAfterMs(response.headers.get('retry-after')),
+        );
     }
 
     const payload = parseJsonText<any>(responseBody);
@@ -1606,6 +1918,7 @@ const callOpenRouterJson = async <T,>(
     return {
         data: parseJsonText<T>(String(content)),
         resolvedModel: String(payload?.model || gateway.model),
+        usageTotalTokens: Number(payload?.usage?.total_tokens || 0) || undefined,
     };
 };
 
@@ -1616,6 +1929,7 @@ const callGeminiJson = async <T,>(
     responseSchemaConfig: any,
     history: any[],
     parts: any[],
+    timeoutMs = GEMINI_GATEWAY_TIMEOUT_MS,
 ): Promise<T> => {
     initializeGenAI(settings.geminiApiKey);
     if (!genAI) throw new Error("GEMINI_API_KEY not configured");
@@ -1631,7 +1945,7 @@ const callGeminiJson = async <T,>(
     const chat = model.startChat({ history });
     const result = await withTimeout(
         chat.sendMessage(parts),
-        GEMINI_GATEWAY_TIMEOUT_MS,
+        timeoutMs,
         `Gemini ${gateway.model}`,
     );
     return parseJsonText<T>(result.response.text());
@@ -1647,10 +1961,17 @@ const callAiGatewayJson = async <T,>(options: {
     history: any[];
     text: string;
     mediaPart?: any;
+    orchestrationTier?: AiIntelligenceTier;
+    routingKey?: string;
 }): Promise<{ data: T; gateway: AiGatewayConfig; attempts: string[] }> => {
     const hasImage = String(options.mediaPart?.inlineData?.mimeType || '').startsWith('image/');
     const providerOnly = hasImage ? 'gemini' : options.providerOnly;
-    const gateways = getAiGatewayOrder(options.role, options.settings)
+    const gateways = getTierAwareGatewayOrder({
+        role: options.role,
+        settings: options.settings,
+        tier: options.orchestrationTier,
+        routingKey: options.routingKey,
+    })
         .filter((gateway) => !providerOnly || gateway.provider === providerOnly);
     const attempts: string[] = [];
     const openRouterHistory: AiMessage[] = options.history.map((message: any) => ({
@@ -1658,16 +1979,70 @@ const callAiGatewayJson = async <T,>(options: {
         content: String(message.parts?.[0]?.text || ""),
     })).filter((message: AiMessage) => Boolean(message.content.trim()));
 
-    for (const gateway of gateways) {
-        const startedAt = Date.now();
+    if (gateways.length === 0) throw new Error(`Nenhum gateway configurado para ${options.role}`);
+
+    const estimatedTokens = estimateAiTokens(
+        options.systemInstruction,
+        options.text,
+        openRouterHistory,
+        options.mediaPart ? '[media]' : '',
+    );
+    const candidates: GatewayRouteCandidate<AiGatewayConfig>[] = gateways.map((gateway) => {
+        const policy = gateway.policy || resolveGatewayRatePolicy(gateway.provider, gateway.model);
+        return {
+            key: `${gateway.provider}:${gateway.model}`,
+            provider: gateway.provider,
+            model: gateway.model,
+            weight: Math.max(1, Number(gateway.weight || (gateway.provider === 'gemini' ? 57 : gateway.provider === 'groq' ? 18 : 7))),
+            policy,
+            value: { ...gateway, policy },
+        };
+    });
+    const excluded = new Set<string>();
+    const tierQueueMs: Record<AiIntelligenceTier, number> = { starter: 2_200, buyer: 3_200, premium: 4_000, elite: 5_000 };
+    const maxQueueMs = tierQueueMs[options.orchestrationTier || 'starter'];
+
+    while (excluded.size < candidates.length) {
+        let lease;
         try {
-            if (gateway.provider === "openrouter") {
+            lease = await aiGatewayRouter.acquire(candidates, {
+                routingKey: `${options.routingKey || 'anonymous'}:${options.role}`,
+                estimatedTokens,
+                maxQueueMs,
+                exclude: excluded,
+            });
+        } catch (capacityError: any) {
+            const detail = capacityError instanceof GatewayCapacityError
+                ? `capacidade esgotada; nova tentativa em ${capacityError.retryAfterMs}ms`
+                : String(capacityError?.message || capacityError);
+            attempts.push(detail);
+            break;
+        }
+
+        const gateway = lease.candidate.value;
+        const policy = lease.candidate.policy;
+        const startedAt = Date.now();
+        const sharedCapacity = await reserveSharedGatewayCapacity(options.settings, gateway, policy, estimatedTokens);
+        if (sharedCapacity?.allowed === false) {
+            lease.cancelBeforeDispatch();
+            excluded.add(lease.candidate.key);
+            aiGatewayRouter.defer(lease.candidate.key, Math.max(1_000, sharedCapacity.retryAfterMs), 'quota');
+            const message = `${gateway.label} sem capacidade compartilhada por ${sharedCapacity.retryAfterMs}ms`;
+            attempts.push(message);
+            recordAiGatewayEvent({ tier: options.orchestrationTier, role: options.role, provider: gateway.provider, model: gateway.model, status: 'skipped', message });
+            continue;
+        }
+
+        try {
+            if (gateway.provider !== "gemini") {
                 if (options.mediaPart) {
                     const mimeType = String(options.mediaPart?.inlineData?.mimeType || '');
                     if (!mimeType.startsWith('image/')) {
                         const message = `${gateway.label} pulado: midia nao suportada neste provider`;
                         attempts.push(message);
-                        await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "skipped", message });
+                        lease.cancelBeforeDispatch();
+                        excluded.add(lease.candidate.key);
+                        recordAiGatewayEvent({ tier: options.orchestrationTier, role: options.role, provider: gateway.provider, model: gateway.model, status: "skipped", message });
                         continue;
                     }
                 }
@@ -1679,13 +2054,16 @@ const callAiGatewayJson = async <T,>(options: {
                     openRouterHistory,
                     options.text,
                     options.mediaPart,
+                    policy.timeoutMs,
                 );
                 const resolvedGateway = {
                     ...gateway,
                     model: result.resolvedModel,
                     label: `${gateway.provider}:${result.resolvedModel}`,
                 };
-                await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: result.resolvedModel, status: "success", durationMs: Date.now() - startedAt });
+                const durationMs = Date.now() - startedAt;
+                lease.succeed(durationMs, result.usageTotalTokens);
+                recordAiGatewayEvent({ tier: options.orchestrationTier, role: options.role, provider: gateway.provider, model: result.resolvedModel, status: "success", durationMs, message: `fila ${lease.queueWaitMs}ms | tokens ~${result.usageTotalTokens || estimatedTokens}` });
                 return { data: result.data, gateway: resolvedGateway, attempts };
             }
 
@@ -1698,14 +2076,20 @@ const callAiGatewayJson = async <T,>(options: {
                 options.responseSchemaConfig,
                 options.history,
                 parts,
+                policy.timeoutMs,
             );
-            await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "success", durationMs: Date.now() - startedAt });
+            const durationMs = Date.now() - startedAt;
+            lease.succeed(durationMs);
+            recordAiGatewayEvent({ tier: options.orchestrationTier, role: options.role, provider: gateway.provider, model: gateway.model, status: "success", durationMs, message: `fila ${lease.queueWaitMs}ms | tokens estimados ${estimatedTokens}` });
             return { data, gateway, attempts };
         } catch (error: any) {
-            const message = `${gateway.label} falhou: ${error?.message || error}`;
+            excluded.add(lease.candidate.key);
+            const durationMs = Date.now() - startedAt;
+            const failureKind = lease.fail(error, durationMs, Number(error?.retryAfterMs || 0));
+            const message = `${gateway.label} falhou (${failureKind}): ${error?.message || error}`;
             attempts.push(message);
             console.warn(`[AI Gateway] ${message}`);
-            await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "error", message, durationMs: Date.now() - startedAt });
+            recordAiGatewayEvent({ tier: options.orchestrationTier, role: options.role, provider: gateway.provider, model: gateway.model, status: "error", message, durationMs });
         }
     }
 
@@ -1946,21 +2330,19 @@ const makeLocalFallbackResponse = (
     }
 
     if (wantsCheckout) {
-        const value = noMoney ? 14.90 : 24.90;
+        const value = VIP_PRICE;
         return {
             internal_thought: "Fallback local: lead pediu pagamento explicitamente.",
             lead_classification: "curioso",
             lead_stats: { ...stats, financeiro: Math.max(Number(stats.financeiro || 0), 55) },
             current_state: "PAYMENT_CHECK",
-            messages: noMoney
-                ? ["ta bom amor", "faço uma opcao menor pra vc", "vou gerar o pix"]
-                : ["perfeito amor", "vou gerar seu pix aqui"],
+            messages: ["perfeito amor", "vou gerar seu pix aqui"],
             action: "generate_pix_payment",
             extracted_user_name: null,
             audio_transcription: null,
             payment_details: {
                 value,
-                description: noMoney ? "VIP Mensal Promocional" : "VIP Vitalicio Lari"
+                description: "VIP Lari"
             }
         };
     }
@@ -2036,13 +2418,14 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     };
 }, media?: { mimeType: string, data: string }) => {
     const aiSettings = await getAiRuntimeSettings();
+    const orchestration = resolveAiOrchestrationPlan(context?.totalPaid || 0);
     initializeGenAI(aiSettings.geminiApiKey);
-    if (!aiSettings.openRouterApiKey && !aiSettings.geminiApiKey) {
-        throw new Error("[AI Gateway] Nenhuma chave de IA (OpenRouter ou Gemini) configurada. Não é permitido enviar respostas simuladas.");
+    if (!aiSettings.openRouterApiKey && !aiSettings.geminiApiKey && aiSettings.directGateways.length === 0) {
+        throw new Error("[AI Gateway] Nenhuma chave de IA configurada. Não é permitido enviar respostas simuladas.");
     }
 
     const currentStats = parseLeadStats(context?.currentStats);
-    const [previewResult, promptBlocksResult, messagesResult] = await Promise.all([
+    const [previewResult, promptBlocksResult, messagesResult, purchasesResult] = await Promise.all([
         supabase
             .from('preview_assets')
             .select('id,name,description,media_type,stage,min_tarado,max_tarado,tags,triggers,priority,enabled,ai_analysis,analysis_status')
@@ -2063,7 +2446,14 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             .eq('session_id', sessionId)
             .in('sender', ['user', 'bot'])
             .order('created_at', { ascending: false })
-            .limit(40),
+            .limit(orchestration.historyMessageLimit),
+        supabase
+            .from('messages')
+            .select('content,payment_data,created_at')
+            .eq('session_id', sessionId)
+            .eq('sender', 'system')
+            .order('created_at', { ascending: false })
+            .limit(30),
     ]);
 
     let previewRows: any[] | null = previewResult.data as any[] | null;
@@ -2119,13 +2509,31 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         // blocos longos do painel (limite total de 12 mil caracteres).
         context?.extraScript || "",
         promptBlocksText,
-    ].filter(Boolean).join('\n\n').slice(0, 12000);
+    ].filter(Boolean).join('\n\n').slice(0, orchestration.promptBlockMaxChars);
 
     // O perfil persistente guarda a historia longa; o modelo recebe apenas a janela recente.
     const dbMessages = [...(messagesResult.data || [])].reverse();
     // /start inicia um novo episodio: fatos persistentes continuam no perfil, mas
     // falas antigas nao podem fazer a Lari tratar o lead como "sumido" ou retorno.
     const promptMessages = context?.isConversationStart ? [] : dbMessages;
+
+    const purchaseHistory = (purchasesResult.data || [])
+        .filter((message: any) => message?.payment_data?.paid === true
+            || /PAGAMENTO CONFIRMADO/i.test(String(message?.content || '')))
+        .map((message: any) => {
+            const data = message?.payment_data || {};
+            const content = String(message?.content || '');
+            const description = String(data.description || content.match(/PAGAMENTO CONFIRMADO(?: VIA WEBHOOK)? - (.*?) - R\$/i)?.[1] || 'produto').trim();
+            const value = Number(data.value || content.match(/R\$\s*(\d+(?:[.,]\d{1,2})?)/i)?.[1]?.replace(',', '.') || 0);
+            const identity = `${description.toLowerCase().replace(/\s+/g, ' ')}:${value.toFixed(2)}`;
+            return { identity, description, value, at: String(data.paid_at || message?.created_at || '') };
+        })
+        .filter((purchase: any, index: number, rows: any[]) => rows.findIndex((row) => row.identity === purchase.identity) === index)
+        .slice(0, 10);
+
+    const purchaseHistoryText = purchaseHistory.length > 0
+        ? purchaseHistory.map((purchase: any) => `- ${purchase.description}: R$ ${purchase.value.toFixed(2).replace('.', ',')} (${purchase.at || 'data nao informada'})`).join('\n')
+        : '- nenhum produto confirmado encontrado na janela operacional';
 
     const recentBotMessages = (promptMessages || [])
         .filter((m: any) => m.sender === 'bot' && typeof m.content === 'string' && !m.content.startsWith('[M'))
@@ -2161,10 +2569,27 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         context?.leadMemory || null,
         antiRepeatText,
         context?.leadProfile || null,
-    ) + "\n\n⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.";
+    ) + `
+
+# INTELIGENCIA PROGRESSIVA DESTE LEAD — CONTEXTO INTERNO
+- Nivel: ${orchestration.tier} (${orchestration.label}).
+- Total confirmado: R$ ${orchestration.totalPaid.toFixed(2).replace('.', ',')}.
+- Modo: ${orchestration.objective}.
+- O aumento de inteligencia melhora memoria, coerencia, personalizacao e qualidade. Ele nunca autoriza pressao, culpa, urgencia falsa, exploracao de solidao, dificuldade financeira ou dependencia emocional.
+- Depois de uma compra, primeiro confirme entrega e satisfacao. Uma nova oferta so entra quando combinar com um pedido, preferencia ou abertura real do lead.
+
+# COMPRAS CONFIRMADAS — CONTEXTO INTERNO
+${purchaseHistoryText}
+
+⚠️ IMPORTANTE: RESPONDA APENAS NO FORMATO JSON.`;
 
     // Agrupa os varios baloes do mesmo turno e garante history valido para o SDK Gemini.
-    const cleanHistory = buildCleanAiHistory(promptMessages || []);
+    const cleanHistory = buildCleanAiHistory(
+        promptMessages || [],
+        orchestration.tier === 'elite' ? 1_400 : orchestration.tier === 'premium' ? 1_100 : 900,
+        orchestration.historyMaxEntries,
+        orchestration.historyMaxChars,
+    );
 
     // 3. Montar Mensagem Atual (Com ou sem mídia)
     const currentMessageParts: any[] = [{ text: userMessage }];
@@ -2185,7 +2610,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         try {
             let strategy: any = makeFallbackStrategy(userMessage, context?.leadMemory);
             let strategyStatus = 'integrado na chamada unica';
-            const useSeparateStrategyCall = aiSettings.aiStrategyEnabled;
+            const useSeparateStrategyCall = aiSettings.aiStrategyEnabled && orchestration.separateStrategy;
 
             if (!useSeparateStrategyCall) {
                 strategyStatus = 'integrado na chamada unica';
@@ -2218,6 +2643,8 @@ memory_patch deve conter: best_tone, emotional_context, relationship_stage, next
                 const strategyResult = await callAiGatewayJson<any>({
                     settings: aiSettings,
                     role: "strategy",
+                    orchestrationTier: orchestration.tier,
+                    routingKey: sessionId,
                     schemaName: "centralBrainSchema",
                     systemInstruction: strategyPrompt,
                     responseSchemaConfig: centralBrainSchema as any,
@@ -2276,6 +2703,8 @@ Use essa estrategia para responder.`
                 draftResult = await callAiGatewayJson<AIResponse>({
                     settings: aiSettings,
                     role: "draft",
+                    orchestrationTier: orchestration.tier,
+                    routingKey: sessionId,
                     schemaName: "responseSchema",
                     systemInstruction: draftPrompt,
                     responseSchemaConfig: responseSchema as any,
@@ -2302,7 +2731,8 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                 draftResult = await callAiGatewayJson<AIResponse>({
                     settings: aiSettings,
                     role: "draft",
-                    providerOnly: 'gemini',
+                    orchestrationTier: orchestration.tier,
+                    routingKey: sessionId,
                     schemaName: "responseSchema",
                     systemInstruction: draftPrompt,
                     responseSchemaConfig: responseSchema as any,
@@ -2339,12 +2769,15 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                 || Number(strategy?.confidence || 0) < 0.4
                 || earlyConversationReviewNeeded
                 || meetupReviewNeeded;
-            const useSeparateReviewCall = aiSettings.aiReviewEnabled;
+            const useSeparateReviewCall = aiSettings.aiReviewEnabled
+                && shouldRunAiReview(orchestration, criticalReviewNeeded);
 
-            if (!useSeparateReviewCall) {
-                reviewStatus = 'integrada na chamada unica';
-            } else if (!criticalReviewNeeded) {
-                reviewStatus = 'guardas locais (rota rapida)';
+            if (!aiSettings.aiReviewEnabled) {
+                reviewStatus = 'desativada no painel';
+            } else if (!useSeparateReviewCall) {
+                reviewStatus = orchestration.reviewMode === 'none'
+                    ? 'integrada na chamada unica'
+                    : 'guardas locais (rota rapida)';
             } else {
             try {
                 const reviewPrompt = `${baseInstruction}
@@ -2364,6 +2797,8 @@ Retorne JSON com: approved, score, issues, messages, action, current_state, prev
                 const reviewResult = await callAiGatewayJson<any>({
                     settings: aiSettings,
                     role: "review",
+                    orchestrationTier: orchestration.tier,
+                    routingKey: sessionId,
                     schemaName: "reviewSchema",
                     systemInstruction: reviewPrompt,
                     responseSchemaConfig: reviewSchema as any,
@@ -2397,10 +2832,66 @@ Revise e corrija se necessario.`
                 jsonResponse.payment_details = review.payment_details ?? jsonResponse.payment_details;
             }
 
+            let evaluator: any = { approved: true, score: null, issues: [], messages: [] };
+            let evaluatorStatus = orchestration.evaluator ? 'avaliadora indisponivel' : 'nao exigida neste nivel';
+            const useEvaluatorCall = aiSettings.aiEvaluatorEnabled && orchestration.evaluator;
+
+            if (useEvaluatorCall) {
+                try {
+                    const evaluatorPrompt = `${baseInstruction}
+
+# IA 4: AVALIADORA FINAL DE CLIENTE ELITE
+Voce e a ultima camada antes do envio. Avalie a conversa inteira, o plano, a memoria, as compras confirmadas e a resposta final da Lari.
+Preserve espontaneidade, perspectiva feminina, continuidade, produto pedido, preco combinado e actions validas.
+Corrija contradicao, repeticao, intimidade precoce, resposta generica, promessa de midia sem action, PIX sem aceite, oferta imediatamente depois da compra sem abertura real ou qualquer pressao baseada em solidao e dificuldade financeira.
+Mais inteligencia significa melhor leitura e servico, nao mais mensagens nem mais insistencia.
+Se corrigir, devolva somente os baloes finais e os campos operacionais corretos. Nao explique nada ao lead.
+Retorne JSON com: approved, score, issues, messages, action, current_state, preview_id e payment_details.`;
+
+                    const evaluatorResult = await callAiGatewayJson<any>({
+                        settings: aiSettings,
+                        role: 'evaluator',
+                        orchestrationTier: orchestration.tier,
+                        routingKey: sessionId,
+                        schemaName: 'reviewSchema',
+                        systemInstruction: evaluatorPrompt,
+                        responseSchemaConfig: reviewSchema as any,
+                        history: cleanHistory,
+                        text: `MENSAGEM DO LEAD:\n${userMessage}
+
+ESTRATEGIA:\n${JSON.stringify(strategy)}
+
+RESPOSTA FINAL PROPOSTA:\n${JSON.stringify(jsonResponse)}
+
+Faca a avaliacao final.`
+                    });
+                    evaluator = evaluatorResult.data;
+                    evaluatorStatus = `ia avaliadora via ${evaluatorResult.gateway.label}`;
+
+                    const evaluatedMessages = Array.isArray(evaluator?.messages)
+                        ? evaluator.messages.map((message: any) => String(message || '').trim()).filter(Boolean)
+                        : [];
+                    if (evaluator?.approved === false && evaluatedMessages.length > 0) {
+                        jsonResponse.messages = evaluatedMessages;
+                        jsonResponse.action = evaluator.action || jsonResponse.action;
+                        jsonResponse.current_state = evaluator.current_state || jsonResponse.current_state;
+                        jsonResponse.preview_id = evaluator.preview_id ?? jsonResponse.preview_id;
+                        jsonResponse.payment_details = evaluator.payment_details ?? jsonResponse.payment_details;
+                    }
+                } catch (evaluatorError: any) {
+                    evaluatorStatus = 'falhou; resposta revisada preservada';
+                    console.warn('Avaliadora final falhou, mantendo resposta revisada:', evaluatorError?.message || evaluatorError);
+                }
+            } else if (orchestration.evaluator && !aiSettings.aiEvaluatorEnabled) {
+                evaluatorStatus = 'desativada no painel';
+            }
+
+            const orchestrationThought = `ORQUESTRACAO: ${orchestration.tier} | R$ ${orchestration.totalPaid.toFixed(2)} | ${orchestration.objective}`;
             const strategyThought = `CEREBRO CENTRAL (${strategyStatus}${mediaRecoveryUsed ? ', recuperacao textual de midia' : ''}): ${strategy?.intent || 'n/a'} | ${strategy?.lead_type || 'n/a'} | ${strategy?.objective || 'n/a'} | ${strategy?.next_step || 'n/a'} | conexao: ${strategy?.connection_cue || 'n/a'}`;
             const reviewThought = `REVISAO (${reviewStatus}): ${review?.approved ? 'aprovada' : 'corrigida'} | score ${review?.score ?? 'n/a'} | ${(review?.issues || []).slice(0, 3).join(', ')}`;
+            const evaluatorThought = `AVALIADORA (${evaluatorStatus}): ${evaluator?.approved === false ? 'corrigida' : 'aprovada'} | score ${evaluator?.score ?? 'n/a'} | ${(evaluator?.issues || []).slice(0, 3).join(', ')}`;
             const memoryThought = `MEMORIA: ${strategy?.relationship_stage || 'new'} | ${strategy?.emotional_context || 'n/a'} | ${strategy?.memory_patch?.next_personal_step || 'n/a'}`;
-            jsonResponse.internal_thought = [strategyThought, reviewThought, memoryThought, jsonResponse.internal_thought].filter(Boolean).join('\n');
+            jsonResponse.internal_thought = [orchestrationThought, strategyThought, reviewThought, evaluatorThought, memoryThought, jsonResponse.internal_thought].filter(Boolean).join('\n');
 
             // Validar e Sanitizar Lead Stats
             // GARANTIR QUE SEMPRE EXISTA para não quebrar o update no banco

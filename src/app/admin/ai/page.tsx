@@ -1,694 +1,433 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-    DEFAULT_GEMINI_LITE_MODEL,
-    DEFAULT_GEMINI_MODEL,
-    DEFAULT_OPENROUTER_MODEL,
-    GEMINI_MODEL_OPTIONS,
-    OPENROUTER_MODEL_FALLBACK_ORDER,
-} from "@/lib/aiModels";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DEFAULT_GEMINI_LITE_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from "@/lib/aiModels";
 
-type ProviderKey = "openrouter" | "gemini";
+type ProviderKey = "gemini" | "groq" | "cloudflare" | "mistral" | "openrouter" | "cerebras" | "custom";
+type SaveState = "loading" | "idle" | "saving" | "saved" | "error";
 
 type AiSettings = {
-    openrouterApiKeyMasked: string;
-    geminiApiKeyMasked: string;
-    openrouterApiKeySaved: boolean;
-    geminiApiKeySaved: boolean;
-    aiDraftModelOrder: string;
-    aiStrategyEnabled: boolean;
-    aiReviewEnabled: boolean;
-    aiEvaluatorEnabled: boolean;
-    openrouterStrategyModel: string;
-    openrouterDraftModel: string;
-    openrouterReviewModel: string;
-    openrouterEvaluatorModel: string;
-    geminiStrategyModel: string;
-    geminiDraftModel: string;
-    geminiReviewModel: string;
-    geminiEvaluatorModel: string;
-    fishAudioApiKeyMasked: string;
-    fishAudioApiKeySaved: boolean;
-    fishAudioEnabled: boolean;
-    fishAudioVoiceId: string;
-    fishAudioModel: string;
-    fishAudioFrequencyPercent: number;
-    fishAudioCooldownMinutes: number;
-    fishAudioMaxChars: number;
+    [key: string]: string | number | boolean;
+    openrouterApiKeyMasked: string; openrouterApiKeySaved: boolean; openrouterApiKeySource: string;
+    geminiApiKeyMasked: string; geminiApiKeySaved: boolean; geminiApiKeySource: string;
+    groqApiKeyMasked: string; groqApiKeySaved: boolean; groqApiKeySource: string;
+    mistralApiKeyMasked: string; mistralApiKeySaved: boolean; mistralApiKeySource: string;
+    cerebrasApiKeyMasked: string; cerebrasApiKeySaved: boolean; cerebrasApiKeySource: string;
+    cloudflareApiTokenMasked: string; cloudflareApiTokenSaved: boolean; cloudflareApiTokenSource: string;
+    customApiKeyMasked: string; customApiKeySaved: boolean; customApiKeySource: string;
+    fishAudioApiKeyMasked: string; fishAudioApiKeySaved: boolean; fishAudioApiKeySource: string;
+    aiModelOrder: string; aiStrategyModelOrder: string; aiDraftModelOrder: string; aiReviewModelOrder: string; aiEvaluatorModelOrder: string;
+    aiStrategyEnabled: boolean; aiReviewEnabled: boolean; aiEvaluatorEnabled: boolean;
+    aiSharedRateLimitEnabled: boolean; sharedRateLimitReady: boolean;
+    openrouterBaseUrl: string; openrouterReferer: string; openrouterTitle: string;
+    openrouterStrategyModel: string; openrouterDraftModel: string; openrouterReviewModel: string; openrouterEvaluatorModel: string;
+    geminiStrategyModel: string; geminiDraftModel: string; geminiReviewModel: string; geminiEvaluatorModel: string;
+    groqModel: string; groqStarterModel: string; mistralModel: string; cerebrasModel: string; cloudflareModel: string;
+    cloudflareAccountId: string; customBaseUrl: string; customModel: string; customTiers: string; customWeight: number;
+    fishAudioEnabled: boolean; fishAudioVoiceId: string; fishAudioModel: string;
+    fishAudioFrequencyPercent: number; fishAudioCooldownMinutes: number; fishAudioMaxChars: number;
 };
 
-type AiEvent = {
-    at: string;
-    role: string;
-    provider: string;
-    model: string;
-    status: string;
-    message?: string;
-};
+type AiEvent = { at: string; role: string; provider: string; model: string; status: string; message?: string; durationMs?: number };
+type AiStat = { role: string; provider: string; model: string; success?: number; error?: number; skipped?: number };
+type RouterSnapshot = { key: string; inFlight: number; minuteRequests: number; minuteTokens: number; successes: number; failures: number; cooldownMs: number; ewmaLatencyMs: number; lastFailureKind?: string | null };
 
-type AiStat = {
-    role: string;
-    provider: string;
-    model: string;
-    success?: number;
-    error?: number;
-    skipped?: number;
+const PROVIDER_ORDER: ProviderKey[] = ["gemini", "groq", "cloudflare", "mistral", "openrouter", "cerebras", "custom"];
+const PROVIDER_INFO: Record<ProviderKey, { label: string; short: string; description: string; keyUrl: string; keyLabel: string; color: string }> = {
+    gemini: { label: "Google Gemini", short: "Principal + visão", description: "Melhor rota geral. Também analisa as fotos enviadas pelos leads.", keyUrl: "https://aistudio.google.com/apikey", keyLabel: "Pegar chave no Google AI Studio", color: "from-blue-400 to-cyan-300" },
+    groq: { label: "Groq", short: "Muito rápido", description: "Absorve conversas de texto com baixa latência e reduz a carga do Gemini.", keyUrl: "https://console.groq.com/keys", keyLabel: "Pegar chave na Groq", color: "from-orange-400 to-amber-300" },
+    cloudflare: { label: "Cloudflare Workers AI", short: "Reserva barata", description: "Boa capacidade diária para o cérebro econômico dos primeiros contatos.", keyUrl: "https://dash.cloudflare.com/profile/api-tokens", keyLabel: "Criar token na Cloudflare", color: "from-amber-400 to-yellow-200" },
+    mistral: { label: "Mistral", short: "Fallback oficial", description: "Rota oficial adicional quando os provedores principais estiverem cheios.", keyUrl: "https://console.mistral.ai/api-keys", keyLabel: "Pegar chave na Mistral", color: "from-red-400 to-orange-300" },
+    openrouter: { label: "OpenRouter", short: "Agregador", description: "Última reserva com vários modelos e fallback interno automático.", keyUrl: "https://openrouter.ai/settings/keys", keyLabel: "Pegar chave no OpenRouter", color: "from-violet-400 to-fuchsia-300" },
+    cerebras: { label: "Cerebras", short: "Trial rápido", description: "Rota rápida para clientes compradores enquanto houver crédito disponível.", keyUrl: "https://cloud.cerebras.ai/", keyLabel: "Abrir Cerebras Cloud", color: "from-emerald-400 to-lime-300" },
+    custom: { label: "Gateway próprio", short: "OpenAI-compatible", description: "LiteLLM, 9Router, FreeLLMAPI ou outro endpoint administrado por você.", keyUrl: "", keyLabel: "", color: "from-slate-400 to-slate-200" },
 };
 
 const emptySettings: AiSettings = {
-    openrouterApiKeyMasked: "",
-    geminiApiKeyMasked: "",
-    openrouterApiKeySaved: false,
-    geminiApiKeySaved: false,
-    aiDraftModelOrder: "openrouter,gemini",
-    aiStrategyEnabled: true,
-    aiReviewEnabled: true,
-    aiEvaluatorEnabled: true,
-    openrouterStrategyModel: DEFAULT_OPENROUTER_MODEL,
-    openrouterDraftModel: DEFAULT_OPENROUTER_MODEL,
-    openrouterReviewModel: DEFAULT_OPENROUTER_MODEL,
-    openrouterEvaluatorModel: DEFAULT_OPENROUTER_MODEL,
-    geminiStrategyModel: DEFAULT_GEMINI_LITE_MODEL,
-    geminiDraftModel: DEFAULT_GEMINI_MODEL,
-    geminiReviewModel: DEFAULT_GEMINI_MODEL,
-    geminiEvaluatorModel: DEFAULT_GEMINI_LITE_MODEL,
-    fishAudioApiKeyMasked: "",
-    fishAudioApiKeySaved: false,
-    fishAudioEnabled: false,
-    fishAudioVoiceId: "24522123b5804bf691a8450d9187f03e",
-    fishAudioModel: "s1",
-    fishAudioFrequencyPercent: 18,
-    fishAudioCooldownMinutes: 30,
-    fishAudioMaxChars: 240,
+    openrouterApiKeyMasked: "", openrouterApiKeySaved: false, openrouterApiKeySource: "missing",
+    geminiApiKeyMasked: "", geminiApiKeySaved: false, geminiApiKeySource: "missing",
+    groqApiKeyMasked: "", groqApiKeySaved: false, groqApiKeySource: "missing",
+    mistralApiKeyMasked: "", mistralApiKeySaved: false, mistralApiKeySource: "missing",
+    cerebrasApiKeyMasked: "", cerebrasApiKeySaved: false, cerebrasApiKeySource: "missing",
+    cloudflareApiTokenMasked: "", cloudflareApiTokenSaved: false, cloudflareApiTokenSource: "missing",
+    customApiKeyMasked: "", customApiKeySaved: false, customApiKeySource: "missing",
+    fishAudioApiKeyMasked: "", fishAudioApiKeySaved: false, fishAudioApiKeySource: "missing",
+    aiModelOrder: PROVIDER_ORDER.join(","), aiStrategyModelOrder: PROVIDER_ORDER.join(","), aiDraftModelOrder: PROVIDER_ORDER.join(","), aiReviewModelOrder: PROVIDER_ORDER.join(","), aiEvaluatorModelOrder: PROVIDER_ORDER.join(","),
+    aiStrategyEnabled: true, aiReviewEnabled: true, aiEvaluatorEnabled: true,
+    aiSharedRateLimitEnabled: true, sharedRateLimitReady: false,
+    openrouterBaseUrl: "https://openrouter.ai/api/v1", openrouterReferer: "", openrouterTitle: "Lari Telegram Bot",
+    openrouterStrategyModel: DEFAULT_OPENROUTER_MODEL, openrouterDraftModel: DEFAULT_OPENROUTER_MODEL, openrouterReviewModel: DEFAULT_OPENROUTER_MODEL, openrouterEvaluatorModel: DEFAULT_OPENROUTER_MODEL,
+    geminiStrategyModel: DEFAULT_GEMINI_LITE_MODEL, geminiDraftModel: DEFAULT_GEMINI_MODEL, geminiReviewModel: DEFAULT_GEMINI_MODEL, geminiEvaluatorModel: DEFAULT_GEMINI_LITE_MODEL,
+    groqModel: "openai/gpt-oss-120b", groqStarterModel: "llama-3.1-8b-instant", mistralModel: "mistral-small-latest", cerebrasModel: "gpt-oss-120b", cloudflareModel: "@cf/openai/gpt-oss-20b",
+    cloudflareAccountId: "", customBaseUrl: "", customModel: "auto", customTiers: "starter,buyer", customWeight: 5,
+    fishAudioEnabled: false, fishAudioVoiceId: "24522123b5804bf691a8450d9187f03e", fishAudioModel: "s2.1-pro-free",
+    fishAudioFrequencyPercent: 18, fishAudioCooldownMinutes: 30, fishAudioMaxChars: 240,
 };
 
-const providerLabels: Record<ProviderKey, string> = {
-    openrouter: "OpenRouter",
-    gemini: "Gemini",
+const inputClass = "w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/60 focus:bg-black/40";
+
+const parseOrder = (value: unknown): ProviderKey[] => {
+    const parsed = String(value || "").split(",").map((item) => item.trim().toLowerCase().split(":")[0] as ProviderKey).filter((item) => PROVIDER_ORDER.includes(item));
+    return Array.from(new Set([...parsed, ...PROVIDER_ORDER]));
 };
 
-const roleLabels: Record<string, string> = {
-    draft: "Lari",
-    strategy: "Cérebro central",
-    review: "Revisora",
-    evaluator: "Avaliadora (legado)",
+const providerSecretMeta = (settings: AiSettings, provider: ProviderKey) => {
+    if (provider === "gemini") return { masked: settings.geminiApiKeyMasked, saved: settings.geminiApiKeySaved, source: settings.geminiApiKeySource, payload: "geminiApiKey" };
+    if (provider === "groq") return { masked: settings.groqApiKeyMasked, saved: settings.groqApiKeySaved, source: settings.groqApiKeySource, payload: "groqApiKey" };
+    if (provider === "cloudflare") return { masked: settings.cloudflareApiTokenMasked, saved: settings.cloudflareApiTokenSaved, source: settings.cloudflareApiTokenSource, payload: "cloudflareApiToken" };
+    if (provider === "mistral") return { masked: settings.mistralApiKeyMasked, saved: settings.mistralApiKeySaved, source: settings.mistralApiKeySource, payload: "mistralApiKey" };
+    if (provider === "openrouter") return { masked: settings.openrouterApiKeyMasked, saved: settings.openrouterApiKeySaved, source: settings.openrouterApiKeySource, payload: "openrouterApiKey" };
+    if (provider === "cerebras") return { masked: settings.cerebrasApiKeyMasked, saved: settings.cerebrasApiKeySaved, source: settings.cerebrasApiKeySource, payload: "cerebrasApiKey" };
+    return { masked: settings.customApiKeyMasked, saved: settings.customApiKeySaved, source: settings.customApiKeySource, payload: "customApiKey" };
 };
 
-const PRESETS = {
-    openrouterFree: {
-        label: "DeepSeek + Qwen",
-        description: "Usa DeepSeek e Qwen no OpenRouter antes do fallback Gemini.",
-        order: ["openrouter", "gemini"] as ProviderKey[],
-        openrouter: {
-            draft: DEFAULT_OPENROUTER_MODEL,
-            strategy: DEFAULT_OPENROUTER_MODEL,
-            review: DEFAULT_OPENROUTER_MODEL,
-            evaluator: DEFAULT_OPENROUTER_MODEL,
-        },
-        gemini: {
-            draft: DEFAULT_GEMINI_MODEL,
-            strategy: DEFAULT_GEMINI_LITE_MODEL,
-            review: DEFAULT_GEMINI_MODEL,
-            evaluator: DEFAULT_GEMINI_LITE_MODEL,
-        },
-    },
-    fullGemini: {
-        label: "Full Gemini",
-        description: "Usa Gemini em tudo. OpenRouter fica desligado da prioridade.",
-        order: ["gemini", "openrouter"] as ProviderKey[],
-        openrouter: {
-            draft: DEFAULT_OPENROUTER_MODEL,
-            strategy: DEFAULT_OPENROUTER_MODEL,
-            review: DEFAULT_OPENROUTER_MODEL,
-            evaluator: DEFAULT_OPENROUTER_MODEL,
-        },
-        gemini: {
-            draft: DEFAULT_GEMINI_MODEL,
-            strategy: DEFAULT_GEMINI_MODEL,
-            review: DEFAULT_GEMINI_MODEL,
-            evaluator: DEFAULT_GEMINI_LITE_MODEL,
-        },
-    },
-};
-
-const openRouterOptions = [
-    "deepseek/deepseek-chat",
-    "qwen/qwen-2.5-72b-instruct",
-    "qwen/qwen-2.5-32b-instruct",
-    "qwen/qwen-2.5-coder-32b-instruct",
-    "deepseek/deepseek-r1",
-];
-
-const geminiOptions = [...GEMINI_MODEL_OPTIONS];
-
-const inputClass = "rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-300/60";
-
-const parseOrder = (value?: string): ProviderKey[] => {
-    const parsed = String(value || "")
-        .split(",")
-        .map((item) => item.trim().toLowerCase().split(":")[0])
-        .filter((item): item is ProviderKey => item === "openrouter" || item === "gemini");
-    return Array.from(new Set([...parsed, "openrouter", "gemini"]));
+const providerModelMeta = (settings: AiSettings, provider: ProviderKey) => {
+    if (provider === "gemini") return { field: "geminiDraftModel", value: settings.geminiDraftModel, label: "Modelo da Lari" };
+    if (provider === "groq") return { field: "groqStarterModel", value: settings.groqStarterModel, label: "Modelo econômico" };
+    if (provider === "cloudflare") return { field: "cloudflareModel", value: settings.cloudflareModel, label: "Modelo" };
+    if (provider === "mistral") return { field: "mistralModel", value: settings.mistralModel, label: "Modelo" };
+    if (provider === "openrouter") return { field: "openrouterDraftModel", value: settings.openrouterDraftModel, label: "Modelo principal" };
+    if (provider === "cerebras") return { field: "cerebrasModel", value: settings.cerebrasModel, label: "Modelo" };
+    return { field: "customModel", value: settings.customModel, label: "Modelo" };
 };
 
 export default function AdminAiPage() {
     const [settings, setSettings] = useState<AiSettings>(emptySettings);
-    const [order, setOrder] = useState<ProviderKey[]>(["openrouter", "gemini"]);
-    const [openrouterApiKey, setOpenrouterApiKey] = useState("");
-    const [geminiApiKey, setGeminiApiKey] = useState("");
-    const [fishAudioApiKey, setFishAudioApiKey] = useState("");
-    const [fishTestUrl, setFishTestUrl] = useState("");
-    const [testingFish, setTestingFish] = useState(false);
+    const [order, setOrder] = useState<ProviderKey[]>(PROVIDER_ORDER);
+    const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
     const [stats, setStats] = useState<AiStat[]>([]);
     const [recentEvents, setRecentEvents] = useState<AiEvent[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [msg, setMsg] = useState("");
+    const [routerSnapshot, setRouterSnapshot] = useState<RouterSnapshot[]>([]);
+    const [saveState, setSaveState] = useState<SaveState>("loading");
+    const [message, setMessage] = useState("Carregando configuração...");
+    const [testing, setTesting] = useState<Record<string, boolean>>({});
+    const [testResults, setTestResults] = useState<Record<string, string>>({});
+    const [fishTestUrl, setFishTestUrl] = useState("");
+    const initializedRef = useRef(false);
+    const lastQueuedRef = useRef("");
+    const saveChainRef = useRef<Promise<unknown>>(Promise.resolve());
+
+    const buildPayload = useCallback((secretOverrides: Record<string, string> = {}) => ({
+        ...settings,
+        ...secretOverrides,
+        aiModelOrder: order.join(","),
+        aiDraftModelOrder: order.join(","),
+        aiStrategyModelOrder: order.join(","),
+        aiReviewModelOrder: order.join(","),
+        aiEvaluatorModelOrder: order.join(","),
+    }), [settings, order]);
+
+    const load = useCallback(async () => {
+        setSaveState("loading");
+        const response = await fetch("/api/admin/ai-settings", { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || data?.error) throw new Error(data?.error || `HTTP ${response.status}`);
+        const next = { ...emptySettings, ...data.settings } as AiSettings;
+        const nextOrder = parseOrder(next.aiModelOrder || next.aiDraftModelOrder);
+        setSettings(next);
+        setOrder(nextOrder);
+        setStats(Array.isArray(data.stats) ? data.stats : []);
+        setRecentEvents(Array.isArray(data.recentEvents) ? data.recentEvents : []);
+        setRouterSnapshot(Array.isArray(data.routerSnapshot) ? data.routerSnapshot : []);
+        lastQueuedRef.current = JSON.stringify({ settings: next, order: nextOrder });
+        initializedRef.current = true;
+        setSaveState("idle");
+        setMessage("Tudo carregado. Alterações comuns salvam sozinhas.");
+    }, []);
 
     useEffect(() => {
-        load();
-    }, []);
+        load().catch((error) => {
+            setSaveState("error");
+            setMessage(`Erro ao carregar: ${error?.message || error}`);
+        });
+    }, [load]);
 
     useEffect(() => () => {
         if (fishTestUrl) URL.revokeObjectURL(fishTestUrl);
     }, [fishTestUrl]);
 
-    const load = async () => {
-        const res = await fetch("/api/admin/ai-settings", { cache: "no-store" });
-        const data = await res.json();
-        const next = data?.settings ? { ...emptySettings, ...data.settings } : emptySettings;
-        setSettings(next);
-        setOrder(parseOrder(next.aiDraftModelOrder));
-        setStats(Array.isArray(data?.stats) ? data.stats : []);
-        setRecentEvents(Array.isArray(data?.recentEvents) ? data.recentEvents : []);
-    };
-
-    const applyPreset = (preset: typeof PRESETS.openrouterFree) => {
-        setOrder(preset.order);
-        setSettings((prev) => ({
-            ...prev,
-            aiDraftModelOrder: preset.order.join(","),
-            openrouterDraftModel: preset.openrouter.draft,
-            openrouterStrategyModel: preset.openrouter.strategy,
-            openrouterReviewModel: preset.openrouter.review,
-            openrouterEvaluatorModel: preset.openrouter.evaluator,
-            geminiDraftModel: preset.gemini.draft,
-            geminiStrategyModel: preset.gemini.strategy,
-            geminiReviewModel: preset.gemini.review,
-            geminiEvaluatorModel: preset.gemini.evaluator,
-        }));
-        setMsg(`${preset.label} aplicado. Clique em Salvar para gravar.`);
-    };
-
-    const save = async () => {
-        setLoading(true);
-        setMsg("");
-        const providerOrder = order.join(",");
-        const openrouterKey = openrouterApiKey.trim();
-        const geminiKey = geminiApiKey.trim();
-        const fishKey = fishAudioApiKey.trim();
-        const res = await fetch("/api/admin/ai-settings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                ...settings,
-                openrouterApiKey: openrouterKey,
-                geminiApiKey: geminiKey,
-                fishAudioApiKey: fishKey,
-                aiModelOrder: providerOrder,
-                aiDraftModelOrder: providerOrder,
-                aiStrategyModelOrder: providerOrder,
-                aiReviewModelOrder: providerOrder,
-                aiEvaluatorModelOrder: providerOrder,
-            }),
-        });
-        const data = await res.json();
-        if (data?.error) {
-            setMsg(`Erro: ${data.error}`);
-        } else {
-            setMsg("Configuração salva no banco. Se o campo da chave ficar vazio depois de atualizar, é normal: a chave fica oculta.");
-            setOpenrouterApiKey("");
-            setGeminiApiKey("");
-            setFishAudioApiKey("");
-            await load();
-        }
-        setLoading(false);
-    };
-
-    const testFishAudio = async () => {
-        setTestingFish(true);
-        setMsg("");
-        try {
-            const res = await fetch("/api/admin/fish-audio/test", {
+    const persist = useCallback((secretOverrides: Record<string, string> = {}) => {
+        const payload = buildPayload(secretOverrides);
+        setSaveState("saving");
+        setMessage("Salvando automaticamente...");
+        const job = async () => {
+            const response = await fetch("/api/admin/ai-settings", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            const data = await response.json();
+            if (!response.ok || data?.error) throw new Error(data?.error || `HTTP ${response.status}`);
+            setSaveState("saved");
+            setMessage(`Salvo automaticamente às ${new Date(data.savedAt || Date.now()).toLocaleTimeString()}.`);
+            return data;
+        };
+        const queued = saveChainRef.current.then(job, job);
+        saveChainRef.current = queued.catch(() => undefined);
+        queued.catch((error) => {
+            setSaveState("error");
+            setMessage(`Erro ao salvar: ${error?.message || error}`);
+        });
+        return queued;
+    }, [buildPayload]);
+
+    useEffect(() => {
+        if (!initializedRef.current) return;
+        const signature = JSON.stringify({ settings, order });
+        if (signature === lastQueuedRef.current) return;
+        lastQueuedRef.current = signature;
+        const timer = window.setTimeout(() => { void persist(); }, 800);
+        return () => window.clearTimeout(timer);
+    }, [settings, order, persist]);
+
+    const updateSetting = (field: string, value: string | number | boolean) => setSettings((current) => ({ ...current, [field]: value }));
+
+    const saveSecret = async (provider: ProviderKey) => {
+        const meta = providerSecretMeta(settings, provider);
+        const value = String(secretDrafts[provider] || "").trim();
+        if (!value) return;
+        await persist({ [meta.payload]: value });
+        setSecretDrafts((current) => ({ ...current, [provider]: "" }));
+        await load();
+    };
+
+    const testProvider = async (provider: ProviderKey) => {
+        setTesting((current) => ({ ...current, [provider]: true }));
+        setTestResults((current) => ({ ...current, [provider]: "Testando..." }));
+        try {
+            const response = await fetch("/api/admin/ai-settings", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    fishAudioApiKey: fishAudioApiKey.trim(),
-                    fishAudioVoiceId: settings.fishAudioVoiceId,
-                    fishAudioModel: settings.fishAudioModel,
+                    provider,
+                    apiKey: secretDrafts[provider] || "",
+                    accountId: settings.cloudflareAccountId,
+                    baseUrl: settings.customBaseUrl,
                 }),
             });
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                throw new Error(data?.error || `Fish Audio respondeu ${res.status}`);
-            }
-            const blob = await res.blob();
-            if (fishTestUrl) URL.revokeObjectURL(fishTestUrl);
-            setFishTestUrl(URL.createObjectURL(blob));
-            setMsg("Áudio de teste gerado. Dê play abaixo para ouvir.");
+            const data = await response.json();
+            if (!response.ok || data?.error) throw new Error(data?.error || `HTTP ${response.status}`);
+            setTestResults((current) => ({ ...current, [provider]: `Conectado em ${data.latencyMs}ms` }));
         } catch (error: any) {
-            setMsg(`Erro no teste de voz: ${error?.message || error}`);
+            setTestResults((current) => ({ ...current, [provider]: `Falhou: ${error?.message || error}` }));
         } finally {
-            setTestingFish(false);
+            setTesting((current) => ({ ...current, [provider]: false }));
         }
     };
 
-    const clearLogs = async () => {
-        setLoading(true);
-        const res = await fetch("/api/admin/ai-settings", { method: "DELETE" });
-        const data = await res.json();
-        setMsg(data?.error ? `Erro: ${data.error}` : "Erros limpos");
-        await load();
-        setLoading(false);
+    const moveProvider = (provider: ProviderKey, direction: -1 | 1) => setOrder((current) => {
+        const index = current.indexOf(provider);
+        const target = index + direction;
+        if (index < 0 || target < 0 || target >= current.length) return current;
+        const next = [...current];
+        [next[index], next[target]] = [next[target], next[index]];
+        return next;
+    });
+
+    const useRecommendedOrder = () => {
+        setOrder(PROVIDER_ORDER);
+        setSettings((current) => ({ ...current, aiStrategyEnabled: true, aiReviewEnabled: true, aiEvaluatorEnabled: true, aiSharedRateLimitEnabled: true }));
     };
 
-    const moveProvider = (provider: ProviderKey, direction: -1 | 1) => {
-        setOrder((current) => {
-            const index = current.indexOf(provider);
-            const target = index + direction;
-            if (index < 0 || target < 0 || target >= current.length) return current;
-            const next = [...current];
-            [next[index], next[target]] = [next[target], next[index]];
-            return next;
-        });
-    };
-
-    const providerTotals = (provider: ProviderKey) => {
+    const providerTotals = useCallback((provider: ProviderKey) => {
         const rows = stats.filter((item) => item.provider === provider);
         return {
-            ok: rows.reduce((sum, item) => sum + Number(item.success || 0), 0),
+            success: rows.reduce((sum, item) => sum + Number(item.success || 0), 0),
             error: rows.reduce((sum, item) => sum + Number(item.error || 0), 0),
         };
-    };
-
-    const errorRows = useMemo(() => {
-        return stats
-            .filter((item) => Number(item.error || 0) > 0)
-            .sort((a, b) => Number(b.error || 0) - Number(a.error || 0))
-            .slice(0, 8);
     }, [stats]);
 
-    const statusWarnings = useMemo(() => {
-        const text = recentEvents.map((event) => `${event.provider} ${event.message || ""}`).join("\n").toLowerCase();
-        const warnings: string[] = [];
-        if (text.includes("free-models-per-day") || text.includes("rate limit")) {
-            warnings.push("OpenRouter Free bateu limite. Para voltar agora, coloque créditos no OpenRouter ou use Full Gemini.");
-        }
-        if (text.includes("403") || text.includes("denied access") || text.includes("forbidden")) {
-            warnings.push("Gemini está recusando a chave/projeto. Troque a API Key ou habilite o projeto no Google AI Studio.");
-        }
-        return warnings;
-    }, [recentEvents]);
+    const configuredCount = useMemo(() => PROVIDER_ORDER.filter((provider) => providerSecretMeta(settings, provider).source !== "missing").length, [settings]);
+    const latestErrors = useMemo(() => recentEvents.filter((event) => event.status === "error").slice(0, 6), [recentEvents]);
 
-    const hasConfiguredProvider = Boolean(settings.openrouterApiKeyMasked || settings.geminiApiKeyMasked);
+    const testFishAudio = async () => {
+        setTesting((current) => ({ ...current, fish: true }));
+        try {
+            const response = await fetch("/api/admin/fish-audio/test", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ fishAudioApiKey: secretDrafts.fish || "", fishAudioVoiceId: settings.fishAudioVoiceId, fishAudioModel: settings.fishAudioModel }),
+            });
+            if (!response.ok) throw new Error((await response.json().catch(() => ({})))?.error || `HTTP ${response.status}`);
+            const blob = await response.blob();
+            if (fishTestUrl) URL.revokeObjectURL(fishTestUrl);
+            setFishTestUrl(URL.createObjectURL(blob));
+            setTestResults((current) => ({ ...current, fish: "Áudio pronto. Dê play abaixo." }));
+        } catch (error: any) {
+            setTestResults((current) => ({ ...current, fish: `Falhou: ${error?.message || error}` }));
+        } finally {
+            setTesting((current) => ({ ...current, fish: false }));
+        }
+    };
 
     return (
-        <div className="min-h-screen bg-[#080b10] text-slate-100">
-            <header className="border-b border-white/10 bg-[#080b10]">
-                <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-4 py-5 md:flex-row md:items-center md:justify-between">
+        <div className="min-h-screen bg-[#070a0f] text-slate-100">
+            <header className="sticky top-0 z-20 border-b border-white/10 bg-[#070a0f]/95 backdrop-blur-xl">
+                <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
                     <div>
-                        <p className="text-xs uppercase tracking-[0.22em] text-cyan-300">Admin</p>
-                        <h1 className="text-xl font-semibold">Multi-IAs da Lari</h1>
-                        <p className="text-sm text-slate-400">Escolha Gemini ou OpenRouter Free e acompanhe erros.</p>
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">Central de inteligência</p>
+                        <h1 className="mt-1 text-2xl font-semibold">APIs e roteamento da Lari</h1>
+                        <p className="mt-1 text-sm text-slate-400">Cole as chaves, teste e pronto. O restante salva automaticamente.</p>
                     </div>
+                    <SaveBadge state={saveState} message={message} />
                 </div>
             </header>
 
-            <main className="mx-auto grid w-full max-w-5xl gap-5 px-4 py-6 lg:grid-cols-[1.1fr_0.9fr]">
-                <section className="space-y-5">
-                    {!hasConfiguredProvider && (
-                        <div role="alert" className="rounded-lg border border-rose-400/40 bg-rose-400/10 p-4 text-rose-50">
-                            <p className="font-semibold">Bot sem provedor de IA</p>
-                            <p className="mt-1 text-sm text-rose-100/80">
-                                Nenhuma chave está configurada. O Telegram usa respostas locais de emergência até você salvar uma chave Gemini ou OpenRouter abaixo.
-                            </p>
-                        </div>
-                    )}
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
-                        <div className="flex items-center justify-between gap-3">
-                            <div>
-                                <h2 className="text-lg font-semibold">Preset principal</h2>
-                                <p className="text-sm text-slate-400">Só dois modos para não confundir.</p>
-                            </div>
-                            <button onClick={save} disabled={loading} className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60">
-                                {loading ? "Salvando..." : "Salvar"}
-                            </button>
-                        </div>
-                        {statusWarnings.length > 0 && (
-                            <div className="mt-4 grid gap-2">
-                                {statusWarnings.map((warning) => (
-                                    <div key={warning} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
-                                        {warning}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                            <PresetButton preset={PRESETS.fullGemini} onClick={() => applyPreset(PRESETS.fullGemini)} active={order[0] === "gemini"} />
-                            <PresetButton preset={PRESETS.openrouterFree} onClick={() => applyPreset(PRESETS.openrouterFree)} active={order[0] === "openrouter"} />
-                        </div>
-                        {msg && <div className="mt-4 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-200">{msg}</div>}
+            <main className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+                <section className="space-y-6">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <TierCard title="Primeiro contato" value="1 IA" detail="Uma chamada econômica" color="cyan" />
+                        <TierCard title="R$ 19,90+" value="2 IAs" detail="Cérebro + Lari" color="blue" />
+                        <TierCard title="R$ 100+" value="3 IAs" detail="Revisão em todo turno" color="violet" />
+                        <TierCard title="R$ 200+" value="4 IAs" detail="Avaliadora final" color="emerald" />
                     </div>
 
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
-                        <h2 className="text-lg font-semibold">Ordem atual</h2>
-                        <div className="mt-4 grid gap-3">
-                            {order.map((provider, index) => {
-                                const totals = providerTotals(provider);
-                                return (
-                                    <div key={provider} className="grid gap-3 rounded-lg border border-white/10 bg-black/25 p-4 sm:grid-cols-[42px_1fr_auto] sm:items-center">
-                                        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-400 text-sm font-black text-slate-950">{index + 1}</span>
-                                        <div>
-                                            <strong className="text-base uppercase tracking-[0.08em]">{providerLabels[provider]}</strong>
-                                            <p className="mt-2 text-sm">
-                                                <span className="text-emerald-200">ok {totals.ok}</span>
-                                                <span className="mx-2 text-slate-500">|</span>
-                                                <span className="text-red-200">erro {totals.error}</span>
-                                            </p>
+                    <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] p-5">
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h2 className="text-lg font-semibold">Ordem recomendada para volume</h2>
+                                <p className="mt-1 text-sm text-slate-400">Gemini → Groq → Cloudflare → Mistral → OpenRouter → Cerebras → próprio.</p>
+                            </div>
+                            <button type="button" onClick={useRecommendedOrder} className="rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-200">Usar ordem recomendada</button>
+                        </div>
+                    </div>
+
+                    <div className="space-y-4">
+                        {order.map((provider, index) => {
+                            const info = PROVIDER_INFO[provider];
+                            const secret = providerSecretMeta(settings, provider);
+                            const model = providerModelMeta(settings, provider);
+                            const totals = providerTotals(provider);
+                            return (
+                                <article key={provider} className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.035]">
+                                    <div className="flex flex-col gap-4 p-5 md:flex-row md:items-start">
+                                        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${info.color} text-base font-black text-slate-950`}>{index + 1}</div>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <h2 className="text-lg font-semibold">{info.label}</h2>
+                                                <StatusPill source={secret.source} />
+                                                <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-slate-400">{info.short}</span>
+                                            </div>
+                                            <p className="mt-2 text-sm leading-6 text-slate-400">{info.description}</p>
+                                            <div className="mt-3 flex flex-wrap gap-3 text-xs">
+                                                <span className="text-emerald-300">{totals.success} sucessos</span>
+                                                <span className="text-rose-300">{totals.error} erros</span>
+                                                {secret.masked && <span className="text-slate-500">Chave: {secret.masked}</span>}
+                                            </div>
                                         </div>
-                                        <div className="flex gap-2">
-                                            <button onClick={() => moveProvider(provider, -1)} disabled={index === 0} className="rounded-md border border-white/10 px-3 py-2 text-xs text-slate-200 disabled:opacity-30">Subir</button>
-                                            <button onClick={() => moveProvider(provider, 1)} disabled={index === order.length - 1} className="rounded-md border border-white/10 px-3 py-2 text-xs text-slate-200 disabled:opacity-30">Descer</button>
+                                        <div className="flex shrink-0 gap-2">
+                                            <button type="button" onClick={() => moveProvider(provider, -1)} disabled={index === 0} className="rounded-lg border border-white/10 px-3 py-2 text-xs disabled:opacity-25">↑</button>
+                                            <button type="button" onClick={() => moveProvider(provider, 1)} disabled={index === order.length - 1} className="rounded-lg border border-white/10 px-3 py-2 text-xs disabled:opacity-25">↓</button>
                                         </div>
                                     </div>
-                                );
-                            })}
-                        </div>
-                    </div>
 
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
-                        <h2 className="text-lg font-semibold">Camadas da Lari</h2>
-                        <p className="mt-1 text-sm text-slate-400">O caminho normal usa o cérebro central e a Lari. A revisão extra só entra em decisões críticas.</p>
-                        <div className="mt-4 grid gap-3">
-                            <LayerToggle
-                                title="Lari responde"
-                                description="Camada principal que escreve a resposta final."
-                                checked
-                                locked
-                                onChange={() => undefined}
-                            />
-                            <LayerToggle
-                                title="Cérebro central"
-                                description="Analisa cada lead, usa memória persistente e planeja os balões antes da Lari responder."
-                                checked={settings.aiStrategyEnabled}
-                                onChange={(checked) => setSettings((prev) => ({ ...prev, aiStrategyEnabled: checked }))}
-                            />
-                            <LayerToggle
-                                title="Revisora"
-                                description="Revisa PIX e respostas de baixa confiança; conversas normais usam guardas locais mais rápidas."
-                                checked={settings.aiReviewEnabled}
-                                onChange={(checked) => setSettings((prev) => ({ ...prev, aiReviewEnabled: checked }))}
-                            />
-                            <LayerToggle
-                                title="Score integrado"
-                                description="A classificação vem do cérebro e as barrinhas são calculadas no backend, sem uma chamada extra."
-                                checked
-                                locked
-                                onChange={() => undefined}
-                            />
-                        </div>
-                    </div>
+                                    <div className="grid gap-4 border-t border-white/10 bg-black/15 p-5 md:grid-cols-2">
+                                        <Field label="API Key">
+                                            <input
+                                                type="password"
+                                                value={secretDrafts[provider] || ""}
+                                                onChange={(event) => setSecretDrafts((current) => ({ ...current, [provider]: event.target.value }))}
+                                                onBlur={() => void saveSecret(provider)}
+                                                placeholder={secret.masked ? "Cole somente para trocar a chave" : "Cole a chave aqui"}
+                                                className={inputClass}
+                                            />
+                                            <p className="text-xs text-slate-500">A chave é salva quando você sair deste campo.</p>
+                                        </Field>
+                                        <Field label={model.label}>
+                                            <input value={String(model.value)} onChange={(event) => updateSetting(model.field, event.target.value)} className={inputClass} />
+                                        </Field>
 
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
-                        <h2 className="text-lg font-semibold">Chaves</h2>
-                        <p className="mt-1 text-sm text-slate-400">
-                            A chave nunca volta preenchida no campo por segurança. O que importa é o selo salva no banco.
-                        </p>
-                        <div className="mt-4 grid gap-4">
-                            <KeyField
-                                label="Gemini API Key"
-                                value={geminiApiKey}
-                                onChange={setGeminiApiKey}
-                                placeholder="AIza..."
-                                masked={settings.geminiApiKeyMasked}
-                                saved={settings.geminiApiKeySaved}
-                            />
-                            <KeyField
-                                label="OpenRouter API Key"
-                                value={openrouterApiKey}
-                                onChange={setOpenrouterApiKey}
-                                placeholder="sk-or-..."
-                                masked={settings.openrouterApiKeyMasked}
-                                saved={settings.openrouterApiKeySaved}
-                            />
-                        </div>
-                    </div>
+                                        {provider === "cloudflare" && <Field label="Account ID"><input value={settings.cloudflareAccountId} onChange={(event) => updateSetting("cloudflareAccountId", event.target.value)} className={inputClass} placeholder="ID da conta Cloudflare" /></Field>}
+                                        {provider === "custom" && <Field label="URL base"><input value={settings.customBaseUrl} onChange={(event) => updateSetting("customBaseUrl", event.target.value)} className={inputClass} placeholder="https://seu-gateway/v1" /></Field>}
+                                        {provider === "groq" && <Field label="Modelo para compradores"><input value={settings.groqModel} onChange={(event) => updateSetting("groqModel", event.target.value)} className={inputClass} /></Field>}
 
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
-                        <h2 className="text-lg font-semibold">Modelos</h2>
-                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                            <ModelSelect title="Gemini Lari" value={settings.geminiDraftModel} options={geminiOptions} onChange={(value) => setSettings((prev) => ({ ...prev, geminiDraftModel: value, geminiStrategyModel: value, geminiReviewModel: value }))} />
-                            <ModelSelect title="OpenRouter Lari" value={settings.openrouterDraftModel} options={openRouterOptions} onChange={(value) => setSettings((prev) => ({ ...prev, openrouterDraftModel: value, openrouterStrategyModel: value, openrouterReviewModel: value }))} />
-                        </div>
-                    </div>
-
-                    <div className="rounded-lg border border-fuchsia-300/20 bg-fuchsia-300/[0.04] p-5">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                                <p className="text-xs uppercase tracking-[0.18em] text-fuchsia-200">Fish Audio</p>
-                                <h2 className="mt-1 text-lg font-semibold">Voz natural da Lari</h2>
-                                <p className="mt-1 max-w-xl text-sm leading-6 text-slate-400">
-                                    Envia um áudio curto em momentos naturais. Emoção, pausa e tom são escolhidos pelo contexto; PIX e links continuam sempre em texto.
-                                </p>
-                            </div>
-                            <label className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm">
-                                <input
-                                    type="checkbox"
-                                    checked={settings.fishAudioEnabled}
-                                    onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioEnabled: event.target.checked }))}
-                                    className="h-5 w-5 accent-fuchsia-300"
-                                />
-                                {settings.fishAudioEnabled ? "Ligada" : "Desligada"}
-                            </label>
-                        </div>
-
-                        <div className="mt-5 grid gap-4">
-                            <KeyField
-                                label="Fish Audio API Key"
-                                value={fishAudioApiKey}
-                                onChange={setFishAudioApiKey}
-                                placeholder="sk-fish-..."
-                                masked={settings.fishAudioApiKeyMasked}
-                                saved={settings.fishAudioApiKeySaved}
-                            />
-                            <div className="grid gap-4 sm:grid-cols-2">
-                                <Field label="ID da voz">
-                                    <input
-                                        value={settings.fishAudioVoiceId}
-                                        onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioVoiceId: event.target.value }))}
-                                        className={inputClass}
-                                        placeholder="ID do modelo de voz"
-                                    />
-                                </Field>
-                                <Field label="Modelo Fish">
-                                    <select
-                                        value={settings.fishAudioModel}
-                                        onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioModel: event.target.value }))}
-                                        className={inputClass}
-                                    >
-                                        <option value="s1">S1 (gratuito)</option>
-                                    </select>
-                                </Field>
-                            </div>
-                            <div className="grid gap-4 sm:grid-cols-3">
-                                <Field label={`Frequência: ${settings.fishAudioFrequencyPercent}%`}>
-                                    <input
-                                        type="range"
-                                        min="1"
-                                        max="60"
-                                        value={settings.fishAudioFrequencyPercent}
-                                        onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioFrequencyPercent: Number(event.target.value) }))}
-                                        className="w-full accent-fuchsia-300"
-                                    />
-                                </Field>
-                                <Field label="Intervalo por lead (min)">
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        max="1440"
-                                        value={settings.fishAudioCooldownMinutes}
-                                        onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioCooldownMinutes: Number(event.target.value) }))}
-                                        className={inputClass}
-                                    />
-                                </Field>
-                                <Field label="Máximo de caracteres">
-                                    <input
-                                        type="number"
-                                        min="60"
-                                        max="320"
-                                        value={settings.fishAudioMaxChars}
-                                        onChange={(event) => setSettings((prev) => ({ ...prev, fishAudioMaxChars: Number(event.target.value) }))}
-                                        className={inputClass}
-                                    />
-                                </Field>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-3">
-                                <button
-                                    type="button"
-                                    onClick={testFishAudio}
-                                    disabled={testingFish || (!fishAudioApiKey.trim() && !settings.fishAudioApiKeyMasked)}
-                                    className="rounded-lg border border-fuchsia-200/30 bg-fuchsia-300/10 px-4 py-2 text-sm font-semibold text-fuchsia-100 disabled:opacity-40"
-                                >
-                                    {testingFish ? "Gerando voz..." : "Ouvir teste"}
-                                </button>
-                                {fishTestUrl && <audio controls autoPlay src={fishTestUrl} className="h-10 max-w-full" />}
-                            </div>
-                            <p className="text-xs leading-5 text-slate-500">
-                                Configuração inicial: voz brasileira jovem e conversacional, 18% das respostas e no máximo um áudio a cada 30 minutos por lead.
-                            </p>
-                        </div>
+                                        <div className="flex flex-wrap items-end gap-2 md:col-span-2">
+                                            {info.keyUrl && <a href={info.keyUrl} target="_blank" rel="noreferrer" className="rounded-xl border border-cyan-300/30 bg-cyan-300/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 hover:bg-cyan-300/15">{info.keyLabel} ↗</a>}
+                                            <button type="button" onClick={() => void testProvider(provider)} disabled={testing[provider]} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold hover:bg-white/5 disabled:opacity-50">{testing[provider] ? "Testando..." : "Testar conexão"}</button>
+                                            {testResults[provider] && <span className={`text-xs ${testResults[provider].startsWith("Conectado") ? "text-emerald-300" : "text-amber-200"}`}>{testResults[provider]}</span>}
+                                        </div>
+                                    </div>
+                                </article>
+                            );
+                        })}
                     </div>
                 </section>
 
                 <aside className="space-y-5">
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
-                        <div className="flex items-center justify-between gap-3">
-                            <h2 className="text-lg font-semibold">Erros por IA</h2>
-                            <button onClick={clearLogs} disabled={loading} className="rounded-md border border-white/10 px-2 py-1 text-xs text-slate-300">Limpar</button>
+                    <Panel title="Resumo">
+                        <div className="grid grid-cols-2 gap-3">
+                            <Metric value={String(configuredCount)} label="APIs configuradas" />
+                            <Metric value={String(stats.reduce((sum, item) => sum + Number(item.success || 0), 0))} label="Chamadas OK" />
                         </div>
-                        <div className="mt-4 space-y-2">
-                            {errorRows.length === 0 && <p className="text-sm text-slate-400">Sem erro registrado.</p>}
-                            {errorRows.map((item) => (
-                                <div key={`${item.role}-${item.provider}-${item.model}`} className="rounded-lg border border-white/10 bg-black/25 p-3">
-                                    <div className="flex flex-wrap items-center justify-between gap-2">
-                                        <strong className="text-sm text-slate-100">{item.provider.toUpperCase()}</strong>
-                                        <span className="text-xs text-slate-400">{roleLabels[item.role] || item.role}</span>
-                                    </div>
-                                    <p className="mt-1 break-all text-xs text-slate-400">{item.model}</p>
-                                    <p className="mt-2 text-sm">
-                                        <span className="text-emerald-200">ok {item.success || 0}</span>
-                                        <span className="mx-2 text-slate-500">|</span>
-                                        <span className="text-red-200">erro {item.error || 0}</span>
-                                    </p>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
+                        <p className="mt-4 text-xs leading-5 text-slate-500">Provedor cheio, lento ou com erro sai da rota automaticamente. A Lari tenta o próximo sem duplicar a resposta.</p>
+                        {routerSnapshot.length > 0 && <div className="mt-4 space-y-2 border-t border-white/10 pt-4">{routerSnapshot.slice(0, 6).map((item) => <div key={item.key} className="flex items-center justify-between gap-3 text-xs"><span className="truncate text-slate-400">{item.key}</span><span className={item.cooldownMs > 0 ? "text-amber-200" : "text-emerald-300"}>{item.cooldownMs > 0 ? `pausa ${Math.ceil(item.cooldownMs / 1000)}s` : `${item.minuteRequests}/min · ${item.ewmaLatencyMs || 0}ms`}</span></div>)}</div>}
+                    </Panel>
 
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
-                        <h2 className="text-lg font-semibold">Últimos erros</h2>
-                        <div className="mt-4 max-h-[420px] overflow-auto space-y-2">
-                            {recentEvents.filter((event) => event.status === "error").length === 0 && <p className="text-sm text-slate-400">Sem erro recente.</p>}
-                            {recentEvents.filter((event) => event.status === "error").slice(0, 8).map((event, index) => (
-                                <div key={`${event.at}-${index}`} className="rounded-lg border border-red-400/20 bg-red-400/10 p-3 text-xs">
-                                    <div className="flex items-center justify-between gap-2">
-                                        <span className="font-semibold text-red-100">{event.provider}:{event.model}</span>
-                                        <span className="text-red-100/60">{new Date(event.at).toLocaleString()}</span>
-                                    </div>
-                                    {event.message && <p className="mt-2 whitespace-pre-wrap text-red-100/80">{event.message.slice(0, 300)}</p>}
+                    <Panel title="Proteção para 30 leads/min">
+                        <Toggle title="Limitador compartilhado" description={settings.sharedRateLimitReady ? "Pronto para coordenar todas as instâncias da Vercel." : "Falta SERVICE_ROLE e aplicar a migration do limitador."} checked={settings.aiSharedRateLimitEnabled} onChange={(value) => updateSetting("aiSharedRateLimitEnabled", value)} />
+                        <Toggle title="Cérebro progressivo" description="Ativa mais camadas somente depois da compra." checked={settings.aiStrategyEnabled} onChange={(value) => updateSetting("aiStrategyEnabled", value)} />
+                        <Toggle title="Revisora" description="Corrige respostas críticas e clientes compradores." checked={settings.aiReviewEnabled} onChange={(value) => updateSetting("aiReviewEnabled", value)} />
+                        <Toggle title="Avaliadora elite" description="Quarta camada para clientes acima de R$ 200." checked={settings.aiEvaluatorEnabled} onChange={(value) => updateSetting("aiEvaluatorEnabled", value)} />
+                    </Panel>
+
+                    <Panel title="Fish Audio">
+                        <div className="space-y-3">
+                            <StatusPill source={settings.fishAudioApiKeySource} />
+                            <Field label="API Key de voz">
+                                <input type="password" value={secretDrafts.fish || ""} onChange={(event) => setSecretDrafts((current) => ({ ...current, fish: event.target.value }))} onBlur={() => { const value = String(secretDrafts.fish || "").trim(); if (value) void persist({ fishAudioApiKey: value }).then(() => setSecretDrafts((current) => ({ ...current, fish: "" }))); }} className={inputClass} placeholder={settings.fishAudioApiKeyMasked ? "Cole somente para trocar" : "Cole a chave Fish Audio"} />
+                            </Field>
+                            <a href="https://fish.audio/app/api-keys/" target="_blank" rel="noreferrer" className="block rounded-xl border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-center text-sm font-semibold text-cyan-100">Pegar chave no Fish Audio ↗</a>
+                            <Toggle title="Enviar áudios" description="Mantém o modelo gratuito configurado." checked={settings.fishAudioEnabled} onChange={(value) => updateSetting("fishAudioEnabled", value)} />
+                            <Field label="Voice ID"><input value={settings.fishAudioVoiceId} onChange={(event) => updateSetting("fishAudioVoiceId", event.target.value)} className={inputClass} /></Field>
+                            <button type="button" onClick={() => void testFishAudio()} disabled={testing.fish} className="w-full rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold hover:bg-white/5">{testing.fish ? "Gerando..." : "Gerar áudio de teste"}</button>
+                            {testResults.fish && <p className="text-xs text-slate-400">{testResults.fish}</p>}
+                            {fishTestUrl && <audio controls src={fishTestUrl} className="w-full" />}
+                        </div>
+                    </Panel>
+
+                    <Panel title="Erros recentes">
+                        <div className="space-y-2">
+                            {latestErrors.length === 0 && <p className="text-sm text-emerald-300">Nenhum erro recente.</p>}
+                            {latestErrors.map((event, index) => (
+                                <div key={`${event.at}-${index}`} className="rounded-xl border border-rose-400/15 bg-rose-400/[0.06] p-3">
+                                    <div className="flex items-center justify-between gap-2 text-xs"><strong className="text-rose-200">{event.provider}</strong><span className="text-slate-600">{new Date(event.at).toLocaleTimeString()}</span></div>
+                                    <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-400">{event.message || "erro sem detalhe"}</p>
                                 </div>
                             ))}
                         </div>
-                    </div>
+                    </Panel>
                 </aside>
             </main>
         </div>
     );
 }
 
-function PresetButton({ preset, onClick, active }: { preset: typeof PRESETS.openrouterFree; onClick: () => void; active: boolean }) {
-    return (
-        <button onClick={onClick} type="button" className={`rounded-lg border p-4 text-left transition ${active ? "border-cyan-300/60 bg-cyan-300/10" : "border-white/10 bg-black/25 hover:border-cyan-300/40"}`}>
-            <strong className="text-base text-slate-100">{preset.label}</strong>
-            <p className="mt-2 text-sm leading-6 text-slate-400">{preset.description}</p>
-            <p className="mt-3 text-xs text-cyan-200">Ordem: {preset.order.map((item) => providerLabels[item]).join(" -> ")}</p>
-        </button>
-    );
+function SaveBadge({ state, message }: { state: SaveState; message: string }) {
+    const style = state === "error" ? "border-rose-400/30 bg-rose-400/10 text-rose-100" : state === "saving" || state === "loading" ? "border-amber-400/30 bg-amber-400/10 text-amber-100" : "border-emerald-400/30 bg-emerald-400/10 text-emerald-100";
+    return <div className={`max-w-md rounded-xl border px-4 py-2.5 text-sm ${style}`}><strong>{state === "saving" ? "Salvando" : state === "error" ? "Atenção" : "Autosave ligado"}</strong><p className="mt-0.5 text-xs opacity-75">{message}</p></div>;
+}
+
+function TierCard({ title, value, detail, color }: { title: string; value: string; detail: string; color: string }) {
+    return <div className={`rounded-2xl border border-${color}-300/20 bg-white/[0.035] p-4`}><p className="text-xs uppercase tracking-[0.15em] text-slate-500">{title}</p><strong className="mt-2 block text-xl">{value}</strong><p className="mt-1 text-xs text-slate-400">{detail}</p></div>;
+}
+
+function StatusPill({ source }: { source: string }) {
+    const configured = source !== "missing";
+    return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${configured ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/10 text-amber-200"}`}>{source === "database" ? "Salva no painel" : source === "vercel" ? "Vercel" : "Falta chave"}</span>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-    return (
-        <label className="grid gap-2 text-sm">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</span>
-            {children}
-        </label>
-    );
+    return <label className="grid gap-2 text-sm"><span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</span>{children}</label>;
 }
 
-function KeyField({
-    label,
-    value,
-    onChange,
-    placeholder,
-    masked,
-    saved,
-}: {
-    label: string;
-    value: string;
-    onChange: (value: string) => void;
-    placeholder: string;
-    masked: string;
-    saved: boolean;
-}) {
-    return (
-        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</span>
-                <span className={`rounded-md px-2 py-1 text-xs ${saved ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/10 text-amber-200"}`}>
-                    {saved ? "salva no banco" : masked ? "usando env da Vercel" : "não configurada"}
-                </span>
-            </div>
-            {masked && <p className="mt-2 text-xs text-slate-400">Atual: {masked}</p>}
-            <input value={value} onChange={(event) => onChange(event.target.value)} type="password" className={`mt-3 w-full ${inputClass}`} placeholder={placeholder} />
-            <p className="mt-2 text-xs text-slate-500">Cole uma nova chave só se quiser trocar a atual.</p>
-        </div>
-    );
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+    return <section className="rounded-2xl border border-white/10 bg-white/[0.035] p-5"><h2 className="mb-4 text-base font-semibold">{title}</h2>{children}</section>;
 }
 
-function LayerToggle({
-    title,
-    description,
-    checked,
-    locked = false,
-    onChange,
-}: {
-    title: string;
-    description: string;
-    checked: boolean;
-    locked?: boolean;
-    onChange: (checked: boolean) => void;
-}) {
-    return (
-        <label className={`flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/25 p-4 ${locked ? "opacity-80" : ""}`}>
-            <div>
-                <strong className="text-sm text-slate-100">{title}</strong>
-                <p className="mt-1 text-xs leading-5 text-slate-400">{description}</p>
-            </div>
-            <span className="flex items-center gap-2">
-                <span className={`text-xs font-semibold ${checked ? "text-emerald-200" : "text-slate-500"}`}>
-                    {locked ? "Sempre ligada" : checked ? "Ligada" : "Desligada"}
-                </span>
-                <input
-                    type="checkbox"
-                    checked={checked}
-                    disabled={locked}
-                    onChange={(event) => onChange(event.target.checked)}
-                    className="h-5 w-5 accent-cyan-400 disabled:cursor-not-allowed"
-                />
-            </span>
-        </label>
-    );
+function Metric({ value, label }: { value: string; label: string }) {
+    return <div className="rounded-xl border border-white/10 bg-black/20 p-3"><strong className="text-xl">{value}</strong><p className="mt-1 text-xs text-slate-500">{label}</p></div>;
 }
 
-function ModelSelect({ title, value, options, onChange }: { title: string; value: string; options: string[]; onChange: (value: string) => void }) {
-    return (
-        <Field label={title}>
-            <select value={value} onChange={(event) => onChange(event.target.value)} className={inputClass}>
-                {!options.includes(value) && value && <option value={value}>{value}</option>}
-                {options.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                ))}
-            </select>
-        </Field>
-    );
+function Toggle({ title, description, checked, onChange }: { title: string; description: string; checked: boolean; onChange: (value: boolean) => void }) {
+    return <label className="mb-3 flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 p-3 last:mb-0"><span><strong className="text-sm">{title}</strong><p className="mt-1 text-xs leading-5 text-slate-500">{description}</p></span><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-5 w-5 shrink-0 accent-cyan-300" /></label>;
 }

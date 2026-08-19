@@ -18,14 +18,34 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ## Arquitetura da Lari
 
-O bot usa um gateway com fallback por provedor e um pipeline curto:
+O bot usa um gateway com fallback por provedor e inteligencia progressiva por valor confirmado:
 
-1. **Cérebro central:** interpreta o turno, consulta a memória persistente do lead, escolhe objetivo, abordagem e sequência de balões.
-2. **Lari:** transforma o plano em mensagens naturais, mantendo a mesma personagem em qualquer modelo.
-3. **Revisão crítica:** só faz uma chamada extra para PIX ou quando o cérebro retorna baixa confiança.
-4. **Backend:** aplica guardas locais, calcula as barrinhas e envia 2–4 balões curtos em sequência.
+1. **Starter (R$ 0–19,89):** uma chamada econômica reúne leitura, memória e escrita da Lari.
+2. **Buyer (R$ 19,90–99,99):** cérebro central separado + Lari; revisão extra apenas em PIX, baixa confiança, começo estranho ou encontro.
+3. **Premium (R$ 100–199,99):** cérebro + Lari + revisão em todos os turnos, com janela de contexto maior.
+4. **Elite (R$ 200+):** cérebro + Lari + revisão + avaliadora final, com até 100 mensagens recentes consultadas e memória persistente.
+5. **Backend:** continua sendo a autoridade para preço, aceite, PIX, deduplicação e entrega de mídia em todos os níveis.
+
+O VIP possui preço único de **R$ 19,90**. Foto, vídeo, áudio personalizado, chamada e demais produtos seguem a oferta adaptativa do pedido real do lead. O aumento de inteligência melhora continuidade e atendimento; não libera pressão por vulnerabilidade emocional ou financeira.
 
 A memória por lead guarda fatos confirmados, assuntos pendentes, tom, desejos, produtos, recusas e objeções. O histórico enviado ao modelo é limitado à janela recente; a memória preserva a continuidade sem reenviar a conversa inteira.
+
+### Ranking operacional de provedores
+
+**Produção, em ordem:**
+
+1. Gemini AI Studio: melhor rota geral e obrigatória para visão; a cota real varia por modelo e projeto.
+2. Groq: maior volume gratuito previsível para texto curto e baixa latência; o limite diário de tokens pesa antes do RPD nos modelos grandes.
+3. Cloudflare Workers AI: 10.000 neurons/dia e bom encaixe para o primeiro cérebro barato.
+4. Mistral Free mode: API oficial sem cartão, boa reserva; a cota exata aparece por organização no painel.
+5. OpenRouter: ótimo agregador/fallback, mas o free puro é baixo (50 req/dia; 1.000/dia depois de adicionar US$ 10 em créditos).
+6. Cerebras: muito rápido, porém hoje é trial de US$ 5/30 dias, não uma franquia grátis renovável.
+7. GitHub Models e Hugging Face: úteis para protótipo e avaliação, não para o caminho principal do bot.
+8. NVIDIA NIM, AwanLLM e self-host com vLLM/Ollama: entram depois de um teste real de conta, preço, licença e latência; self-host é a única rota de volume realmente controlável.
+
+**Laboratório isolado:** FreeLLMAPI, OmniRoute/9Router, AI-Worker-Proxy, GeminiHydra e outros gateways OpenAI-compatible podem usar `AI_CUSTOM_GATEWAY_*` quando rodam em infraestrutura e chaves próprias. Eles agregam fallback, mas não criam cota nova.
+
+**Fora da rota de conversas reais:** Puter Account Pool Manager, FreeBuff Proxy, ApiFreeLLM, Completeons.me, Algion, NaraRouter, endpoints anônimos não verificados, pools de contas, resets de MachineID, sessões móveis transplantadas, IP/fingerprint rotation e chaves públicas. Essas opções não têm cota, propriedade de sessão, privacidade ou disponibilidade previsíveis.
 
 Configuracao principal:
 
@@ -45,7 +65,55 @@ AI_REVIEW_MODEL_ORDER=openrouter,gemini
 # Modelos usados dentro de cada provedor.
 OPENROUTER_DRAFT_MODEL=z-ai/glm-4.5-air:free
 GEMINI_DRAFT_MODEL=gemini-3.6-flash
+
+# Provedores oficiais diretos opcionais. So entram quando a respectiva chave existe.
+GROQ_API_KEY=gsk_...
+GROQ_DRAFT_MODEL=openai/gpt-oss-120b
+MISTRAL_API_KEY=...
+MISTRAL_DRAFT_MODEL=mistral-small-latest
+CEREBRAS_API_KEY=...
+CEREBRAS_DRAFT_MODEL=gpt-oss-120b
+CLOUDFLARE_ACCOUNT_ID=...
+CLOUDFLARE_AI_API_TOKEN=...
+CLOUDFLARE_DRAFT_MODEL=@cf/openai/gpt-oss-20b
+
+# Qualquer gateway OpenAI-compatible administrado por voce
+# (LiteLLM, FreeLLMAPI, OmniRoute, 9Router ou outro proxy isolado).
+AI_CUSTOM_GATEWAY_BASE_URL=http://seu-gateway/v1
+AI_CUSTOM_GATEWAY_API_KEY=...
+AI_CUSTOM_DRAFT_MODEL=auto
+AI_CUSTOM_GATEWAY_TIERS=starter,buyer
+AI_CUSTOM_GATEWAY_WEIGHT=5
 ```
+
+No nível starter, Gemini Flash-Lite recebe a maior parte dos leads. O restante é distribuído de forma estável entre os provedores econômicos configurados; 429, falta de crédito e falhas de autenticação ativam cooldown automático antes do próximo fallback.
+
+### Roteamento adaptativo para volume
+
+O gateway não usa mais uma lista cega. Cada chamada passa por um roteador que considera:
+
+- limite por minuto e por dia de requisições e tokens;
+- concorrência em andamento, latência média e taxa recente de sucesso;
+- afinidade estável por lead sem concentrar todos os leads no mesmo provedor;
+- circuit breaker diferente para chave inválida, quota, timeout, erro 5xx e JSON ruim;
+- fila curta por nível do cliente e fallback imediato quando outra rota tem capacidade;
+- modelo Groq 8B no primeiro contato e modelo maior somente depois da primeira compra;
+- recuperação textual em outro provedor quando a visão do Gemini não responder.
+
+Os limites conservadores podem ser ajustados sem alterar código. Exemplo:
+
+```env
+GEMINI_GATEWAY_RPM=10
+GEMINI_GATEWAY_TPM=250000
+GROQ_GATEWAY_RPM=30
+GROQ_GATEWAY_TPM=6000
+CLOUDFLARE_GATEWAY_CONCURRENCY=6
+AI_SHARED_RATE_LIMIT_ENABLED=true
+```
+
+Para coordenar várias instâncias da Vercel, execute `ai_gateway_capacity_migration.sql` no Supabase e configure `SUPABASE_SERVICE_ROLE_KEY`. Sem isso, o roteador continua funcionando com controle local por instância.
+
+O painel `/admin/ai` possui autosave, teste de conexão, estado da chave, ordem visual dos provedores e link direto para criar cada API key.
 
 O prompt compacto é o padrão. Para diagnóstico temporário do prompt antigo, use `LARI_LEGACY_PROMPT=true`.
 

@@ -15,15 +15,15 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 export const DEFAULT_FISH_AUDIO_SETTINGS: Omit<FishAudioSettings, "apiKey"> = {
     enabled: false,
     voiceId: "24522123b5804bf691a8450d9187f03e",
-    model: "s1",
+    model: "s2.1-pro-free",
     frequencyPercent: 18,
     cooldownMinutes: 30,
     maxChars: 240,
 };
 
-// O S1 e o modelo gratuito escolhido para todos os audios da Lari.
-// Normalizar tambem configuracoes antigas impede um valor salvo de reativar o S2-Pro pago.
-export const normalizeFishAudioModel = (_value?: string | null) => 's1';
+// A promocao gratuita do S2.1 Pro e o modelo escolhido para todos os audios da Lari.
+// Normalizar tambem configuracoes antigas migra valores salvos sem exigir ajuste manual no painel.
+export const normalizeFishAudioModel = (_value?: string | null) => 's2.1-pro-free';
 
 export const normalizeFishAudioSettings = (input: Partial<FishAudioSettings>): FishAudioSettings => ({
     apiKey: String(input.apiKey || "").trim(),
@@ -154,7 +154,7 @@ export const buildExpressiveSpeech = ({
     const speech = cleanTextForSpeech(messageText, maxChars);
     const context = `${userText} ${emotionalContext} ${messageText}`.toLowerCase();
 
-    // S2-Pro funciona melhor com uma instrucao natural por trecho curto.
+    // S2.1 Pro funciona melhor com uma instrucao natural por trecho curto.
     // Muitas tags simultaneas fazem a voz oscilar e terminar de forma artificial.
     let cue = "[speaks warmly and naturally]";
 
