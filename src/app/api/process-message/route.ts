@@ -121,6 +121,7 @@ const detectLeadMemorySignals = (userText: string, botTexts: string[], aiRespons
     const explicitEvaluationRequest = /(?:avalia|avaliar|avaliacao|avaliação|nota|dar nota|da nota|dá uma nota).{0,40}(?:pau|pinto|rola|ele)|(?:pau|pinto|rola).{0,40}(?:avalia|avaliar|avaliacao|avaliação|nota|dar nota|da nota|dá uma nota)/i.test(t);
 
     if (/(chamada|call|vídeo chamada|video chamada|ligacao|ligação|facetime)/i.test(t)) wanted.push('chamada de video');
+    if (/(encontro presencial|marcar (?:um )?encontro|marcar (?:de )?sair|vamos sair|sair comigo|te encontrar|me encontra|a gente se encontr(?:ar|ando)|vem aqui|vem me ver|te busco|vou te buscar|me busca)/i.test(t)) wanted.push('encontro');
     if (/(foto|fotinha|nude|nudes|pack)/i.test(t)) wanted.push('foto personalizada');
     if (/(video|vídeo|gravado|film[a|e]|previa|prévia)/i.test(t)) wanted.push('video personalizado');
     if (/(zap|whats|whatsapp|numero|número|telefone)/i.test(t)) wanted.push('numero pessoal');
@@ -1409,7 +1410,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     // Pedido de mídia só vira cobrança quando o lead também manifesta uma compra real.
     // Palavras soltas como "pix" ou "pagar" em uma reclamação não autorizam cobrança.
     const explicitTransactionRequest = /\b(quero comprar|vou comprar|quero pagar|vou pagar|pode cobrar|gera(?:r)? (?:o )?pix|manda (?:o )?pix|passa (?:o )?pix|qual (?:o )?(?:preco|preço|valor)|quanto custa)\b/i.test(userOnlyText);
-    const explicitPaidProduct = /\b(vip|vitalicio|vitalício|mensal|chamada|videochamada|call|whatsapp|numero pessoal|número pessoal|personalizad[oa]|sob encomenda|video completo|vídeo completo|audio erotico|áudio erótico)\b/i.test(userOnlyText);
+    const explicitPaidProduct = /\b(vip|vitalicio|vitalício|mensal|chamada|videochamada|call|encontro social|encontro presencial|companhia presencial|whatsapp|numero pessoal|número pessoal|personalizad[oa]|sob encomenda|video completo|vídeo completo|audio erotico|áudio erótico)\b/i.test(userOnlyText);
     const rejectsPaymentNow = /\b(?:nao|não|sem)\b.{0,28}\b(?:pix|pagar|pagamento|cobrar)\b/i.test(userOnlyText)
         || /\b(?:pedi|quero|manda)\b.{0,30}\b(?:previa|prévia|foto)\b.{0,30}\b(?:nao|não|sem)\b.{0,12}\bpix\b/i.test(userOnlyText);
     const explicitPaidPurchaseIntent = !rejectsPaymentNow

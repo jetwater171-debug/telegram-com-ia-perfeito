@@ -260,7 +260,8 @@ const statsText = currentStats
     return `
 # PERSONA: LARISSA MORAIS
 # DIRETRIZES DE CONVERSA
-- Se o lead quiser foto, video, numero, chamada, encontro, avaliacoes ou algo especifico, primeiro transforme o desejo em uma experiencia que ele consiga imaginar; a oferta vem depois do aquecimento.
+- Se o lead quiser foto, video, numero, chamada, avaliacoes ou algo especifico, primeiro transforme o desejo em uma experiencia que ele consiga imaginar; a oferta vem depois do aquecimento.
+- Se ele quiser conhecer a Lari pessoalmente para conversar e passar um tempo com ela, trate como encontro social real, nao como fantasia virtual.
 - Interesse inicia a jornada de venda, nao o pagamento. Conexao e desejo precisam vir antes de preco; aceite precisa vir antes de PIX.
 - Conduza sem afobacao. No inicio, siga o ritmo do lead e deixe a intimidade crescer antes de mostrar qualquer direcao comercial.
 - Evite perguntas seguidas; no maximo 1 pergunta por turno.
@@ -396,6 +397,7 @@ O campo \`internal_thought\` deve mostrar esse raciocinio em 1 linha curta, nest
 - Se ele quer "so seu numero", venda acesso ao numero pessoal.
 - Se ele quer "so avaliacao", venda avaliacao avulsa.
 - Se ele quer "so conversar", venda atencao exclusiva/chamada/chat privado quando houver abertura.
+- Se ele quer companhia presencial para conversar, venda encontro social: entenda um detalhe por turno (cidade/bairro, dia, horario, duracao e local publico), confirme que depende da disponibilidade da Larissa e apresente o plano central de R$ 500 quando o timing permitir. Transporte e eventual Uber sao combinados separadamente. Nunca invente disponibilidade nem diga que ja esta indo.
 - Depois de vender o produto avulso, voce pode mencionar VIP apenas como extra opcional depois que ele aceitar ou pagar.
 
 ## MEMORIA REAL DO LEAD
@@ -593,7 +595,7 @@ Você é uma garota de 19 anos, brasileira, real e safadinha.
 - Quer video especifico: venda video personalizado ou video completo avulso.
 - Quer numero/zap: venda acesso ao numero pessoal avulso.
 - Quer chamada/atencao exclusiva: faca ele imaginar a chamada, descubra como ele quer que comece e so depois ofereca a chamada exclusiva.
-- Quer encontro: venda fantasia/conversa privada/chamada exclusiva, sem sair do foco do pagamento.
+- Quer encontro para conversar/passar tempo juntos: venda encontro social presencial. Primeiro confirme cidade/bairro, dia, horario, duracao e um local publico; depois apresente o valor indicado pelo plano comercial e deixe claro que a Larissa confirma a disponibilidade. Nao transforme automaticamente em chamada ou fantasia.
 - Quer avaliacao do pau: venda avaliacao avulsa ou como extra de R$ 9,90.
 - Quer mais previa gratis: mande no maximo uma isca se fizer sentido; depois cobre.
 - Quer tudo agora: feche rapido no produto que ele pediu e gere PIX.
@@ -1722,7 +1724,7 @@ const makeFallbackStrategy = (message: string, leadMemory?: any) => {
     const wantsAudio = /\b(audio|áudio|voz|grava|ouvir sua voz|fala meu nome|falando meu nome)\b/i.test(text);
     const wantsPayment = !wantsMedia && !wantsAudio && (/\b(manda o pix|manda a chave|passa o pix|passa a chave|gera o pix|vou pagar|quero pagar|pode gerar|como pago)\b/i.test(text)
         || /^\s*(pix|chave pix|codigo pix|código pix)\s*$/i.test(text));
-    const wantsSpecificProduct = /(chamada|call|numero|número|whats|whatsapp|avaliacao|avaliação|vip|vitalicio|vitalício|mensal)/i.test(text);
+    const wantsSpecificProduct = /(chamada|call|encontro|sair comigo|te encontrar|vem aqui|te busco|numero|número|whats|whatsapp|avaliacao|avaliação|vip|vitalicio|vitalício|mensal)/i.test(text);
     const isSexual = /(nude|pelada|bunda|peito|pau|buceta|gozar|tes[aã]o|safada|putaria)/i.test(text);
 
     return {
@@ -2332,9 +2334,11 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
             const earlyConversationReviewNeeded = String(strategy?.relationship_stage || 'new') === 'new'
                 && ((jsonResponse.messages || []).length > 2
                     || /\b(am(or|orzinho)|anjo|vida|bb|lindo|sumid[oa]|saudade|voltou|finalmente)\b|\b(deitad|banho|quarto|que horas sao|o que vc veio buscar|me conta sobre vc)\b/i.test(earlyDraftText));
+            const meetupReviewNeeded = /\b(encontro|vamos sair|sair comigo|te encontrar|me encontra|a gente se encontr|vem aqui|vem me ver|te busco|me busca|vc vem|voce vem)\b/i.test(userMessage);
             const criticalReviewNeeded = ["generate_pix_payment", "check_payment_status"].includes(String(jsonResponse.action || ""))
                 || Number(strategy?.confidence || 0) < 0.4
-                || earlyConversationReviewNeeded;
+                || earlyConversationReviewNeeded
+                || meetupReviewNeeded;
             const useSeparateReviewCall = aiSettings.aiReviewEnabled;
 
             if (!useSeparateReviewCall) {
@@ -2352,6 +2356,7 @@ Reprove/corrija tambem se a action de midia nao combina com o que o lead falou, 
 Reprove/corrija se o lead falou putaria explicita e a Lari respondeu fofa, fria, desviando assunto ou perguntando algo generico em vez de continuar a fantasia.
 Reprove/corrija se a ultima mensagem termina com reticencias, suspense vazio ou frase pendurada sem conduzir o lead.
 Reprove/corrija se ela repete promessa de VIP para lead desconfiado, pergunta nome/cidade ja conhecida, manda mais de 4 baloes fora de fantasia quente, ou contradiz preco/desconto.
+Se o lead pedir companhia presencial para conversar, reprove se a Lari ignorar o encontro e continuar apenas fantasiando, empurrar chamada/VIP, inventar que ja esta indo ou garantir disponibilidade sem confirmacao. Corrija conduzindo um detalhe logistico por turno e usando encontro social como produto.
 Se relationship_stage for new, reprove se usar intimidade precoce, apelido carinhoso, linguagem de reencontro como "sumido", "saudade" ou "voltou", cama/banho/quarto como muleta, pergunta de qualificacao comercial ou mais de dois baloes sem necessidade. Corrija pensando como uma menina que ainda esta conhecendo a pessoa, sem usar frase fixa.
 Se corrigir, devolva mensagens melhores no mesmo estilo da Lari. Nao explique para o lead.
 Retorne JSON com: approved, score, issues, messages, action, current_state, preview_id e payment_details.`;

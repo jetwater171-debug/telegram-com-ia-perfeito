@@ -1,4 +1,4 @@
-export type SalesProduct = 'video_call' | 'vip' | 'custom_photo' | 'custom_video' | 'private_number' | 'private_chat' | 'erotic_audio' | 'evaluation' | 'gift';
+export type SalesProduct = 'video_call' | 'social_meetup' | 'vip' | 'custom_photo' | 'custom_video' | 'private_number' | 'private_chat' | 'erotic_audio' | 'evaluation' | 'gift';
 
 export type AdaptiveOfferPlan = {
     product: SalesProduct;
@@ -31,6 +31,7 @@ export const detectPaidProduct = (text: string): SalesProduct | null => {
     const value = normalize(text);
     if (/\b(ifood|lanche|janta|almoco|mimo|presente|agrado|ajudar vc|ajudar voce)\b/i.test(value)
         || /\b(?:te|pra vc|para voce)\s+(?:mando|mandar|dar)\b.{0,24}\b(?:pix|reais|conto)\b/i.test(value)) return 'gift';
+    if (/\b(?:encontro presencial|marcar (?:um )?encontro|marcar (?:de )?sair|vamos sair|sair comigo|sair com (?:vc|voce)|te encontrar|me encontra|a gente se encontr(?:ar|ando)|quando a gente se encontrar|vc vem|voce vem|vem aqui|vem me ver|eu te busco|vou te buscar|me busca|passar um tempo (?:com|juntos))\b/i.test(value)) return 'social_meetup';
     if (/\b(chamada|video chamada|videochamada|call|facetime)\b/i.test(value)) return 'video_call';
     if (/\b(vip|vitalicio|mensal|pack|acesso)\b/i.test(value)) return 'vip';
     if (/\b(foto personalizada|foto exclusiva|foto pelada|nude sem censura)\b/i.test(value)) return 'custom_photo';
@@ -46,7 +47,7 @@ export const detectPaidProduct = (text: string): SalesProduct | null => {
 
 const productFromMemory = (memory: LeadMemoryLike): SalesProduct | null => {
     const value = String(memory?.metadata?.sales_nurture_product || '');
-    return ['video_call', 'vip', 'custom_photo', 'custom_video', 'private_number', 'private_chat', 'erotic_audio', 'evaluation', 'gift'].includes(value)
+    return ['video_call', 'social_meetup', 'vip', 'custom_photo', 'custom_video', 'private_number', 'private_chat', 'erotic_audio', 'evaluation', 'gift'].includes(value)
         ? value as SalesProduct
         : null;
 };
@@ -68,14 +69,14 @@ const isDirectCheckoutRequest = (text: string) => {
         || /\b(?:pagar|bancar|mandar)\b.{0,24}\b(?:ifood|lanche|janta|mimo)\b.{0,24}\b\d{1,4}(?:[.,]\d{1,2})?\b/i.test(value);
 };
 
-const isPriceQuestion = (text: string) => /\b(quanto custa|qual (?:e |é )?o?\s*valor|qual (?:e |é )?o?\s*preco|quanto (?:e|é)|fica quanto|quanto sai)\b/i.test(normalize(text));
+const isPriceQuestion = (text: string) => /\b(quanto custa|qual (?:e |é )?o?\s*valor|qual (?:e |é )?o?\s*preco|quanto (?:e|é)|fica quanto|quanto sai|(?:vc|voce) cobra|cobra quanto|quanto (?:vc|voce) cobra)\b/i.test(normalize(text));
 
 const isOfferAcceptance = (text: string) => {
     const value = normalize(text).replace(/[.!?]+$/g, '').trim();
     return /^(sim|quero|eu quero|pode ser|fechado|bora|vamos|aceito|combinado|ta bom|beleza|manda|gera|faz)$/i.test(value)
         || /\b(fecha|fechado|aceito|pode ser esse|quero esse|quero essa|vamos fazer)\b/i.test(value)
         || /\b(?:nao quero|sem)\s+(?:o )?(?:extra|avaliacao)\b/i.test(value)
-        || /\bso\s+(?:o|a)\s+(?:vip|chamada|foto|video|numero|audio|avaliacao|chat)\b/i.test(value);
+        || /\bso\s+(?:o|a)\s+(?:vip|chamada|encontro|foto|video|numero|audio|avaliacao|chat)\b/i.test(value);
 };
 
 const parseMoney = (value: string) => {
@@ -139,6 +140,11 @@ const PRODUCT_OFFERS: Record<Exclude<SalesProduct, 'gift'>, {
         entry: [19.90, 'Chamada de Video Curta', 'uma chamada curta e exclusiva'],
         core: [29.90, 'Chamada de Video Exclusiva', 'uma chamada exclusiva no sigilo'],
         premium: [49.90, 'Chamada de Video Premium', 'uma chamada mais longa e personalizada'],
+    },
+    social_meetup: {
+        entry: [350, 'Encontro Curto com a Lari', 'um encontro curto de ate uma hora, sujeito a confirmacao de disponibilidade'],
+        core: [500, 'Encontro com Larissa Morais', 'um encontro de ate duas horas, com transporte combinado separadamente'],
+        premium: [750, 'Encontro Estendido com a Lari', 'um encontro estendido de ate quatro horas, sujeito a confirmacao de disponibilidade'],
     },
     vip: {
         entry: [14.90, 'VIP Mensal Promocional', 'um mes de acesso ao VIP'],
@@ -327,6 +333,22 @@ const deterministicPick = (items: string[], seed: string) => {
 };
 
 const productWarmup = (product: SalesProduct | null, seed: string) => {
+    if (product === 'social_meetup') {
+        return [
+            deterministicPick([
+                'entendi, vc quer passar um tempo comigo de verdade e conversar',
+                'agora entendi, vc quer minha companhia pessoalmente',
+                'gostei de saber que vc quer me conhecer e conversar comigo',
+            ], `${seed}:meetup:1`),
+            deterministicPick([
+                'qual dia seria melhor pra vc?',
+                'em qual bairro vc pensou da gente se encontrar?',
+                'vc prefere cafe, shopping ou outro lugar publico?',
+            ], `${seed}:meetup:2`),
+            'depois eu confirmo minha disponibilidade e a gente combina certinho',
+        ];
+    }
+
     if (product === 'video_call') {
         return [
             deterministicPick([
