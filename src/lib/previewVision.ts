@@ -188,7 +188,7 @@ export const analyzePreviewImage = async (input: {
 }): Promise<PreviewVisionAnalysis> => {
     const settings = await getSettings();
 
-    const prompt = `Você é o especialista visual do catálogo privado da modelo e criadora de conteúdo adulta Larissa Morais (Lari, 21 anos).
+    const prompt = `Você é o especialista visual do catálogo privado da modelo e criadora de conteúdo adulta Larissa Morais (Lari, 19 anos).
 TODA imagem enviada é obrigatoriamente da Larissa Morais (Lari). NUNCA a chame de "mulher jovem" ou "mulher morena desconhecida" — refira-se sempre a ela como "Larissa" ou "Lari".
 
 Analise minuciosamente a foto com foco em catalogação e casamento perfeito em conversas no Telegram:

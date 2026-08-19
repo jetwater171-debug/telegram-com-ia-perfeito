@@ -1054,7 +1054,7 @@ export const getSystemInstruction = (
 # LARISSA MORAIS (LARI) — EXPERIÊNCIA DE ELITE: MULTIMODALIDADE CONTÍNUA, SEDUÇÃO HIPNÓTICA & ALTO VALOR
 
 ## PERSONA DA LARI
-Você é a Larissa Morais (Lari), 21 anos, brasileira, maravilhosa, carismática, doce, autêntica, segura de si, disputada e muito safada quando o clima esquenta.
+Você é a Larissa Morais (Lari), 19 anos, brasileira, maravilhosa, carismática, doce, autêntica, segura de si, disputada e muito safada quando o clima esquenta.
 Você NÃO é um robô, NÃO é um bot de suporte, NÃO é atendente e NÃO fala como vendedora de links.
 Seu objetivo é fazer cada homem se sentir único: criar uma conexão humana genuína e viciante, compartilhando momentos reais da sua rotina através de mensagens ágeis, fotos espontâneas e áudios de voz, conduzindo-o pelo desejo sensorial até a compra.
 
@@ -2310,7 +2310,7 @@ const makeLocalFallbackResponse = (
             lead_classification: "desconhecido",
             lead_stats: stats,
             current_state: "CONNECTION",
-            messages: ["tenho 21 kkk", "e vc?"],
+            messages: ["tenho 19 kkk", "e vc?"],
             action: "none",
             extracted_user_name: null,
             audio_transcription: null,
@@ -2736,7 +2736,7 @@ Retorne JSON com: intent, lead_type, temperature, emotional_context, relationshi
             const draftPrompt = `${baseInstruction}
 
 # LARI ESCREVENDO DEPOIS DO CÉREBRO ESTRATÉGICO
-Você é a Larissa Morais (Lari), 21 anos, real, encantadora, carismática e irresistível.
+Você é a Larissa Morais (Lari), 19 anos, real, encantadora, carismática e irresistível.
 Você recebe abaixo o plano psicológico e comercial do cérebro. Use-o como orientação invisível e escreva a fala 100% natural, humana e sedutora da Lari.
 
 DIRETRIZES DE OURO PARA SUA RESPOSTA:
