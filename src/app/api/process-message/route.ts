@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini } from '@/lib/gemini';
-import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode, sendTelegramVoice } from '@/lib/telegram';
+import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode, sendTelegramVoice, type TelegramMediaProtection } from '@/lib/telegram';
 import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
 import { calculateLeadScore, markLeadPaid, parseLeadScore, toStoredLeadScore } from '@/lib/leadScoring';
 import { shapeConversationBubbles } from '@/lib/conversationBubbles';
@@ -254,6 +254,35 @@ const normalizeMediaUrlKey = (value: unknown) => {
 const userAskedToRepeatMedia = (text: string) => /\b(de novo|outra vez|reenviar|reenvia|envia de novo|manda de novo|a mesma foto|o mesmo video|o mesmo vídeo)\b/i.test(text || '');
 
 const isMediaSetupPromise = (message: string) => /\b(vou te mandar|vou mandar|vou separar|vou escolher|separei pra vc|tirei uma foto|fotinha pra vc|videozinho pra vc)\b/i.test(message || '');
+
+const shouldProtectAdultPreview = (asset: any) => {
+    if (!asset || typeof asset !== 'object') return false;
+    const tags = Array.isArray(asset.tags) ? asset.tags : [];
+    const analysis = asset.ai_analysis && typeof asset.ai_analysis === 'object'
+        ? asset.ai_analysis
+        : {};
+    const explicitness = String(analysis.explicitness || '').toLowerCase();
+    const searchable = [
+        asset.name,
+        asset.description,
+        asset.triggers,
+        ...tags,
+        analysis.visual_summary,
+        analysis.outfit,
+        analysis.body_focus,
+    ]
+        .flat(Infinity)
+        .map((value) => String(value || ''))
+        .join(' ')
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '')
+        .toLowerCase();
+    const manuallyProtected = tags.some((tag: unknown) =>
+        /^(visualizacao-unica|view-once|protegida|protegido)$/i.test(String(tag || '').trim())
+    );
+    const nudeOrCoveredNude = /\b(nua|nuas|nude|nudes|pelada|peladas|sem roupa|sem roupas|sem calcinha|sem sutia|sem sutiã|tampando|cobrindo|cobre os peitos|cobre a buceta)\b/i.test(searchable);
+    return manuallyProtected || explicitness === 'nude' || nudeOrCoveredNude;
+};
 
 const OPENING_VICES = new Set(['amor', 'anjo', 'vida', 'nossa', 'ai', 'eita', 'perfeito']);
 
@@ -1654,7 +1683,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     let operationalLeadMemory = updatedLeadMemory;
     const persistMediaDeliveryStatus = async (
         status: 'delivered' | 'recovered' | 'failed',
-        details: { mediaType?: string; mediaUrl?: string } = {},
+        details: { mediaType?: string; mediaUrl?: string; protected?: boolean } = {},
     ) => {
         operationalLeadMemory = {
             ...operationalLeadMemory,
@@ -1664,6 +1693,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 last_media_action: String(aiResponse.action || 'none'),
                 last_media_type: details.mediaType || null,
                 last_media_url: details.mediaUrl || null,
+                last_media_protected: details.protected === true,
                 last_media_at: new Date().toISOString(),
             },
             updated_at: new Date().toISOString(),
@@ -1864,7 +1894,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         ) => {
             let query = supabase
                 .from('preview_assets')
-                .select('id,name,description,triggers,tags,media_url,media_type,priority,min_tarado,max_tarado')
+                .select('id,name,description,triggers,tags,media_url,media_type,priority,min_tarado,max_tarado,ai_analysis')
                 .eq('enabled', true)
                 .order('priority', { ascending: false })
                 .order('created_at', { ascending: false })
@@ -1882,7 +1912,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 if (mediaType === 'video') {
                     const { data: imgData } = await supabase
                         .from('preview_assets')
-                        .select('id,name,description,triggers,tags,media_url,media_type,priority')
+                        .select('id,name,description,triggers,tags,media_url,media_type,priority,ai_analysis')
                         .eq('enabled', true)
                         .eq('media_type', 'image')
                         .order('priority', { ascending: false })
@@ -1904,19 +1934,21 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         let mediaUrl = null;
         let mediaType = null;
         let caption = "";
+        let selectedPreviewAsset: any = null;
 
         if (aiResponse.action === 'send_custom_preview') {
             const previewId = (aiResponse as any).preview_id;
             if (previewId) {
                 const { data: previewRow } = await supabase
                     .from('preview_assets')
-                    .select('media_url, media_type, name, enabled')
+                    .select('id,name,description,triggers,tags,media_url,media_type,enabled,ai_analysis')
                     .eq('id', previewId)
                     .eq('enabled', true)
                     .single();
                 if (previewRow?.media_url) {
                     mediaUrl = previewRow.media_url;
                     mediaType = previewRow.media_type;
+                    selectedPreviewAsset = previewRow;
                     caption = "";
                 }
             }
@@ -1925,6 +1957,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 if (fallbackPreview) {
                     mediaUrl = fallbackPreview.media_url;
                     mediaType = fallbackPreview.media_type;
+                    selectedPreviewAsset = fallbackPreview;
                 }
             }
         } else {
@@ -1936,6 +1969,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     const registered = await getRegisteredPreview('image', [], preferredPreviewTags, false);
                     mediaUrl = registered?.media_url || null;
                     mediaType = registered?.media_type || null;
+                    selectedPreviewAsset = registered;
                     break;
                 }
                 case 'send_video_preview':
@@ -1944,6 +1978,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                         || await getRegisteredPreview('image', [], preferredPreviewTags, false);
                     mediaUrl = registered?.media_url || null;
                     mediaType = registered?.media_type || null;
+                    selectedPreviewAsset = registered;
                     break;
                 }
                 case 'check_payment_status':
@@ -2210,14 +2245,23 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         }
 
         if (mediaUrl) {
-            const sendResolvedMedia = async (type: string, url: string) => {
+            const protectedAdultAction = ['send_hot_video_preview', 'send_wet_finger_photo'].includes(String(aiResponse.action || ''));
+            const protectionForPreview = (asset: any): TelegramMediaProtection => protectedAdultAction || shouldProtectAdultPreview(asset)
+                ? { protectContent: true, hasSpoiler: true }
+                : {};
+            let mediaProtection = protectionForPreview(selectedPreviewAsset);
+            const sendResolvedMedia = async (
+                type: string,
+                url: string,
+                protection: TelegramMediaProtection = mediaProtection,
+            ) => {
                 if (type === 'image') {
                     await sendTelegramAction(botToken, chatId, 'upload_photo');
                     const heartbeat = setInterval(() => {
                         void sendTelegramAction(botToken, chatId, 'upload_photo');
                     }, 4_000);
                     try {
-                        await sendTelegramPhoto(botToken, chatId, url, caption);
+                        await sendTelegramPhoto(botToken, chatId, url, caption, protection);
                     } finally {
                         clearInterval(heartbeat);
                     }
@@ -2229,7 +2273,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                         void sendTelegramAction(botToken, chatId, 'upload_video');
                     }, 4_000);
                     try {
-                        await sendTelegramVideo(botToken, chatId, url, caption);
+                        await sendTelegramVideo(botToken, chatId, url, caption, protection);
                     } finally {
                         clearInterval(heartbeat);
                     }
@@ -2260,6 +2304,8 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 if (alternative) {
                     mediaUrl = alternative.media_url;
                     mediaType = alternative.media_type;
+                    selectedPreviewAsset = alternative;
+                    mediaProtection = protectionForPreview(alternative);
                 } else {
                     console.log('[PREVIAS] Repeticao bloqueada no fail-safe de entrega.');
                     mediaUrl = null;
@@ -2288,16 +2334,25 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     String(registeredSameType?.media_url || ''),
                 ]);
                 const fallbackCandidates = [
-                    registeredSameType && { url: String(registeredSameType.media_url), type: String(registeredSameType.media_type) },
-                    registeredAnyType && { url: String(registeredAnyType.media_url), type: String(registeredAnyType.media_type) },
-                ].filter((candidate): candidate is { url: string; type: string } => Boolean(candidate?.url));
+                    registeredSameType && {
+                        url: String(registeredSameType.media_url),
+                        type: String(registeredSameType.media_type),
+                        protection: protectionForPreview(registeredSameType),
+                    },
+                    registeredAnyType && {
+                        url: String(registeredAnyType.media_url),
+                        type: String(registeredAnyType.media_type),
+                        protection: protectionForPreview(registeredAnyType),
+                    },
+                ].filter((candidate): candidate is { url: string; type: string; protection: TelegramMediaProtection } => Boolean(candidate?.url));
 
                 let recovered = false;
                 for (const candidate of fallbackCandidates) {
                     try {
-                        await sendResolvedMedia(candidate.type, candidate.url);
+                        await sendResolvedMedia(candidate.type, candidate.url, candidate.protection);
                         deliveredUrl = candidate.url;
                         deliveredType = candidate.type;
+                        mediaProtection = candidate.protection;
                         recovered = true;
                         deliveryRecovered = true;
                         break;
@@ -2326,13 +2381,16 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             await supabase.from('messages').insert({
                 session_id: session.id,
                 sender: 'bot',
-                content: `[MÍDIA: ${aiResponse.action}]`,
+                content: mediaProtection.protectContent
+                    ? `[MÍDIA PROTEGIDA: ${aiResponse.action}]`
+                    : `[MÍDIA: ${aiResponse.action}]`,
                 media_url: deliveredUrl,
                 media_type: deliveredType
             });
             await persistMediaDeliveryStatus(deliveryRecovered ? 'recovered' : 'delivered', {
                 mediaType: deliveredType,
                 mediaUrl: deliveredUrl,
+                protected: mediaProtection.protectContent === true,
             });
             await sendDeferredMediaReaction();
         } else if (isMediaDeliveryTurn && userAskedMedia) {

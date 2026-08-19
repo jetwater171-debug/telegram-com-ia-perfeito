@@ -5,6 +5,17 @@ const MAX_TELEGRAM_MEDIA_BYTES = 49 * 1024 * 1024;
 
 const isHttpUrl = (value: string) => /^https?:\/\//i.test(String(value || '').trim());
 
+export type TelegramMediaProtection = {
+    protectContent?: boolean;
+    hasSpoiler?: boolean;
+};
+
+const mediaProtectionOptions = (caption?: string, protection: TelegramMediaProtection = {}) => ({
+    ...(caption ? { caption } : {}),
+    ...(protection.protectContent ? { protect_content: true } : {}),
+    ...(protection.hasSpoiler ? { has_spoiler: true } : {}),
+});
+
 const downloadRemoteMedia = async (url: string, fallbackFilename: string) => {
     const response = await fetch(url, { signal: AbortSignal.timeout(REMOTE_MEDIA_TIMEOUT_MS) });
     if (!response.ok) throw new Error(`download da midia retornou HTTP ${response.status}`);
@@ -37,16 +48,23 @@ export const sendTelegramMessage = async (token: string, chatId: string, text: s
     }
 };
 
-export const sendTelegramPhoto = async (token: string, chatId: string, photoUrl: string, caption?: string) => {
+export const sendTelegramPhoto = async (
+    token: string,
+    chatId: string,
+    photoUrl: string,
+    caption?: string,
+    protection: TelegramMediaProtection = {},
+) => {
     if (!token) throw new Error('Telegram sem token');
     const bot = new Telegraf(token);
+    const options = mediaProtectionOptions(caption, protection);
     try {
-        await bot.telegram.sendPhoto(chatId, photoUrl, { caption });
+        await bot.telegram.sendPhoto(chatId, photoUrl, options);
     } catch (firstError: any) {
         if (isHttpUrl(photoUrl)) {
             try {
                 const upload = await downloadRemoteMedia(photoUrl, 'preview.jpg');
-                await bot.telegram.sendPhoto(chatId, upload, { caption });
+                await bot.telegram.sendPhoto(chatId, upload, options);
                 return;
             } catch (uploadError: any) {
                 console.error('Failed to upload photo to Telegram:', uploadError);
@@ -58,16 +76,23 @@ export const sendTelegramPhoto = async (token: string, chatId: string, photoUrl:
     }
 };
 
-export const sendTelegramVideo = async (token: string, chatId: string, videoUrl: string, caption?: string) => {
+export const sendTelegramVideo = async (
+    token: string,
+    chatId: string,
+    videoUrl: string,
+    caption?: string,
+    protection: TelegramMediaProtection = {},
+) => {
     if (!token) throw new Error('Telegram sem token');
     const bot = new Telegraf(token);
+    const options = mediaProtectionOptions(caption, protection);
     try {
-        await bot.telegram.sendVideo(chatId, videoUrl, { caption });
+        await bot.telegram.sendVideo(chatId, videoUrl, options);
     } catch (firstError: any) {
         if (isHttpUrl(videoUrl)) {
             try {
                 const upload = await downloadRemoteMedia(videoUrl, 'preview.mp4');
-                await bot.telegram.sendVideo(chatId, upload, { caption, supports_streaming: true });
+                await bot.telegram.sendVideo(chatId, upload, { ...options, supports_streaming: true });
                 return;
             } catch (uploadError: any) {
                 console.error('Failed to upload video to Telegram:', uploadError);
