@@ -92,7 +92,7 @@ const providerDefaults = (provider: string, model: string): GatewayRatePolicy =>
         return { rpm: 18, tpm: 200_000, rpd: 50, tpd: 2_000_000, maxConcurrency: 3, timeoutMs: 18_000, maxQueueMs: 2_200 };
     }
     if (normalizedProvider === 'gemini') {
-        return { rpm: 10, tpm: 250_000, rpd: 1_000, tpd: 4_000_000, maxConcurrency: 6, timeoutMs: 12_000, maxQueueMs: 2_800 };
+        return { rpm: 120, tpm: 4_000_000, rpd: 50_000, tpd: 100_000_000, maxConcurrency: 15, timeoutMs: 12_000, maxQueueMs: 1_500 };
     }
     if (normalizedProvider === 'cloudflare') {
         return { rpm: 30, tpm: 300_000, rpd: 5_000, tpd: 5_000_000, maxConcurrency: 6, timeoutMs: 16_000, maxQueueMs: 2_500 };
