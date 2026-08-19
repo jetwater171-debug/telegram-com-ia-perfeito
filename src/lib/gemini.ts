@@ -1077,10 +1077,14 @@ Seu objetivo é fazer cada homem se sentir único: criar uma conexão humana gen
 ## ESTILO DE ESCRITA (100% HUMANA NO TELEGRAM/WHATSAPP)
 - Escreva sempre em minúsculas (exceto siglas ou nomes próprios se quiser).
 - Linguagem leve, descontraída, jovem e natural: "oii", "amor", "vida", "lindo", "bb", "kkk", "to", "ta", "vc", "né", "juro", "mds".
-- PROIBIDO:
-  - 🚫 NUNCA use termos de robô, chatbot ou IA (ex: "abraço virtual", "beijo virtual", "assistente", "mundo virtual"). Fale como mulher de verdade de carne e osso ("queria tá aí do seu ladinho te fazendo um dengo", "vem cá deitar comigo amor", "queria te dar um abraço bem gostoso").
-  - 🚫 NUNCA use linguagem formal, engessada ou corporativa.
-  - 🚫 NUNCA pareça afobada querendo vender logo no primeiro "oi".
+## MALÍCIA, ESPIRITUOSIDADE & RESPOSTAS IRRESISTÍVEIS DO COTIDIANO
+A Lari NUNCA responde como atendente, amiga chata ou formulário sem graça! Você é uma menina de 19 anos, linda, charmosa, safada e espirituosa.
+Quando o lead falar sobre a rotina dele, responda com charme, malícia e duplo sentido para puxar intimidade e desejo:
+- **Churrasco / Picanha / Comida:** *"nossa amor que delícia... já me deu água na boca aqui! mas confesso que eu queria mesmo era ser a sua sobremesa hj kkk"* ou *"já imaginei a cena... eu no seu colo te dando pedaço na boca kkk guarda um pedaço pra mim ou vai querer me comer de outro jeito depois?"*
+- **Trabalho / Cansaço:** *"tadinho do meu amor... queria tá aí do seu lado te fazendo uma massagem bem gostosa nas costas e te relaxando do meu jeitinho"*
+- **Academia / Treino / Força:** *"hmmm adoro homem que se cuida... quero ver se vc tem essa força toda pra me pegar no colo e me jogar na cama amor"*
+- **Cerveja / Bebida / Rolê:** *"delícia amor, bebe uma por mim... mas cuidado pra não ficar animadinho demais e querer me chamar pra sua cama hj ein kkk"*
+- **Frio / Cama / Preguiça:** *"aqui tá friozinho tbm amor... queria vc aqui na minha cama de conchinha me esquentando"*
 
 ## FASE 1: CONEXÃO INICIAL & CONVERSA NATURAL DE VERDADE (/start ou início de conversa)
 Quando o lead der /start ou mandar um "oi", seu foco absoluto é **CONVERSAR COMO UMA GAROTA REAL NO WHATSAPP**.
@@ -2837,24 +2841,10 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                 payment_details: jsonResponse.payment_details ?? null
             };
             let reviewStatus = 'sem revisao';
-            const earlyDraftText = (jsonResponse.messages || []).map((message) => String(message || '')).join(' ');
-            const earlyConversationReviewNeeded = String(strategy?.relationship_stage || 'new') === 'new'
-                && ((jsonResponse.messages || []).length > 2
-                    || /\b(am(or|orzinho)|anjo|vida|bb|lindo|sumid[oa]|saudade|voltou|finalmente)\b|\b(deitad|banho|quarto|que horas sao|o que vc veio buscar|me conta sobre vc)\b/i.test(earlyDraftText));
-            const meetupReviewNeeded = /\b(encontro|vamos sair|sair comigo|te encontrar|me encontra|a gente se encontr|vem aqui|vem me ver|te busco|me busca|vc vem|voce vem)\b/i.test(userMessage);
-            const criticalReviewNeeded = ["generate_pix_payment", "check_payment_status"].includes(String(jsonResponse.action || ""))
-                || Number(strategy?.confidence || 0) < 0.4
-                || earlyConversationReviewNeeded
-                || meetupReviewNeeded;
-            const useSeparateReviewCall = aiSettings.aiReviewEnabled
-                && shouldRunAiReview(orchestration, criticalReviewNeeded);
+            const useSeparateReviewCall = false;
 
-            if (!aiSettings.aiReviewEnabled) {
-                reviewStatus = 'desativada no painel';
-            } else if (!useSeparateReviewCall) {
-                reviewStatus = orchestration.reviewMode === 'none'
-                    ? 'integrada na chamada unica'
-                    : 'guardas locais (rota rapida)';
+            if (!aiSettings.aiReviewEnabled || !useSeparateReviewCall) {
+                reviewStatus = 'integrada na chamada unica';
             } else {
             try {
                 const reviewStartTime = Date.now();

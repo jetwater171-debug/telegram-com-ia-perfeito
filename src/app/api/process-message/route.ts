@@ -2046,7 +2046,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 await supabase.from('messages').insert({
                     session_id: session.id,
                     sender: 'bot',
-                    content: `🎤 Áudio da Lari: ${msgText}`,
+                    content: msgText,
                     media_type: 'audio',
                 });
                 continue;
