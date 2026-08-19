@@ -1309,6 +1309,11 @@ const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
     evaluator: DEFAULT_OPENROUTER_MODEL,
 };
 
+const OPENROUTER_TEXT_ONLY_MODELS = new Set<string>([
+    DEFAULT_OPENROUTER_MODEL,
+    ...OPENROUTER_MODEL_FALLBACK_ORDER,
+]);
+
 const getGeminiModelName = () => normalizeGeminiModelName(process.env.GEMINI_MODEL, DEFAULT_GEMINI_MODEL);
 
 const getBotSettingsMap = async (keys: string[]) => {
@@ -1621,6 +1626,12 @@ const callAiGatewayJson = async <T,>(options: {
                     const mimeType = String(options.mediaPart?.inlineData?.mimeType || '');
                     if (!mimeType.startsWith('image/')) {
                         const message = `${gateway.label} pulado: midia nao suportada neste provider`;
+                        attempts.push(message);
+                        await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "skipped", message });
+                        continue;
+                    }
+                    if (OPENROUTER_TEXT_ONLY_MODELS.has(gateway.model)) {
+                        const message = `${gateway.label} pulado: modelo textual nao analisa imagens`;
                         attempts.push(message);
                         await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "skipped", message });
                         continue;
@@ -2168,16 +2179,45 @@ ${JSON.stringify(strategy)}
 Use essa estrategia para responder.`
             }];
             if (media) draftParts.push(currentMessageParts[1]);
-            const draftResult = await callAiGatewayJson<AIResponse>({
-                settings: aiSettings,
-                role: "draft",
-                schemaName: "responseSchema",
-                systemInstruction: draftPrompt,
-                responseSchemaConfig: responseSchema as any,
-                history: cleanHistory,
-                text: draftParts[0].text,
-                mediaPart: media ? currentMessageParts[1] : undefined,
-            });
+            let mediaRecoveryUsed = false;
+            let draftResult: Awaited<ReturnType<typeof callAiGatewayJson<AIResponse>>>;
+            try {
+                draftResult = await callAiGatewayJson<AIResponse>({
+                    settings: aiSettings,
+                    role: "draft",
+                    schemaName: "responseSchema",
+                    systemInstruction: draftPrompt,
+                    responseSchemaConfig: responseSchema as any,
+                    history: cleanHistory,
+                    text: draftParts[0].text,
+                    mediaPart: media ? currentMessageParts[1] : undefined,
+                });
+            } catch (visionError: any) {
+                const hasImage = Boolean(media?.mimeType?.startsWith('image/'));
+                if (!hasImage) throw visionError;
+
+                mediaRecoveryUsed = true;
+                console.warn('[AI Gateway] Visao indisponivel ou bloqueada; repetindo o turno pelo cerebro textual:', visionError?.message || visionError);
+
+                const textOnlyRecoveryPrompt = `${draftParts[0].text}
+
+[RECUPERACAO INTERNA DE MIDIA]
+O lead enviou uma foto que o sistema de visao nao conseguiu analisar.
+Responda usando a legenda, o historico, a memoria e o perfil completo do lead.
+Nao diga que houve erro, bloqueio ou censura. Nao peca para reenviar a foto.
+Nao invente detalhes visuais nem descreva anatomia que voce nao confirmou.
+Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
+
+                draftResult = await callAiGatewayJson<AIResponse>({
+                    settings: aiSettings,
+                    role: "draft",
+                    schemaName: "responseSchema",
+                    systemInstruction: draftPrompt,
+                    responseSchemaConfig: responseSchema as any,
+                    history: cleanHistory,
+                    text: textOnlyRecoveryPrompt,
+                });
+            }
             const responseText = JSON.stringify(draftResult.data);
 
             console.log(`AI Gateway Draft (${draftResult.gateway.label}) Attempt ${attempt + 1}:`, responseText);
@@ -2256,7 +2296,7 @@ Revise e corrija se necessario.`
                 jsonResponse.payment_details = review.payment_details ?? jsonResponse.payment_details;
             }
 
-            const strategyThought = `CEREBRO CENTRAL (${strategyStatus}): ${strategy?.intent || 'n/a'} | ${strategy?.lead_type || 'n/a'} | ${strategy?.objective || 'n/a'} | ${strategy?.next_step || 'n/a'} | conexao: ${strategy?.connection_cue || 'n/a'}`;
+            const strategyThought = `CEREBRO CENTRAL (${strategyStatus}${mediaRecoveryUsed ? ', recuperacao textual de midia' : ''}): ${strategy?.intent || 'n/a'} | ${strategy?.lead_type || 'n/a'} | ${strategy?.objective || 'n/a'} | ${strategy?.next_step || 'n/a'} | conexao: ${strategy?.connection_cue || 'n/a'}`;
             const reviewThought = `REVISAO (${reviewStatus}): ${review?.approved ? 'aprovada' : 'corrigida'} | score ${review?.score ?? 'n/a'} | ${(review?.issues || []).slice(0, 3).join(', ')}`;
             const memoryThought = `MEMORIA: ${strategy?.relationship_stage || 'new'} | ${strategy?.emotional_context || 'n/a'} | ${strategy?.memory_patch?.next_personal_step || 'n/a'}`;
             jsonResponse.internal_thought = [strategyThought, reviewThought, memoryThought, jsonResponse.internal_thought].filter(Boolean).join('\n');
@@ -2292,6 +2332,13 @@ Revise e corrija se necessario.`
             } else {
                 // If it's a critical API error (validation etc), break immediately
                 attempt = maxRetries;
+            }
+
+            // Fotos sensiveis podem ser recusadas por todos os modelos de visao.
+            // Se ate a recuperacao textual falhar, nunca deixe o lead no vacuo.
+            if (media?.mimeType?.startsWith('image/')) {
+                console.error('[AI Gateway] Recuperacao de foto esgotada; usando resposta local de emergencia.');
+                return makeLocalFallbackResponse(userMessage, { currentStats }, media);
             }
 
             // Se esgotou todas as tentativas com todas as IAs reais
