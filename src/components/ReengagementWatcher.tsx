@@ -4,20 +4,16 @@ import { useEffect } from 'react';
 
 export default function ReengagementWatcher() {
     useEffect(() => {
-        const enabled = process.env.NEXT_PUBLIC_ENABLE_CLIENT_CRON === 'true';
-        if (!enabled) return;
-        const interval = setInterval(async () => {
+        const runWatcher = async () => {
             try {
-                // Chama o endpoint CRON a cada 60 segundos
                 await fetch('/api/cron/reengagement');
-                console.log('[ReengagementWatcher] Job executed.');
             } catch (e) {
-                console.error('[ReengagementWatcher] Job failed:', e);
+                // Silencioso no background
             }
-        }, 60000); // 60 segundos
+        };
 
-        // Rodar imediatamente ao montar (opcional, bom para teste rápido)
-        // fetch('/api/cron/reengagement').catch(console.error);
+        const interval = setInterval(runWatcher, 30000); // 30 segundos
+        runWatcher();
 
         return () => clearInterval(interval);
     }, []);

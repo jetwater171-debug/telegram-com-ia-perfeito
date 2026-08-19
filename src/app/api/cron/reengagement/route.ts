@@ -52,13 +52,17 @@ export async function GET(req: NextRequest) {
         // 4. Processar Cada Sessão
         let processedCount = 0;
         const messagesToSent = [
-            "amor não vai me responder não?",
-            "achei que tinha gostado de mim",
-            "me deixou aqui falando sozinha😢"
+            "taa ai ainda??",
+            "amor?? sumiu?",
+            "ta ocupadinho vida?",
+            "me deixou no vácuo amor kkk",
+            "oii amor, ta por aí ainda?",
+            "sumiu pq anjo? kkk"
         ];
 
         for (const session of sessions) {
             const chatId = session.telegram_chat_id;
+            if (!chatId) continue;
 
             console.log(`[CRON] Enviando reengajamento para sessão ${session.id} (Chat ${chatId})`);
 
