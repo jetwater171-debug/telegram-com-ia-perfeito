@@ -617,25 +617,25 @@ const resolveContextualMediaAction = (userText: string, currentAction?: string) 
     if (/(de 4|quatro|costas|bunda|rab[ao]|empinad|por tras|por trás)/i.test(t)) {
         return {
             action: 'send_ass_photo_preview',
-            intro: 'entao olha essa que combina com o que vc falou'
+            intro: 'olha essa fotinha amor'
         };
     }
     if (/(banho|molhad|chuveiro|toalha)/i.test(t)) {
         return {
             action: 'send_shower_photo',
-            intro: 'tava pensando nisso e lembrei dessa do banho'
+            intro: 'olha essa do banho amor'
         };
     }
     if (/(lingerie|calcinha|conjunto|cama|deitada)/i.test(t)) {
         return {
             action: 'send_lingerie_photo',
-            intro: 'acho que essa aqui combina mais com vc'
+            intro: 'olha essa de lingerie amor'
         };
     }
     if (/(video|vídeo|rebol|movimento|dan[cç]ando)/i.test(t)) {
         return {
             action: action === 'send_hot_video_preview' ? 'send_hot_video_preview' : 'send_video_preview',
-            intro: 'vou te mandar um videozinho que faz mais sentido com isso'
+            intro: 'olha esse videozinho amor'
         };
     }
     return {
