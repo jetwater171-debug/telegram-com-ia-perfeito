@@ -61,7 +61,7 @@ const emptySettings: AiSettings = {
     openrouterBaseUrl: "https://openrouter.ai/api/v1", openrouterReferer: "", openrouterTitle: "Lari Telegram Bot",
     openrouterStrategyModel: DEFAULT_OPENROUTER_MODEL, openrouterDraftModel: DEFAULT_OPENROUTER_MODEL, openrouterReviewModel: DEFAULT_OPENROUTER_MODEL, openrouterEvaluatorModel: DEFAULT_OPENROUTER_MODEL,
     geminiStrategyModel: DEFAULT_GEMINI_LITE_MODEL, geminiDraftModel: DEFAULT_GEMINI_MODEL, geminiReviewModel: DEFAULT_GEMINI_MODEL, geminiEvaluatorModel: DEFAULT_GEMINI_LITE_MODEL,
-    groqModel: "openai/gpt-oss-120b", groqStarterModel: "llama-3.1-8b-instant", nvidiaModel: "meta/llama-3.1-8b-instruct", mistralModel: "mistral-small-latest", cerebrasModel: "gpt-oss-120b", cloudflareModel: "@cf/openai/gpt-oss-20b",
+    groqModel: "openai/gpt-oss-120b", groqStarterModel: "openai/gpt-oss-20b", nvidiaModel: "meta/llama-3.1-8b-instruct", mistralModel: "mistral-small-latest", cerebrasModel: "gpt-oss-120b", cloudflareModel: "@cf/openai/gpt-oss-20b",
     cloudflareAccountId: "", customBaseUrl: "", customModel: "auto", customTiers: "starter,buyer", customWeight: 5,
     fishAudioEnabled: false, fishAudioVoiceId: "24522123b5804bf691a8450d9187f03e", fishAudioModel: "s2.1-pro-free",
     fishAudioFrequencyPercent: 18, fishAudioCooldownMinutes: 30, fishAudioMaxChars: 240,

@@ -39,10 +39,10 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             separateStrategy: true,
             reviewMode: 'always',
             evaluator: true,
-            historyMessageLimit: 100,
-            historyMaxEntries: 40,
-            historyMaxChars: 14_000,
-            promptBlockMaxChars: 16_000,
+            historyMessageLimit: 120,
+            historyMaxEntries: 64,
+            historyMaxChars: 26_000,
+            promptBlockMaxChars: 20_000,
             objective: 'maxima continuidade, personalizacao e controle de qualidade',
         };
     }
@@ -55,10 +55,10 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             separateStrategy: true,
             reviewMode: 'always',
             evaluator: false,
-            historyMessageLimit: 70,
-            historyMaxEntries: 30,
-            historyMaxChars: 9_000,
-            promptBlockMaxChars: 14_000,
+            historyMessageLimit: 100,
+            historyMaxEntries: 56,
+            historyMaxChars: 22_000,
+            promptBlockMaxChars: 18_000,
             objective: 'planejamento separado e revisao completa em todo turno',
         };
     }
@@ -71,10 +71,10 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             separateStrategy: true,
             reviewMode: 'critical',
             evaluator: false,
-            historyMessageLimit: 40,
-            historyMaxEntries: 20,
-            historyMaxChars: 5_600,
-            promptBlockMaxChars: 12_000,
+            historyMessageLimit: 80,
+            historyMaxEntries: 48,
+            historyMaxChars: 18_000,
+            promptBlockMaxChars: 16_000,
             objective: 'cerebro separado para continuidade com revisao nos momentos criticos',
         };
     }
@@ -83,14 +83,14 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
         tier: 'starter',
         label: 'primeiro ciclo',
         totalPaid,
-        separateStrategy: false,
-        reviewMode: 'none',
+        separateStrategy: true,
+        reviewMode: 'critical',
         evaluator: false,
-        historyMessageLimit: 24,
-        historyMaxEntries: 14,
-        historyMaxChars: 4_200,
-        promptBlockMaxChars: 10_000,
-        objective: 'uma unica chamada barata unindo leitura, conversa e memoria',
+        historyMessageLimit: 80,
+        historyMaxEntries: 44,
+        historyMaxChars: 16_000,
+        promptBlockMaxChars: 16_000,
+        objective: 'cerebro geral barato separado + Lari, com revisao quando a naturalidade estiver em risco',
     };
 };
 

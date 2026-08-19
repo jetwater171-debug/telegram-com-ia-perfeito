@@ -271,7 +271,7 @@ export async function POST(req: NextRequest) {
         after(async () => {
             console.log(`[WEBHOOK] Executing background worker trigger...`);
             try {
-                await fetch(workerUrl, {
+                const workerResponse = await fetch(workerUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -279,6 +279,12 @@ export async function POST(req: NextRequest) {
                         triggerMessageId: insertedMsg.id
                     })
                 });
+                const workerBody = await workerResponse.text();
+                if (!workerResponse.ok) {
+                    console.error(`[WEBHOOK] Worker respondeu ${workerResponse.status}: ${workerBody.slice(0, 800)}`);
+                } else {
+                    console.log(`[WEBHOOK] Worker concluido ${workerResponse.status}: ${workerBody.slice(0, 400)}`);
+                }
             } catch (err) {
                 console.error("Worker trigger failed:", err);
             }

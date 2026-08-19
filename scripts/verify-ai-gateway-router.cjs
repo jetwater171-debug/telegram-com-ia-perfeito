@@ -50,10 +50,10 @@ const candidate = (key, weight = 10, overrides = {}) => ({
     assert.equal(classifyGatewayFailure(Object.assign(new Error('invalid key'), { status: 401 })), 'auth');
     assert.ok(estimateAiTokens('abcd'.repeat(100)) >= 100);
 
-    const groqInstant = resolveGatewayRatePolicy('groq', 'llama-3.1-8b-instant', {});
+    const groqInstant = resolveGatewayRatePolicy('groq', 'openai/gpt-oss-20b', {});
     assert.equal(groqInstant.rpm, 30);
     assert.equal(groqInstant.rpd, 14_400);
-    const groqOverride = resolveGatewayRatePolicy('groq', 'llama-3.1-8b-instant', { GROQ_GATEWAY_RPM: '17' });
+    const groqOverride = resolveGatewayRatePolicy('groq', 'openai/gpt-oss-20b', { GROQ_GATEWAY_RPM: '17' });
     assert.equal(groqOverride.rpm, 17);
     const nvidia = resolveGatewayRatePolicy('nvidia', 'meta/llama-3.1-8b-instruct', {});
     assert.equal(nvidia.rpm, 20);

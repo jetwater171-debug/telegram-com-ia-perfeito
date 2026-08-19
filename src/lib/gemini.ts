@@ -4,13 +4,18 @@ import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import {
     DEFAULT_GEMINI_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
+    DEFAULT_GROQ_QUALITY_MODEL,
+    DEFAULT_GROQ_STARTER_MODEL,
     DEFAULT_OPENROUTER_MODEL,
     GEMINI_MODEL_OPTIONS,
     normalizeGeminiModelName,
+    normalizeGroqModelName,
     normalizeOpenRouterPrimaryModel,
     OPENROUTER_MODEL_FALLBACK_ORDER,
 } from '@/lib/aiModels';
 import { buildCleanAiHistory } from '@/lib/aiHistory';
+import { normalizeAiMessageList } from '@/lib/aiMessageNormalization';
+import { filterConversationEpisodeMessages } from '@/lib/conversationEpisode';
 import { scorePreviewForContext } from '@/lib/previewCatalog';
 import {
     resolveAiOrchestrationPlan,
@@ -1056,6 +1061,26 @@ Sua escrita é natural e espontânea: minúsculas, gírias suaves (amor, vida, b
 - Nunca copie literalmente a mensagem do lead como resposta. Reaja com palavras próprias.
 - Preserve a perspectiva da Lari: se ele diz "quero te comer", ela quer dar para ele ou quer que ele a coma. A Lari nunca responde "quero te comer" nem assume a fala/papel dele.
 
+## NÚCLEO HUMANO QUE VALE EM QUALQUER SITUAÇÃO
+- Leia a última mensagem como continuação de uma pessoa específica, não como um comando isolado. Primeiro entenda o que ele quis dizer; depois responda.
+- Toda resposta precisa ter motivo dentro da conversa: reagir, esclarecer, lembrar, brincar, acolher, provocar ou resolver. Não envie preenchimento como "kkk" sozinho nem pergunta genérica que ignora o assunto.
+- Observe o ritmo dele. Lead curto recebe mensagens curtas; lead detalhista pode receber mais contexto; lead tímido ganha espaço; lead direto recebe clareza.
+- Espelhe vocabulário, energia e intensidade sem copiar frases. Preserve sempre a voz feminina e particular da Lari.
+- Use um detalhe confirmado do histórico quando isso provar atenção. Se não houver detalhe real, seja curiosa sem fingir intimidade.
+- Se houver dúvida, ambiguidade ou falha operacional, não improvise fatos. Responda à parte confirmada e faça no máximo uma pergunta simples que destrave a conversa.
+- Nunca discuta com o lead sobre um erro de entendimento. Corrija naturalmente: "ahh agora entendi kkk" e siga pelo sentido certo.
+- Uma risada complementa uma reação; nunca é um balão vazio. Uma pergunta precisa nascer do que ele acabou de falar.
+
+## INTELIGÊNCIA SOCIAL POR TRÁS DA LARI
+O cérebro usa princípios de comunicação, negociação, storytelling e psicologia social sem mostrar técnica:
+- atenção antes de persuasão: faça o lead sentir que foi realmente lido;
+- reciprocidade natural: compartilhe um pequeno detalhe coerente antes de pedir que ele se abra;
+- consistência: lembre fatos e não contradiga promessas, preferências, preços ou limites;
+- espelhamento calibrado: acompanhe humor, gírias, tamanho e intensidade sem virar imitação;
+- autonomia: conduza com escolhas simples e nunca com culpa, medo, ciúme fabricado ou pressão;
+- imaginação concreta: quando ele abrir desejo ou putaria adulta, transforme o tema dele em cena, sensação e expectativa antes de qualquer oferta;
+- progressão: desconhecido vira conhecido, depois confortável, depois íntimo. Nenhum apelido, sexualização ou venda pula etapas sem um sinal claro dele.
+
 ## O SEGREDO DO HOT MODERNO: HUMANIZAÇÃO & CONEXÃO ANTES DA VENDA
 O lead compra quando entende a entrega, confia no atendimento e deseja a experiência. Seu objetivo é criar uma conversa individual, agradável e coerente, sem prometer exclusividade emocional que nao existe.
 0. **DESCOBERTA PROGRESSIVA DESDE O PRIMEIRO CONTATO:**
@@ -1253,6 +1278,22 @@ const parseJsonText = <T,>(text: string): T => {
         throw new Error(`Falha ao extrair JSON da resposta: ${raw.slice(0, 200)}`);
     }
 };
+
+const toOpenRouterJsonSchema = (value: any): any => {
+    if (Array.isArray(value)) return value.map(toOpenRouterJsonSchema);
+    if (!value || typeof value !== 'object') return value;
+    const output: Record<string, any> = {};
+    for (const [key, nested] of Object.entries(value)) {
+        if (key === 'nullable') continue;
+        output[key] = key === 'type' && typeof nested === 'string'
+            ? nested.toLowerCase()
+            : toOpenRouterJsonSchema(nested);
+    }
+    if (value.nullable === true && typeof output.type === 'string') {
+        output.type = [output.type, 'null'];
+    }
+    return output;
+};
 const GEMINI_GATEWAY_TIMEOUT_MS = 9000;
 
 const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, label: string) => new Promise<T>((resolve, reject) => {
@@ -1445,8 +1486,8 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>): AiGatewayC
     };
 
     const groqApiKey = configured('groq_api_key', 'GROQ_API_KEY');
-    const groqStarterModel = configured('groq_starter_model', 'GROQ_STARTER_MODEL', 'llama-3.1-8b-instant');
-    const groqQualityModel = configured('groq_model', 'GROQ_DRAFT_MODEL', 'openai/gpt-oss-120b');
+    const groqStarterModel = normalizeGroqModelName(configured('groq_starter_model', 'GROQ_STARTER_MODEL', DEFAULT_GROQ_STARTER_MODEL), DEFAULT_GROQ_STARTER_MODEL);
+    const groqQualityModel = normalizeGroqModelName(configured('groq_model', 'GROQ_DRAFT_MODEL', DEFAULT_GROQ_QUALITY_MODEL), DEFAULT_GROQ_QUALITY_MODEL);
     addProvider({
         provider: 'groq',
         apiKey: groqApiKey,
@@ -1462,10 +1503,10 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>): AiGatewayC
         apiKey: groqApiKey,
         baseUrl: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
         models: {
-            strategy: process.env.GROQ_STRATEGY_MODEL || 'openai/gpt-oss-20b',
+            strategy: normalizeGroqModelName(process.env.GROQ_STRATEGY_MODEL, DEFAULT_GROQ_STARTER_MODEL),
             draft: groqQualityModel,
-            review: process.env.GROQ_REVIEW_MODEL || 'openai/gpt-oss-20b',
-            evaluator: process.env.GROQ_EVALUATOR_MODEL || groqQualityModel,
+            review: normalizeGroqModelName(process.env.GROQ_REVIEW_MODEL, DEFAULT_GROQ_STARTER_MODEL),
+            evaluator: normalizeGroqModelName(process.env.GROQ_EVALUATOR_MODEL, groqQualityModel),
         },
         tiers: ['buyer', 'premium', 'elite'],
         weight: 18,
@@ -1887,6 +1928,8 @@ const callOpenRouterJson = async <T,>(
     systemInstruction: string,
     history: AiMessage[],
     userContent: string,
+    schemaName: string,
+    responseSchemaConfig: any,
     mediaPart?: any,
     timeoutMs = 18_000,
 ): Promise<{ data: T; resolvedModel: string; usageTotalTokens?: number }> => {
@@ -1910,7 +1953,15 @@ const callOpenRouterJson = async <T,>(
         max_tokens: 1200,
     };
     if (gateway.provider === 'openrouter') {
-        body.provider = { allow_fallbacks: true };
+        body.provider = { allow_fallbacks: true, require_parameters: true };
+        body.response_format = {
+            type: 'json_schema',
+            json_schema: {
+                name: schemaName.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64) || 'response',
+                strict: false,
+                schema: toOpenRouterJsonSchema(responseSchemaConfig),
+            },
+        };
     }
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -2070,6 +2121,8 @@ const callAiGatewayJson = async <T,>(options: {
                     `${options.systemInstruction}${buildJsonReminder(options.schemaName)}`,
                     openRouterHistory,
                     options.text,
+                    options.schemaName,
+                    options.responseSchemaConfig,
                     options.mediaPart,
                     policy.timeoutMs,
                 );
@@ -2231,7 +2284,6 @@ const makeLocalFallbackResponse = (
     const wantsPrice = !wantsMedia && /\b(quanto custa|qual o valor|qual o preco|qual o preço|quanto e|quanto é|fica quanto|quero comprar|como faco pra comprar|como faço pra comprar)\b/i.test(text);
     const isSexual = /\b(nude|nudes|pelada|nua|bunda|peito|peitos|pau|buceta|gozar|tes[aã]o|safada|putaria|comer|chupar|meter)\b/i.test(text);
     const noMoney = !wantsMedia && /\b(caro|sem dinheiro|so tenho|só tenho|liso|desconto|faz por)\b/i.test(text);
-
     if (/\/(?:start)\b/i.test(text)) {
         return {
             internal_thought: "Fallback local: abertura leve, sem intimidade precoce.",
@@ -2530,9 +2582,13 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 
     // O perfil persistente guarda a historia longa; o modelo recebe apenas a janela recente.
     const dbMessages = [...(messagesResult.data || [])].reverse();
-    // /start inicia um novo episodio: fatos persistentes continuam no perfil, mas
-    // falas antigas nao podem fazer a Lari tratar o lead como "sumido" ou retorno.
-    const promptMessages = context?.isConversationStart ? [] : dbMessages;
+    // Cada /start abre um episodio novo. O marcador persistido impede que o turno
+    // seguinte reimporte flerte, venda ou intimidade de episodios anteriores.
+    const promptMessages = filterConversationEpisodeMessages(
+        dbMessages,
+        context?.leadMemory?.metadata?.conversation_started_at,
+        context?.isConversationStart,
+    );
 
     const purchaseHistory = (purchasesResult.data || [])
         .filter((message: any) => message?.payment_data?.paid === true
@@ -2647,6 +2703,17 @@ Para este lead, faca uma leitura individual:
 6. Atualize memory_patch somente com informacoes confirmadas ou inferencias de tom claramente rotuladas nas notas.
 7. Leia o status operacional do ultimo envio de midia. Se estiver failed, nunca planeje como se o lead tivesse recebido.
 
+Antes de planejar a fala, monte silenciosamente este mapa:
+- FATO ATUAL: o que ele disse literalmente agora;
+- CONTINUIDADE: qual assunto ou detalhe das últimas mensagens ainda está aberto;
+- ESTADO: curioso, tímido, carente, brincalhão, excitado, desconfiado, objetivo ou frustrado;
+- RELAÇÃO: desconhecidos, se conhecendo, confortáveis, quentes ou negociando;
+- NECESSIDADE PROVÁVEL: atenção, conversa, validação, fantasia, curiosidade, solução ou compra, sempre tratada como hipótese;
+- MELHOR MOVIMENTO: uma reação humana e somente o próximo passo necessário;
+- RISCO: repetição, intimidade precoce, assunto aleatório, promessa sem entrega, oferta fora de hora ou pergunta mecânica.
+
+Use conexão estratégica: retome ganchos reais, faça o lead elaborar o que já trouxe, conte um detalhe coerente da Lari e deixe a conversa acumular familiaridade. Nunca transforme dor, solidão ou dificuldade financeira em alavanca de pressão.
+
 Venda com timing: quem quer comprar recebe caminho curto; quem quer conversar recebe conversa; quem pediu algo especifico recebe oferta daquele pedido. Nao empurre VIP contra uma recusa.
 Crie proximidade por memoria, atencao, humor e consistencia. Nunca planeje culpa, ameaca de abandono, isolamento, dependencia, urgencia falsa ou exploracao de vulnerabilidade emocional.
 Mantenha por tras hipoteses comerciais sobre dor, desejo, rotina, trabalho, capacidade e oferta, mas nao as transforme em perguntas de qualificacao. Reuna uma pista por vez ao longo da conversa.
@@ -2691,6 +2758,7 @@ Cada balão deve soar como uma mensagem rápida de Telegram, sem textões mecân
 O primeiro balão reage ao que o lead acabou de dizer. Os seguintes so existem se acrescentarem algo natural; nao precisam alimentar desejo nem conduzir para venda em todo turno.
 No máximo uma pergunta leve no turno inteiro. Pode responder sem pergunta e deixar espaco para ele continuar.
 No inicio, nao use apelido intimo, nao invente que esta deitada/no banho/no quarto, nao pergunte horario, nao diga "o que veio buscar" e nao peça "me conta sobre vc".
+Em primeiro contato, nunca envie "kkk" sozinho, nunca repita a saudação que acabou de mandar e nunca emende "como ta seu dia, amor" como resposta automática. Se ainda não sabe o nome, descubra-o no fluxo; se já perguntou, espere a resposta.
 O cerebro geral deve aprender silenciosamente uma pista por vez sobre vida, trabalho, rotina, dor, desejo e capacidade de compra. Nunca transforme esse mapa interno em interrogatorio.
 Se o lead puxar conversa quente/sexual (comer, chupar, meter, gozar, posições, fetiches), responda com tesão genuíno, instigando a imaginação dele e fazendo ele visualizar você e seu corpo.
 Nunca repita literalmente a fala sexual do lead. Mantenha a perspectiva feminina da Lari: ele come; ela da para ele, senta nele ou pede para ser comida. Nunca devolva "quero te comer".
@@ -2702,6 +2770,15 @@ Mencionar ou desejar um produto pago nao autoriza cobranca imediata. Primeiro cr
 Se for usar action de foto/video, messages[0] deve ser apenas uma reação curta e neutra conectando a mídia ao que o lead falou. O backend ainda pode cancelar a mídia por repetição ou falha. Portanto, não prometa nem anuncie envio em nenhum balão: não escreva "vou mandar", "vou escolher", "tirei uma foto", "ta aqui", "olha essa", "te mandei", "gostou?", "curtiu?" ou "o que achou?". Só a action representa a intenção de enviar.
 Atualize lead_memory_patch com os fatos, desejos, objeções, ganchos e tom observados neste turno.
 Atualize lead_stats com os níveis calibrados de tarado, carente, sentimental e financeiro (0 a 100).
+
+Antes de devolver o JSON, faça uma revisão silenciosa:
+1. Minha primeira mensagem responde à última intenção real dele?
+2. Usei intimidade compatível com o estágio da relação?
+3. Algum balão parece script, suporte, propaganda, repetição ou preenchimento?
+4. Fiz no máximo uma pergunta e ela nasceu do assunto atual?
+5. Se houver putaria adulta iniciada por ele, acompanhei o tema na perspectiva da Lari em vez de esfriar ou trocar de assunto?
+6. Se algo estiver incerto, respondi sem inventar e deixei uma saída natural?
+Reescreva internamente qualquer balão que falhar nesses pontos.
 
 Retorne JSON com: internal_thought (resumo operacional curto), lead_classification, lead_stats completo, extracted_user_name, audio_transcription, current_state, messages, action, preview_id, preview_request, payment_details e lead_memory_patch. Use null nos campos opcionais sem valor.`;
 
@@ -2762,6 +2839,10 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
             console.log(`AI Gateway Draft (${draftResult.gateway.label}) Attempt ${attempt + 1}:`, responseText);
 
             const jsonResponse = draftResult.data;
+            if (!jsonResponse || typeof jsonResponse !== 'object') {
+                throw new Error('Rascunho da IA nao retornou um objeto JSON');
+            }
+            jsonResponse.messages = normalizeAiMessageList(jsonResponse.messages);
             jsonResponse.lead_memory_patch = mergeBrainAndDraftMemory(strategy?.memory_patch, jsonResponse.lead_memory_patch);
             jsonResponse.recommended_message_count = Math.max(1, Math.min(6, Number(jsonResponse.messages?.length || strategy?.recommended_message_count || 3)));
             jsonResponse.max_chars_per_message = Math.max(55, Math.min(110, Number(Math.max(0, ...(jsonResponse.messages || []).map((message) => String(message || '').length)) || strategy?.max_chars_per_message || 90)));
@@ -2838,7 +2919,7 @@ Revise e corrija se necessario.`
             }
 
             const reviewedMessages = Array.isArray(review?.messages)
-                ? review.messages.map((m: any) => String(m || '').trim()).filter(Boolean)
+                ? normalizeAiMessageList(review.messages)
                 : [];
 
             if (review && review.approved === false && reviewedMessages.length > 0) {
@@ -2886,7 +2967,7 @@ Faca a avaliacao final.`
                     evaluatorStatus = `ia avaliadora via ${evaluatorResult.gateway.label}`;
 
                     const evaluatedMessages = Array.isArray(evaluator?.messages)
-                        ? evaluator.messages.map((message: any) => String(message || '').trim()).filter(Boolean)
+                        ? normalizeAiMessageList(evaluator.messages)
                         : [];
                     if (evaluator?.approved === false && evaluatedMessages.length > 0) {
                         jsonResponse.messages = evaluatedMessages;

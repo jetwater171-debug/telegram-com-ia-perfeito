@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { extractAiMessageText, normalizeAiMessageList } from '@/lib/aiMessageNormalization';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode, sendTelegramVoice, type TelegramMediaProtection } from '@/lib/telegram';
 import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
 import { calculateLeadScore, markLeadPaid, parseLeadScore, toStoredLeadScore } from '@/lib/leadScoring';
 import { shapeConversationBubbles } from '@/lib/conversationBubbles';
+import { findLatestConversationStartAt } from '@/lib/conversationEpisode';
+import { refineNewRelationshipMessages } from '@/lib/conversationQuality';
 import {
     mergeLeadMemoryPatch,
     mergeUniqueLeadMemoryValues as mergeUnique,
@@ -219,8 +222,8 @@ const fixGluedWords = (text: string) => {
     }).join('');
 };
 
-const sanitizeOutgoingMessage = (text: string) => {
-    let out = (text || '').trim();
+const sanitizeOutgoingMessage = (text: unknown) => {
+    let out = extractAiMessageText(text);
     out = out.replace(/\beu\s+sou\s+a\s+lari\b/gi, 'eu sou lari');
     out = out.replace(/\beu\s+sou\s+a\s+larissa\b/gi, 'eu sou larissa');
     out = out.replace(/\bsou\s+a\s+lari\b/gi, 'sou lari');
@@ -244,7 +247,7 @@ const sanitizeOutgoingMessage = (text: string) => {
     return out;
 };
 
-const removeLeadEchoes = (messages: string[], userText: string) => {
+const removeLeadEchoes = (messages: unknown[], userText: string) => {
     const leadLines = String(userText || '')
         .split(/\r?\n/)
         .map((line) => normalizeLoopText(line))
@@ -737,8 +740,8 @@ const pickPromptVariant = async (stage: string) => {
     }
     return best;
 };
-const normalizeLoopText = (text: string) => {
-    return (text || '')
+const normalizeLoopText = (text: unknown) => {
+    return extractAiMessageText(text)
         .toLowerCase()
         .replace(/[\u200B-\u200D\uFEFF]/g, '')
         .replace(/\s+/g, ' ')
@@ -941,6 +944,8 @@ export async function POST(req: NextRequest) {
         await new Promise((resolve) => setTimeout(resolve, PROCESSING_LEASE_POLL_MS));
     }
 
+    const processingAttemptStartedAt = new Date().toISOString();
+
     try {
         // O worker pode ter esperado outro turno terminar. Confere novamente se
         // ainda representa a mensagem mais nova antes de gastar uma chamada de IA.
@@ -1025,7 +1030,8 @@ export async function POST(req: NextRequest) {
 
     const combinedText = filteredGroupMessages.map((m: any) => m.content).join("\n");
     const userOnlyText = filteredGroupMessages.filter((m: any) => m.sender === 'user').map((m: any) => m.content).join("\n");
-    const isConversationStart = /^\/start(?:\s+\S+)?$/i.test(userOnlyText.trim());
+    const conversationStartAt = findLatestConversationStartAt(filteredGroupMessages);
+    const isConversationStart = Boolean(conversationStartAt);
     const lastGroupedUserAt = filteredGroupMessages
         .filter((m: any) => m.sender === 'user' && m.created_at)
         .map((m: any) => String(m.created_at))
@@ -1135,7 +1141,7 @@ export async function POST(req: NextRequest) {
             last_offer: '',
             metadata: {
                 ...freshMetadata,
-                conversation_started_at: new Date().toISOString(),
+                conversation_started_at: conversationStartAt || lastGroupedUserAt,
             },
             updated_at: new Date().toISOString(),
         };
@@ -1743,15 +1749,13 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             .filter((text: string) => text && !text.startsWith('midia ')),
     );
 
-    const outgoingMessages = Array.isArray(aiResponse.messages)
-        ? aiResponse.messages
-        : [String(aiResponse.messages || '')].filter(Boolean);
+    const outgoingMessages = normalizeAiMessageList(aiResponse.messages);
 
     let safeMessages = removeLeadEchoes(
         outgoingMessages.length > 0 ? outgoingMessages : ['oii?'],
         userOnlyText,
     )
-        .map((m: string) => sanitizeOutgoingMessage(m))
+        .map((m) => sanitizeOutgoingMessage(m))
         .filter(Boolean);
 
     const lastBotContent = lastBotMsg?.content || '';
@@ -1764,6 +1768,15 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         extractedName: aiResponse.extracted_user_name,
         lastBotContent
     });
+    const relationshipStageBeforeTurn = String(leadMemory.relationship_stage || 'new').trim().toLowerCase();
+    if (!relationshipStageBeforeTurn || relationshipStageBeforeTurn === 'new' || relationshipStageBeforeTurn === 'unknown') {
+        safeMessages = refineNewRelationshipMessages(safeMessages, {
+            userText: userOnlyText,
+            lastBotContent,
+            hasKnownName: sessionHasUsefulName(session.user_name) || userProbablyProvidedName(userOnlyText, aiResponse.extracted_user_name),
+            isConversationStart,
+        });
+    }
     if (mediaSuppressedForRepetition) {
         safeMessages = safeMessages.filter((message: string) => !isMediaAnnouncement(message));
     }
@@ -2617,6 +2630,50 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         debug_stats: aiResponse.lead_stats,
         debug_funnel: nextStep
     });
+    } catch (error: any) {
+        const reason = String(error?.message || error || 'erro desconhecido');
+        console.error(`[PROCESSADOR] Falha recuperavel na sessao ${sessionId}:`, reason);
+
+        try {
+            const { data: alreadyDelivered } = await supabase
+                .from('messages')
+                .select('id')
+                .eq('session_id', sessionId)
+                .eq('sender', 'bot')
+                .gte('created_at', processingAttemptStartedAt)
+                .limit(1);
+
+            if (!alreadyDelivered?.length) {
+                const { data: latestUserMessage } = await supabase
+                    .from('messages')
+                    .select('content')
+                    .eq('session_id', sessionId)
+                    .eq('sender', 'user')
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .single();
+                const latestText = String(latestUserMessage?.content || '').trim();
+                const fallbackMessages = /^\/start(?:\s|$)/i.test(latestText)
+                    ? ['oiii tudo bem?', 'como vc se chama?']
+                    : ['oii, me fala mais disso'];
+
+                for (const fallbackMessage of fallbackMessages) {
+                    await sendTelegramMessage(botToken, chatId, fallbackMessage);
+                    await supabase.from('messages').insert({
+                        session_id: session.id,
+                        sender: 'bot',
+                        content: fallbackMessage,
+                    });
+                }
+                console.log(`[PROCESSADOR] Recuperacao local enviada para a sessao ${sessionId}.`);
+            } else {
+                console.log(`[PROCESSADOR] Recuperacao local dispensada: a sessao ${sessionId} ja recebeu resposta.`);
+            }
+        } catch (recoveryError: any) {
+            console.error('[PROCESSADOR] Falha ao entregar recuperacao local:', recoveryError?.message || recoveryError);
+        }
+
+        return NextResponse.json({ success: true, recovered: true, reason }, { status: 200 });
     } finally {
         await releaseProcessingLease();
     }

@@ -1,8 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 
-export const DEFAULT_PREVIEW_VISION_MODEL = 'qwen/qwen-2.5-vl-72b-instruct';
-export const DEFAULT_PREVIEW_VISION_FALLBACK_MODEL = 'qwen/qwen-2.5-vl-72b-instruct:free';
+export const DEFAULT_PREVIEW_VISION_MODEL = 'google/gemini-2.5-flash';
+export const DEFAULT_PREVIEW_VISION_FALLBACK_MODEL = 'dots-studio/dots-3-note-preview:free';
 
 export type PreviewVisionAnalysis = {
     name: string;
@@ -226,15 +226,15 @@ Retorne SOMENTE um JSON válido com a estrutura:
   "confidence": 0.95
 }`;
 
-    // 1. Tenta OpenRouter exclusivamente com Qwen Vision se chave estiver configurada
+    // 1. Tenta OpenRouter com modelos multimodais atuais se a chave estiver configurada.
     if (settings.openRouterKey) {
-        const candidateModels = [
+        const candidateModels = Array.from(new Set([
             settings.primaryModel,
             settings.fallbackModel,
-            'qwen/qwen-2.5-vl-72b-instruct',
-            'qwen/qwen-2.5-vl-72b-instruct:free',
-            'qwen/qwen-vl-plus',
-        ].filter((m) => m && m.toLowerCase().includes('qwen'));
+            DEFAULT_PREVIEW_VISION_MODEL,
+            DEFAULT_PREVIEW_VISION_FALLBACK_MODEL,
+            'qwen/qwen3.8-27b',
+        ].filter(Boolean)));
 
         for (const model of candidateModels) {
             try {
@@ -284,8 +284,8 @@ Retorne SOMENTE um JSON válido com a estrutura:
         try {
             const genAI = new GoogleGenerativeAI(settings.geminiKey);
             const geminiModel = genAI.getGenerativeModel({
-                model: 'gemini-2.5-flash',
-                generationConfig: { responseMimeType: 'application/json', temperature: 0.1 },
+                model: 'gemini-3.6-flash',
+                generationConfig: { responseMimeType: 'application/json' },
             });
             const result = await geminiModel.generateContent([
                 prompt,
@@ -298,7 +298,7 @@ Retorne SOMENTE um JSON válido com a estrutura:
             ]);
             const text = result.response.text();
             if (text) {
-                return normalizeAnalysis(parseJsonContent(text), 'gemini-2.5-flash-direct');
+                return normalizeAnalysis(parseJsonContent(text), 'gemini-3.6-flash-direct');
             }
         } catch (geminiError: any) {
             console.warn('[PREVIEW VISION] Gemini direto falhou:', geminiError?.message || geminiError);

@@ -65,7 +65,7 @@ export default function AdminPreviewsPage() {
     const [message, setMessage] = useState("");
     const [modelSettings, setModelSettings] = useState({
         primaryModel: "google/gemini-2.5-flash",
-        fallbackModel: "qwen/qwen-2.5-vl-72b-instruct",
+        fallbackModel: "dots-studio/dots-3-note-preview:free",
         openRouterConfigured: false,
     });
     const [manual, setManual] = useState({ name: "", description: "", tags: "" });

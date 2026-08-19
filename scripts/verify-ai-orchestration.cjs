@@ -29,9 +29,11 @@ const { evaluateSalesTiming, VIP_PRICE } = loadPureTypeScriptModule('../src/lib/
 
 const starter = resolveAiOrchestrationPlan(0);
 assert.equal(starter.tier, 'starter');
-assert.equal(starter.separateStrategy, false);
-assert.equal(starter.reviewMode, 'none');
+assert.equal(starter.separateStrategy, true);
+assert.equal(starter.reviewMode, 'critical');
 assert.equal(starter.evaluator, false);
+assert.equal(starter.historyMessageLimit, 80);
+assert.equal(shouldRunAiReview(starter, true), true);
 
 assert.equal(resolveAiOrchestrationPlan(AI_ORCHESTRATION_THRESHOLDS.buyer - 0.01).tier, 'starter');
 
@@ -49,7 +51,7 @@ assert.equal(premium.evaluator, false);
 const elite = resolveAiOrchestrationPlan(AI_ORCHESTRATION_THRESHOLDS.elite);
 assert.equal(elite.tier, 'elite');
 assert.equal(elite.evaluator, true);
-assert.equal(elite.historyMessageLimit, 100);
+assert.equal(elite.historyMessageLimit, 120);
 
 const vipPriceQuestion = evaluateSalesTiming({ userText: 'quanto custa o vip?' });
 assert.equal(vipPriceQuestion.activeProduct, 'vip');
@@ -65,4 +67,4 @@ assert.equal(vipBudgetGap.fixedVipBudgetGap, true);
 assert.equal(vipBudgetGap.canGeneratePayment, false);
 assert.equal(vipBudgetGap.offerPlan?.value, VIP_PRICE);
 
-console.log('AI_ORCHESTRATION_OK starter=1 buyer=2 premium=3 elite=4 vip=19.90');
+console.log('AI_ORCHESTRATION_OK starter=brain+lari history=80 buyer=2 premium=3 elite=4 vip=19.90');
