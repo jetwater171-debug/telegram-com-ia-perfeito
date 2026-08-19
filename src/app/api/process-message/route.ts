@@ -1847,30 +1847,14 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         safeMessages = [forcedCityAnswer, ...withoutGenericCity.filter((msg: string) => normalizeLoopText(msg) !== normalizeLoopText(forcedCityAnswer))];
     }
 
-    if (contextualMedia && !mediaSuppressedForRepetition && MEDIA_ACTIONS.has(String(aiResponse.action || ''))) {
-        const introNorm = normalizeLoopText(contextualMedia.intro);
-        const alreadyPrepared = safeMessages.some((msg: string) => {
-            const norm = normalizeLoopText(msg);
-            return norm.includes('essa') || norm.includes('foto') || norm.includes('video') || norm.includes('olha') || norm.includes(introNorm);
-        });
-        if (!alreadyPrepared) {
-            safeMessages = [contextualMedia.intro, ...safeMessages];
-        }
-    }
-
     const stage = String(aiResponse.current_state || '').toUpperCase();
     const explicitFantasy = hasExplicitSexualFantasyTrigger(userOnlyText);
-    const maxMessagesForTurn = (() => {
-        if (explicitFantasy) return 6;
-        if (stage === 'PAYMENT_CHECK' || aiResponse.action === 'generate_pix_payment') return 3;
-        if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 4;
-        return 4;
-    })();
+    const maxMessagesForTurn = explicitFantasy ? 3 : 3;
 
     safeMessages = shapeConversationBubbles(safeMessages, {
-        preferredCount: aiResponse.recommended_message_count || 3,
+        preferredCount: 2,
         maxBubbles: maxMessagesForTurn,
-        maxChars: aiResponse.max_chars_per_message || 90,
+        maxChars: aiResponse.max_chars_per_message || 80,
     });
 
     safeMessages = safeMessages.filter((message: string) =>
@@ -1879,7 +1863,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     if (safeMessages.length === 0 && !MEDIA_ACTIONS.has(String(aiResponse.action || 'none'))) {
         safeMessages = hasExplicitSexualFantasyTrigger(userOnlyText)
             ? ['so de imaginar vc me comendo ja fico toda arrepiada']
-            : ['me fala mais disso amor'];
+            : ['me fala mais disso amor', 'to adorando conversar com vc'];
     }
 
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));
@@ -1890,13 +1874,15 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         ? buildNaturalMediaSetup(
             userOnlyText,
             aiResponse.action,
-            setupIndex >= 0 ? safeMessages[setupIndex] : contextualMedia?.intro,
+            setupIndex >= 0 ? safeMessages[setupIndex] : 'olha o que separei pra vc amor',
         )
         : '';
     const deferredMediaMessages = isMediaDeliveryTurn
-        ? safeMessages.filter((_: string, index: number) => index !== setupIndex)
+        ? safeMessages.filter((_: string, index: number) => index !== setupIndex).slice(0, 1)
         : [];
-    let outgoingToSend = isMediaDeliveryTurn ? [naturalMediaSetup] : safeMessages;
+    let outgoingToSend = isMediaDeliveryTurn
+        ? (naturalMediaSetup ? [naturalMediaSetup] : [])
+        : safeMessages.slice(0, 3);
     let operationalLeadMemory = updatedLeadMemory;
     const persistMediaDeliveryStatus = async (
         status: 'delivered' | 'recovered' | 'failed',
