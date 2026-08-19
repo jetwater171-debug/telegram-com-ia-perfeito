@@ -1309,11 +1309,6 @@ const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
     evaluator: DEFAULT_OPENROUTER_MODEL,
 };
 
-const OPENROUTER_TEXT_ONLY_MODELS = new Set<string>([
-    DEFAULT_OPENROUTER_MODEL,
-    ...OPENROUTER_MODEL_FALLBACK_ORDER,
-]);
-
 const getGeminiModelName = () => normalizeGeminiModelName(process.env.GEMINI_MODEL, DEFAULT_GEMINI_MODEL);
 
 const getBotSettingsMap = async (keys: string[]) => {
@@ -1604,6 +1599,7 @@ const callGeminiJson = async <T,>(
 const callAiGatewayJson = async <T,>(options: {
     settings: AiRuntimeSettings;
     role: AiRole;
+    providerOnly?: AiProvider;
     schemaName: string;
     systemInstruction: string;
     responseSchemaConfig: any;
@@ -1611,7 +1607,10 @@ const callAiGatewayJson = async <T,>(options: {
     text: string;
     mediaPart?: any;
 }): Promise<{ data: T; gateway: AiGatewayConfig; attempts: string[] }> => {
-    const gateways = getAiGatewayOrder(options.role, options.settings);
+    const hasImage = String(options.mediaPart?.inlineData?.mimeType || '').startsWith('image/');
+    const providerOnly = hasImage ? 'gemini' : options.providerOnly;
+    const gateways = getAiGatewayOrder(options.role, options.settings)
+        .filter((gateway) => !providerOnly || gateway.provider === providerOnly);
     const attempts: string[] = [];
     const openRouterHistory: AiMessage[] = options.history.map((message: any) => ({
         role: (message.role === "model" ? "assistant" : "user") as AiMessage["role"],
@@ -1626,12 +1625,6 @@ const callAiGatewayJson = async <T,>(options: {
                     const mimeType = String(options.mediaPart?.inlineData?.mimeType || '');
                     if (!mimeType.startsWith('image/')) {
                         const message = `${gateway.label} pulado: midia nao suportada neste provider`;
-                        attempts.push(message);
-                        await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "skipped", message });
-                        continue;
-                    }
-                    if (OPENROUTER_TEXT_ONLY_MODELS.has(gateway.model)) {
-                        const message = `${gateway.label} pulado: modelo textual nao analisa imagens`;
                         attempts.push(message);
                         await appendAiGatewayEvent({ role: options.role, provider: gateway.provider, model: gateway.model, status: "skipped", message });
                         continue;
@@ -2211,6 +2204,7 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                 draftResult = await callAiGatewayJson<AIResponse>({
                     settings: aiSettings,
                     role: "draft",
+                    providerOnly: 'gemini',
                     schemaName: "responseSchema",
                     systemInstruction: draftPrompt,
                     responseSchemaConfig: responseSchema as any,
