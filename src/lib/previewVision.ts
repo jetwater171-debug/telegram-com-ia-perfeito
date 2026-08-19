@@ -284,7 +284,7 @@ Retorne SOMENTE um JSON válido com a estrutura:
         try {
             const genAI = new GoogleGenerativeAI(settings.geminiKey);
             const geminiModel = genAI.getGenerativeModel({
-                model: 'gemini-2.0-flash',
+                model: 'gemini-3.5-flash',
                 generationConfig: { responseMimeType: 'application/json' },
             });
             const result = await geminiModel.generateContent([
@@ -298,7 +298,7 @@ Retorne SOMENTE um JSON válido com a estrutura:
             ]);
             const text = result.response.text();
             if (text) {
-                return normalizeAnalysis(parseJsonContent(text), 'gemini-2.0-flash-direct');
+                return normalizeAnalysis(parseJsonContent(text), 'gemini-3.5-flash-direct');
             }
         } catch (geminiError: any) {
             console.warn('[PREVIEW VISION] Gemini direto falhou:', geminiError?.message || geminiError);

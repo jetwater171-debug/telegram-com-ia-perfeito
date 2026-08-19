@@ -3016,7 +3016,7 @@ Faca a avaliacao final.`
 
             jsonResponse.ai_debug = {
                 timestamp: new Date().toISOString(),
-                model: draftResult?.gateway?.model || 'gemini-2.5-flash',
+                model: draftResult?.gateway?.model || 'gemini-3.5-flash',
                 provider: draftResult?.gateway?.provider || 'gemini',
                 tier: orchestration.tier,
                 duration_ms: totalDurationMs,

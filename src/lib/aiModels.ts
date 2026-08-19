@@ -1,5 +1,5 @@
-export const DEFAULT_GEMINI_MODEL = "gemini-2.0-flash";
-export const DEFAULT_GEMINI_LITE_MODEL = "gemini-2.0-flash-lite";
+export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+export const DEFAULT_GEMINI_LITE_MODEL = "gemini-3.5-flash-lite";
 export const DEFAULT_GROQ_STARTER_MODEL = "llama-3.1-8b-instant";
 export const DEFAULT_GROQ_QUALITY_MODEL = "llama-3.3-70b-versatile";
 
@@ -7,8 +7,7 @@ export const OPENROUTER_MODEL_FALLBACK_ORDER = [
     "deepseek/deepseek-chat",
     "qwen/qwen-2.5-72b-instruct",
     "meta-llama/llama-3.3-70b-instruct",
-    "google/gemini-2.0-flash-001",
-    "deepseek/deepseek-r1",
+    "openai/gpt-4o-mini",
     "openrouter/free",
 ] as const;
 
@@ -20,6 +19,7 @@ const OPENROUTER_MODEL_MIGRATIONS: Record<string, string> = {
     "qwen/qwen3.7-flash": "qwen/qwen-2.5-72b-instruct",
     "qwen/qwen-2.5-32b-instruct": "qwen/qwen-2.5-72b-instruct",
     "qwen/qwen-2.5-coder-32b-instruct": "qwen/qwen-2.5-72b-instruct",
+    "google/gemini-2.0-flash-001": DEFAULT_OPENROUTER_MODEL,
 };
 
 export const normalizeOpenRouterPrimaryModel = (value?: string | null) => {
@@ -29,23 +29,24 @@ export const normalizeOpenRouterPrimaryModel = (value?: string | null) => {
 };
 
 export const GEMINI_MODEL_OPTIONS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-    "gemini-1.5-pro",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.7-flash",
+    "gemini-2.5-flash",
 ] as const;
 
 const GEMINI_MODEL_MIGRATIONS: Record<string, string> = {
-    "gemini-3.6-flash": "gemini-2.0-flash",
-    "gemini-3.5-flash-lite": "gemini-2.0-flash-lite",
-    "gemini-3.5-flash": "gemini-2.0-flash",
-    "gemini-3.5": "gemini-2.0-flash",
-    "gemini-3.1-flash-lite": "gemini-2.0-flash-lite",
-    "gemini-2.5-flash": "gemini-2.0-flash",
-    "gemini-2.5-flash-lite": "gemini-2.0-flash-lite",
-    "gemini-flash": "gemini-2.0-flash",
-    "gemini-flash-lite": "gemini-2.0-flash-lite",
+    "gemini-2.0-flash": "gemini-3.5-flash",
+    "gemini-2.0-flash-lite": "gemini-3.5-flash-lite",
+    "gemini-2.0-flash-exp": "gemini-3.5-flash",
+    "gemini-1.5-flash": "gemini-3.5-flash",
+    "gemini-1.5-flash-8b": "gemini-3.5-flash-lite",
+    "gemini-1.5-pro": "gemini-3.5-flash",
+    "gemini-1.5-pro-latest": "gemini-3.5-flash",
+    "gemini-3.6-flash": "gemini-3.5-flash",
+    "gemini-3.1-flash": "gemini-3.5-flash",
+    "gemini-flash": "gemini-3.5-flash",
+    "gemini-flash-lite": "gemini-3.5-flash-lite",
 };
 
 export const normalizeGeminiModelName = (
