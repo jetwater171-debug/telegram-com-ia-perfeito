@@ -83,14 +83,14 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
         tier: 'starter',
         label: 'primeiro ciclo',
         totalPaid,
-        separateStrategy: true,
+        separateStrategy: false,
         reviewMode: 'critical',
         evaluator: false,
         historyMessageLimit: 80,
         historyMaxEntries: 80,
         historyMaxChars: 24_000,
         promptBlockMaxChars: 16_000,
-        objective: 'cerebro geral barato separado + Lari, com revisao quando a naturalidade estiver em risco',
+        objective: 'resposta rapida com Gemini direto + Lari, com revisao somente nos momentos criticos',
     };
 };
 
@@ -99,4 +99,3 @@ export const shouldRunAiReview = (
     criticalReviewNeeded: boolean,
 ) => plan.reviewMode === 'always'
     || (plan.reviewMode === 'critical' && criticalReviewNeeded);
-

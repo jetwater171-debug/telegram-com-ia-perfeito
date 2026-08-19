@@ -1749,32 +1749,18 @@ const getTierAwareGatewayOrder = ({
     routingKey?: string;
 }) => {
     const normal = getAiGatewayOrder(role, settings, tier);
-    const economy: AiGatewayConfig[] = [];
+    const geminiPrimary: AiGatewayConfig[] = [];
 
-    if ((tier === 'starter' && role === 'draft') || (tier === 'buyer' && role === 'strategy')) {
-        if (settings.geminiApiKey) {
-            economy.push({ provider: 'gemini', model: DEFAULT_GEMINI_LITE_MODEL, label: `gemini:${DEFAULT_GEMINI_LITE_MODEL}` });
-        }
-        if (settings.openRouterApiKey) {
-            economy.push({ provider: 'openrouter', model: 'openrouter/free', label: 'openrouter:openrouter/free', weight: 5 });
-        }
-        economy.push(...settings.directGateways
-            .filter((gateway) => gateway.role === role)
-            .filter((gateway) => !gateway.tiers || gateway.tiers.includes(tier)));
-    }
-
-    if (economy.length > 1 && tier === 'starter') {
-        const totalWeight = economy.reduce((sum, gateway) => sum + Math.max(1, Number(gateway.weight || (gateway.provider === 'gemini' ? 57 : 5))), 0);
-        let point = stablePercent(`${routingKey || 'starter'}:${role}`) / 100 * totalWeight;
-        const selectedIndex = economy.findIndex((gateway) => {
-            point -= Math.max(1, Number(gateway.weight || (gateway.provider === 'gemini' ? 57 : 5)));
-            return point < 0;
-        });
-        if (selectedIndex > 0) economy.unshift(...economy.splice(selectedIndex, 1));
+    // Prioridade máxima e imediata para o Gemini oficial da Google AI Studio
+    if (settings.geminiApiKey) {
+        geminiPrimary.push(
+            { provider: 'gemini', model: DEFAULT_GEMINI_MODEL, label: `gemini:${DEFAULT_GEMINI_MODEL}` },
+            { provider: 'gemini', model: DEFAULT_GEMINI_LITE_MODEL, label: `gemini:${DEFAULT_GEMINI_LITE_MODEL}` }
+        );
     }
 
     const seen = new Set<string>();
-    return [...economy, ...normal].filter((gateway) => {
+    return [...geminiPrimary, ...normal].filter((gateway) => {
         const key = `${gateway.provider}:${gateway.model}`;
         if (seen.has(key)) return false;
         seen.add(key);
