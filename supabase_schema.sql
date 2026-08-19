@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_message_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     last_bot_activity_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     reengagement_sent BOOLEAN DEFAULT FALSE,
-    processing_token TEXT
+    processing_token TEXT,
+    processing_started_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Create messages table

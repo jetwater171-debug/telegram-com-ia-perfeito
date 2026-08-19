@@ -851,19 +851,65 @@ export async function POST(req: NextRequest) {
 
     // Uma conversa por vez. Leads diferentes continuam processando em paralelo,
     // mas dois workers da mesma sessão nunca geram resposta/pagamento duplicado.
-    const workerToken = crypto.randomUUID();
-    let leaseEnabled = true;
+    const workerToken = `${Date.now()}:${crypto.randomUUID()}`;
+    let leaseMode: 'full' | 'token_only' = 'full';
     let leaseClaimed = false;
     const releaseProcessingLease = async () => {
-        if (!leaseEnabled || !leaseClaimed) return;
+        if (!leaseClaimed) return;
+        const releasePatch = leaseMode === 'full'
+            ? { processing_token: null, processing_started_at: null }
+            : { processing_token: null };
         await supabase
             .from('sessions')
-            .update({ processing_token: null, processing_started_at: null })
+            .update(releasePatch)
             .eq('id', sessionId)
             .eq('processing_token', workerToken);
         leaseClaimed = false;
     };
+    const tryClaimTokenOnlyLease = async () => {
+        const { data, error } = await supabase
+            .from('sessions')
+            .update({ processing_token: workerToken })
+            .eq('id', sessionId)
+            .is('processing_token', null)
+            .select('id');
+
+        if (error) throw error;
+        if (data?.length) {
+            leaseClaimed = true;
+            return true;
+        }
+
+        // O token inclui o instante em que foi criado. Se uma funcao serverless
+        // morrer sem executar o finally, outro worker pode recuperar a sessao
+        // depois do TTL sem permitir duas respostas simultaneas.
+        const { data: occupiedSession, error: readError } = await supabase
+            .from('sessions')
+            .select('processing_token')
+            .eq('id', sessionId)
+            .single();
+        if (readError) throw readError;
+
+        const occupiedToken = String(occupiedSession?.processing_token || '');
+        const occupiedSince = Number(occupiedToken.split(':', 1)[0]);
+        const isExpired = Number.isFinite(occupiedSince)
+            && occupiedSince > 0
+            && Date.now() - occupiedSince >= PROCESSING_LEASE_TTL_MS;
+        if (!occupiedToken || !isExpired) return false;
+
+        const { data: recovered, error: recoveryError } = await supabase
+            .from('sessions')
+            .update({ processing_token: workerToken })
+            .eq('id', sessionId)
+            .eq('processing_token', occupiedToken)
+            .select('id');
+        if (recoveryError) throw recoveryError;
+        leaseClaimed = Boolean(recovered?.length);
+        return leaseClaimed;
+    };
     const tryClaimProcessingLease = async () => {
+        if (leaseMode === 'token_only') return tryClaimTokenOnlyLease();
+
         const leaseCutoff = new Date(Date.now() - PROCESSING_LEASE_TTL_MS).toISOString();
         const { data, error } = await supabase
             .from('sessions')
@@ -875,9 +921,9 @@ export async function POST(req: NextRequest) {
         if (error) {
             const message = String(error.message || '').toLowerCase();
             if (String((error as any).code || '') === '42703' || message.includes('processing_started_at') || message.includes('processing_token')) {
-                console.warn('[PROCESSADOR] Colunas de lease ainda não existem; seguindo com debounce antigo.');
-                leaseEnabled = false;
-                return true;
+                console.warn('[PROCESSADOR] Lease completo indisponivel; ativando trava atomica por processing_token.');
+                leaseMode = 'token_only';
+                return tryClaimTokenOnlyLease();
             }
             throw error;
         }
@@ -897,7 +943,7 @@ export async function POST(req: NextRequest) {
     try {
         // O worker pode ter esperado outro turno terminar. Confere novamente se
         // ainda representa a mensagem mais nova antes de gastar uma chamada de IA.
-        if (leaseEnabled && triggerMessageId) {
+        if (triggerMessageId) {
             const { data: latestAfterLease } = await supabase
                 .from('messages')
                 .select('id')
