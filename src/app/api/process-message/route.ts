@@ -1452,15 +1452,20 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         /\b(toma|olha só|olha so|olha essa|como eu t[oô]|te esperando|aqui pra vc|te mandei|olha a fotinha|olha aqui|olha amor|olha como|separei pra vc|olha o look|olha meu look|olha eu|tirando foto|tirei essa|tirei agora|fotinha pra vc|foto pra vc|olha essa foto|deitadinha aqui|olha como eu fico)\b/i.test(msg)
     );
 
-    const isInitialGreeting = /^\s*(\/start(?:\s+.*)?|oi|oii|oiii|ola|olá|boa tarde|bom dia|boa noite|eai|fala|opa)\s*$/i.test(userOnlyText.trim())
-        && recentSalesHistory.filter((m: any) => m.sender === 'user').length <= 1;
-
     const pastDeliveredMediaCount = recentSalesHistory.filter((m: any) =>
         m.sender === 'bot' && (m.media_url || /\[MÍDIA/i.test(m.content || ''))
     ).length;
 
+    // Verifica se a última mensagem do bot continha mídia (para não mandar duas mídias em turnos colados)
+    const lastBotSentMedia = recentSalesHistory.slice(-2).some((m: any) =>
+        m.sender === 'bot' && (m.media_url || /\[MÍDIA/i.test(m.content || ''))
+    );
+
     const hasPaid = Number(session.total_paid || 0) > 0;
     const isAskingRepeat = userAskedToRepeatMedia(userOnlyText);
+
+    const isInitialGreeting = /^\s*(\/start(?:\s+.*)?|oi|oii|oiii|ola|olá|boa tarde|bom dia|boa noite|eai|fala|opa)\s*$/i.test(userOnlyText.trim())
+        && recentSalesHistory.filter((m: any) => m.sender === 'user').length <= 1;
 
     let shouldDeliverMedia = (userAskedMedia || botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || '')))
         && !(isInitialGreeting && !userAskedMedia);
@@ -1470,16 +1475,30 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         shouldDeliverMedia = false;
     }
 
-    // Se já entregou 1 prévia gratuita e o lead ainda não comprou nada, bloqueia envio de 2ª prévia gratuita
-    // e força a Lari a guiar a conversa para a oferta do VIP
-    if (pastDeliveredMediaCount >= 1 && !hasPaid && !isAskingRepeat) {
-        console.log('[FUNIL] Prévia gratuita adicional bloqueada. Conduzindo lead para VIP.');
+    // Se a última mensagem do bot acabou de ser uma mídia, não manda outra colada imediatamente:
+    // Faz um charme/conversa primeiro para intercalar os envios com papo real!
+    if (lastBotSentMedia && !hasPaid && !isAskingRepeat && shouldDeliverMedia) {
+        console.log('[FUNIL] Mídia colada consecutiva evitada. Intercalando com conversa/charme.');
         aiResponse.action = 'none';
         shouldDeliverMedia = false;
         if (userAskedMedia) {
             aiResponse.messages = [
-                'gostou do que viu amor? imagina o resto...',
-                'no meu VIP secreto tem todos os meus vídeos sem censura me tocando e peladinha... o acesso tá só R$ 19,90 hj, quer que eu te mande o link?'
+                'calma amor, assim vc me deixa sem fôlego kkk',
+                'me conta primeiro o que vc mais gostou daquela última que te mandei...'
+            ];
+        }
+    }
+
+    // Limite de 3 a 4 prévias gratuitas no total por conversa:
+    // Após 4 prévias, bloqueia novas mídias grátis e fecha com chave de ouro no VIP
+    if (pastDeliveredMediaCount >= 4 && !hasPaid && !isAskingRepeat) {
+        console.log('[FUNIL] Limite de 4 prévias atingido. Conduzindo lead para VIP.');
+        aiResponse.action = 'none';
+        shouldDeliverMedia = false;
+        if (userAskedMedia) {
+            aiResponse.messages = [
+                'amor já te mandei várias prévias gostosas hj...',
+                'todos os meus vídeos completos sem censura e me tocando tão no meu VIP secreto... o acesso tá só R$ 19,90 hj, quer que eu te libere?'
             ];
         }
     }
