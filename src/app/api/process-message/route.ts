@@ -1574,7 +1574,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             mediaType?: 'image' | 'video',
             excludeUrls: string[] = [],
             preferredTags: string[] = preferredPreviewTags,
-            requireRelevant = true,
+            requireRelevant = false,
         ) => {
             let query = supabase
                 .from('preview_assets')
@@ -1591,18 +1591,27 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             }
             const excluded = new Set(excludeUrls.map((url) => String(url || '')));
             const tarado = Number(aiResponse.lead_stats?.tarado || 0);
-            const ranked = (data || [])
-                .filter((item: any) => item.media_url
-                    && !excluded.has(String(item.media_url))
-                    && tarado >= Number(item.min_tarado ?? 0)
-                    && tarado <= Number(item.max_tarado ?? 100))
+            const available = (data || []).filter((item: any) => item.media_url && !excluded.has(String(item.media_url)));
+            if (available.length === 0) {
+                if (mediaType === 'video') {
+                    const { data: imgData } = await supabase
+                        .from('preview_assets')
+                        .select('id,name,description,triggers,tags,media_url,media_type,priority')
+                        .eq('enabled', true)
+                        .eq('media_type', 'image')
+                        .order('priority', { ascending: false })
+                        .limit(50);
+                    const validImg = (imgData || []).filter((item: any) => item.media_url && !excluded.has(String(item.media_url)));
+                    if (validImg.length > 0) return validImg[0];
+                }
+                return null;
+            }
+            const ranked = available
                 .map((item: any) => ({
                     item,
                     score: scorePreviewForContext(item, userOnlyText, preferredTags),
                 }))
                 .sort((a: any, b: any) => b.score - a.score);
-            if (ranked.length === 0) return null;
-            if (requireRelevant && ranked[0].score < 4) return null;
             return ranked[0].item;
         };
 
@@ -1626,8 +1635,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 }
             }
             if (!mediaUrl) {
-                const requestedType = /video|vídeo/i.test(userOnlyText) ? 'video' : undefined;
-                const fallbackPreview = await getRegisteredPreview(requestedType, [], requestedPreviewSpec.tags, true);
+                const fallbackPreview = await getRegisteredPreview(undefined, [], requestedPreviewSpec.tags, false);
                 if (fallbackPreview) {
                     mediaUrl = fallbackPreview.media_url;
                     mediaType = fallbackPreview.media_type;
@@ -1639,14 +1647,15 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 case 'send_lingerie_photo':
                 case 'send_wet_finger_photo':
                 case 'send_ass_photo_preview': {
-                    const registered = await getRegisteredPreview('image', [], preferredPreviewTags, true);
+                    const registered = await getRegisteredPreview('image', [], preferredPreviewTags, false);
                     mediaUrl = registered?.media_url || null;
                     mediaType = registered?.media_type || null;
                     break;
                 }
                 case 'send_video_preview':
                 case 'send_hot_video_preview': {
-                    const registered = await getRegisteredPreview('video', [], preferredPreviewTags, true);
+                    const registered = await getRegisteredPreview('video', [], preferredPreviewTags, false)
+                        || await getRegisteredPreview('image', [], preferredPreviewTags, false);
                     mediaUrl = registered?.media_url || null;
                     mediaType = registered?.media_type || null;
                     break;
@@ -2013,23 +2022,6 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                         content: `[DEBUG: ERRO MÍDIA] ${deliveryErrors.join(' | ').slice(0, 1800)}`
                     });
                     await persistMediaDeliveryStatus('failed');
-                    const recoveryMessages = [
-                        'essa travou bem na hora de subir kkk',
-                        'quer que eu tente uma foto ou um video curtinho?',
-                    ];
-                    for (let recoveryIndex = 0; recoveryIndex < recoveryMessages.length; recoveryIndex++) {
-                        const recoveryMessage = recoveryMessages[recoveryIndex];
-                        await waitWithChatAction('typing', humanTextDelayMs(recoveryMessage, recoveryIndex));
-                        if (await findNewerUserMessage()) {
-                            return NextResponse.json({ status: 'superseded_during_media_recovery' });
-                        }
-                        await sendTelegramMessage(botToken, chatId, recoveryMessage);
-                        await supabase.from('messages').insert({
-                            session_id: session.id,
-                            sender: 'bot',
-                            content: recoveryMessage,
-                        });
-                    }
                     return NextResponse.json({ success: false, mediaError: true });
                 }
 
@@ -2061,21 +2053,10 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     tags: requestedPreviewSpec.tags,
                     action: aiResponse.action,
                     sessionId: session.id,
+                }).catch((error: any) => {
+                    console.warn('[PREVIAS] Falha ao registrar lacuna:', error?.message || error);
                 });
             }
-            const noAssetMessage = userAskedPhoto
-                ? 'essa eu ainda nao tenho exatamente desse jeito, vou guardar a ideia'
-                : 'esse video eu ainda nao tenho gravado amor, vou pedir pra gravarem';
-            await waitWithChatAction('typing', humanTextDelayMs(noAssetMessage, 0));
-            if (await findNewerUserMessage()) {
-                return NextResponse.json({ status: 'superseded_during_media_recovery' });
-            }
-            await sendTelegramMessage(botToken, chatId, noAssetMessage);
-            await supabase.from('messages').insert({
-                session_id: session.id,
-                sender: 'bot',
-                content: noAssetMessage,
-            });
         }
     }
 
