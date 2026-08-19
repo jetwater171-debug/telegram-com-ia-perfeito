@@ -23,6 +23,7 @@ import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previ
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
 import { buildDeliveredPreviewCaption } from '@/lib/previewMoment';
 import { evaluateSalesTiming, extractExplicitBudget, guardPrematureSaleMessages } from '@/lib/salesTiming';
+import { buildFirstContactGreeting } from '@/lib/conversationOpening';
 
 export const maxDuration = 120;
 
@@ -984,6 +985,7 @@ export async function POST(req: NextRequest) {
         .sort()
         .at(-1) || new Date().toISOString();
     const repetition = detectRepetition(filteredGroupMessages);
+    const deterministicOpening = buildFirstContactGreeting(userOnlyText, Boolean(lastBotMsg));
     console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
 
     const lastOfferAt = lastOfferMsg?.created_at ? new Date(lastOfferMsg.created_at).getTime() : null;
@@ -1287,16 +1289,38 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         groupedMessages: filteredGroupMessages.length,
         hasMedia: Boolean(mediaData),
     });
-    const typingHeartbeat = setInterval(() => {
-        void sendTelegramAction(botToken, chatId, 'typing').catch((error: any) => {
-            console.warn('[PROCESSADOR] Falha ao renovar digitando:', error?.message || error);
-        });
-    }, 4000);
     let aiResponse: Awaited<ReturnType<typeof sendMessageToGemini>>;
-    try {
-        aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
-    } finally {
-        clearInterval(typingHeartbeat);
+    if (deterministicOpening) {
+        // A primeira saudacao nao depende da IA: fica rapida, previsivel e nunca
+        // inventa intimidade, rotina ou pergunta estranha antes de saber o nome.
+        aiResponse = {
+            internal_thought: 'Abertura inicial neutra; descobrir o nome antes de criar familiaridade.',
+            lead_classification: 'desconhecido',
+            lead_stats: session.lead_score || { tarado: 0, financeiro: 0, carente: 0, sentimental: 0 },
+            messages: deterministicOpening,
+            action: 'none',
+            current_state: 'WELCOME',
+            extracted_user_name: null,
+            audio_transcription: null,
+            preview_id: null,
+            preview_request: null,
+            payment_details: null,
+            lead_memory_patch: {
+                relationship_stage: 'new',
+                next_personal_step: 'descobrir o nome e reagir naturalmente antes de outro assunto',
+            },
+        } as Awaited<ReturnType<typeof sendMessageToGemini>>;
+    } else {
+        const typingHeartbeat = setInterval(() => {
+            void sendTelegramAction(botToken, chatId, 'typing').catch((error: any) => {
+                console.warn('[PROCESSADOR] Falha ao renovar digitando:', error?.message || error);
+            });
+        }, 4000);
+        try {
+            aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
+        } finally {
+            clearInterval(typingHeartbeat);
+        }
     }
     console.log("[PROCESSADOR] Resposta gerada", {
         sessionId: session.id,
@@ -1678,7 +1702,9 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     const lastBotContent = lastBotMsg?.content || '';
     safeMessages = applyConversationQualityGuards(safeMessages, {
         userText: userOnlyText,
-        sessionName: session.user_name,
+        // O nome de perfil do Telegram pode ser apelido ou nome falso. Na abertura
+        // perguntamos como a pessoa prefere ser chamada, como numa conversa normal.
+        sessionName: deterministicOpening ? null : session.user_name,
         hasCity,
         userAskedCity: cityQuestion,
         extractedName: aiResponse.extracted_user_name,
