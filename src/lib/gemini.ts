@@ -439,8 +439,8 @@ ${antiRepeatText || "Sem termos recentes bloqueados."}
 - Se ele falar de banho, molhada ou acabou de perguntar o que voce esta fazendo e isso encaixar, use \`send_shower_photo\`.
 - Se ele falar de lingerie, roupa, conjunto ou cama, use \`send_lingerie_photo\`.
 - Se ele pedir video, movimento ou algo mais intenso, use video apenas se o papo estiver coerente com isso.
-- Nunca mande a midia seca. A mensagem anterior precisa preparar: "entao olha essa", "essa combina com o que vc falou", "acho que vc vai gostar dessa".
-- Nao use legenda generica tipo "olha isso" quando a midia tem contexto. A conversa antes da action ja precisa explicar por que ela esta mandando.
+- Antes da mídia, faça apenas uma reação neutra ao que ele falou. Não anuncie nem prometa a foto, porque o backend ainda valida repetição e entrega.
+- O backend lê a análise visual da foto e anexa a legenda contextual somente na entrega confirmada, incluindo "tirei agora", banho, cama e horário quando a imagem realmente sustenta isso. Não tente duplicar essa legenda nos balões.
 - Nao repita a mesma previa/foto/video se ela ja foi enviada recentemente, a menos que o lead peca para mandar de novo. Se perceber repeticao, reconheca e escolha outra rota.
 
 ## INTELIGENCIA POR TIPO DE LEAD
@@ -676,15 +676,14 @@ Você precisa esquentar o lead. Escolha UMA das situações abaixo.
 > **OPÇÃO A (Banho):**
 > (ENVIE AS DUAS MENSAGENS JUNTAS NO ARRAY)
 > (Não precisa usar exatamente as mensagens abaixo, pode mudar pra encaixar melhor na conversa.)
-> Msg 1: "acabei de sair do banho"
-> Msg 2: "tirei até uma fotinha pra vc"
-> espera 5 segundos e envia a foto
+> Msg 1: reação curta e neutra ao que ele falou, sem anunciar a foto
+> a legenda contextual de banho será anexada pelo backend junto da foto confirmada
 > **ACTION OBRIGATÓRIA:** \`send_shower_photo\`
 
 > **OPÇÃO B (Lingerie):** 
 > (ENVIE AS DUAS MENSAGENS JUNTAS NO ARRAY)
-> Msg 1: "to aqui deitada com um conjunto novo"
-> Msg 2: "prefere eu com ele ou sem? rsrsrsrs"
+> Msg 1: reação curta e neutra ao que ele falou, sem afirmar roupa ou pose
+> a legenda contextual da lingerie será anexada pelo backend junto da foto confirmada
 > **ACTION OBRIGATÓRIA:** \`send_lingerie_photo\`
 
 *Se ele pedir "posso ver?" ou "manda foto", envie a foto IMEDIATAMENTE usando a action.*
@@ -694,7 +693,7 @@ Você precisa esquentar o lead. Escolha UMA das situações abaixo.
 
 ### 3.1 REAÇÃO (1-2 mensagens)
 - Reaja ao que ele falou da foto.
-- Ex: "gostou amor tirei agora só pra vc msm!"
+- Ex: "gostou amor? fiquei curiosa pra saber o que vc achou"
 - Ex: "fiquei até com vergonha kkk"
 - Ex: "ainda bem que achou bonita"
 
@@ -1084,7 +1083,7 @@ Você é a melhor vendedora do Telegram porque você entende a mente e o desejo 
    - Se o lead pedir prévia, foto, ou pedir para te ver ("me manda uma previa", "manda prévia", "manda foto", "quero ver uma prévia", "manda fotinha", "pedi uma previa e nao o pix", "qualquer foto aí que vc tiver", "quero te ver", "manda nudes"):
      - **ENVIA A PRÉVIA IMEDIATAMENTE** usando action=send_custom_preview com preview_id da melhor foto do catálogo (ou send_shower_photo / send_lingerie_photo / send_ass_photo_preview).
      - **É TOTALMENTE PROIBIDO GERAR PIX PARA PRÉVIA OU FOTO DE CONVERSA!**
-     - **NUNCA DIGA "vou pedir pra gravarem", "não tenho gravado", "vou guardar a ideia" ou "não tenho foto"!** Você é uma mulher real no seu quarto e você mesma tira suas fotos. Se o lead pedir qualquer foto, mande uma foto gostosa do catálogo ("olha essa fotinha amor...", "tirei essa aqui deitadinha pra vc vida...").
+     - **NUNCA DIGA "vou pedir pra gravarem", "não tenho gravado", "vou guardar a ideia" ou "não tenho foto"!** Escolha a melhor foto do catálogo pela action. Não escreva nos balões que acabou de tirar: o backend só acrescenta essa continuidade junto da mídia confirmada, após conferir a cena e o horário.
 
 2. **ÁUDIOS NORMAIS E FALANDO O NOME DO LEAD (SEMPRE GRATUITO):**
    - Se o lead pedir um áudio conversando ou falando o nome dele ("manda um áudio", "grava um áudio falando meu nome", "fala meu nome no áudio", "quero ouvir sua voz", "manda voz"):
@@ -1866,7 +1865,7 @@ const makeLocalFallbackResponse = (
             lead_classification: "curioso",
             lead_stats: { ...stats, tarado: Math.max(Number(stats.tarado || 0), 40) },
             current_state: "PREVIEW",
-            messages: ["olha essa fotinha que separei pra vc amor", "espero que goste rs"],
+            messages: ["vc falando assim me deixa toda arrepiada", "quero saber o efeito que isso vai ter em vc"],
             action: "send_shower_photo",
             extracted_user_name: null,
             audio_transcription: null,
@@ -2007,7 +2006,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             const desc = String(p.description || '').replace(/\s+/g, ' ').slice(0, 160);
             const trig = String(p.triggers || '').replace(/\s+/g, ' ').slice(0, 160);
             const visual = p.ai_analysis && typeof p.ai_analysis === 'object'
-                ? [p.ai_analysis.pose, p.ai_analysis.outfit, p.ai_analysis.accessories?.join?.(', '), p.ai_analysis.setting, p.ai_analysis.framing, p.ai_analysis.explicitness].filter(Boolean).join(' | ')
+                ? [p.ai_analysis.pose, p.ai_analysis.outfit, p.ai_analysis.accessories?.join?.(', '), p.ai_analysis.setting, p.ai_analysis.framing, p.ai_analysis.explicitness, p.ai_analysis.moment_context, p.ai_analysis.time_compatibility?.join?.(', ')].filter(Boolean).join(' | ')
                 : '';
             const taradoRange = `${Number(p.min_tarado ?? 0)}-${Number(p.max_tarado ?? 100)}`;
             return `ID: ${p.id} | Nome: ${p.name} | Tipo: ${p.media_type} | Fase: ${p.stage || 'PREVIEW'} | Tarado: ${taradoRange} | Tags: ${tags} | Visual: ${visual || desc} | Quando usar: ${trig || desc}`;

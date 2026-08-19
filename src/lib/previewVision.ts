@@ -15,6 +15,9 @@ export type PreviewVisionAnalysis = {
     accessories: string[];
     setting: string;
     expression: string;
+    plausible_as_recent: boolean;
+    moment_context: string;
+    time_compatibility: Array<'madrugada' | 'manha' | 'tarde' | 'noite' | 'qualquer'>;
     explicitness: 'safe' | 'suggestive' | 'nude' | 'explicit';
     body_focus: string[];
     tags: string[];
@@ -106,6 +109,13 @@ const generateHeuristicAnalysis = (filename: string): PreviewVisionAnalysis => {
         accessories: [],
         setting: /banho|chuveiro/i.test(lower) ? 'banheiro' : 'quarto',
         expression: 'sedutora e envolvente',
+        plausible_as_recent: !/estudio|ensaio|praia|piscina|evento/i.test(lower),
+        moment_context: /banho|chuveiro/i.test(lower)
+            ? 'acabando de sair do banho'
+            : /bed|cama|deitada|quarto/i.test(lower)
+                ? 'deitada no quarto'
+                : 'selfie espontanea',
+        time_compatibility: /bed|cama|deitada|quarto/i.test(lower) ? ['madrugada', 'manha', 'tarde', 'noite'] : ['qualquer'],
         explicitness: /nude|pelada|leite/i.test(lower) ? 'explicit' : 'suggestive',
         body_focus: tags.filter((t) => ['bunda', 'peitos', 'rosto', 'pes', 'calcinha'].includes(t)),
         tags: Array.from(new Set(tags)),
@@ -151,6 +161,12 @@ const normalizeAnalysis = (input: any, model: string): PreviewVisionAnalysis => 
         accessories: cleanList(input?.accessories, 10),
         setting: cleanText(input?.setting, 140),
         expression: cleanText(input?.expression, 120),
+        plausible_as_recent: input?.plausible_as_recent !== false,
+        moment_context: cleanText(input?.moment_context, 180),
+        time_compatibility: cleanList(input?.time_compatibility, 5)
+            .filter((period): period is 'madrugada' | 'manha' | 'tarde' | 'noite' | 'qualquer' =>
+                ['madrugada', 'manha', 'tarde', 'noite', 'qualquer'].includes(period)
+            ),
         explicitness,
         body_focus: cleanList(input?.body_focus, 10),
         tags,
@@ -183,6 +199,7 @@ Analise minuciosamente a foto com foco em catalogação e casamento perfeito em 
 5. AMBIENTE & OBJETOS: Cenário (quarto, cama, banheiro, espelho) e qualquer elemento ou fetiche na cena (ex: lata de leite condensado, toalha, óleo, calcinha).
 6. INTENÇÃO & CONTEXTO: Qual é o clima da foto? (brincadeira com comida/food play, fetiche de gozar na cara/boca, exibicionismo, carinho deitada, provocação).
 7. TRIGGERS DE CONVERSA: Liste de 10 a 20 frases reais que um lead no Telegram digitaria quando quiser ver EXATAMENTE essa foto (ex: "manda foto com leite", "quero ver sua boquinha", "foto na cama", "quero sujar sua cara", "foto safada").
+8. CONTINUIDADE DO MOMENTO: Diga se a imagem parece uma foto espontânea que poderia ter acabado de ser tirada durante a conversa. Considere cenário, iluminação, pose, roupa e aparência de ensaio profissional. Descreva o momento natural coerente (ex: acabou de sair do banho, está deitada à noite, selfie no espelho) e em quais períodos do dia a cena é plausível. Não marque ensaio, praia diurna ou evento como foto instantânea fora de contexto.
 
 Retorne SOMENTE um JSON válido com a estrutura:
 {
@@ -196,6 +213,9 @@ Retorne SOMENTE um JSON válido com a estrutura:
   "accessories": ["acessórios ou objetos na cena"],
   "setting": "ambiente (ex: cama do quarto, banheiro)",
   "expression": "expressão facial e olhar da Lari",
+  "plausible_as_recent": true,
+  "moment_context": "situação natural coerente para apresentar a foto como recém-tirada",
+  "time_compatibility": ["madrugada", "manha", "tarde", "noite"],
   "explicitness": "safe" | "suggestive" | "nude" | "explicit",
   "body_focus": ["partes do corpo em evidência"],
   "tags": ["15 a 25 tags em português para busca e casamento perfeito"],
@@ -291,4 +311,3 @@ Retorne SOMENTE um JSON válido com a estrutura:
 };
 
 export const getPreviewVisionSettings = getSettings;
-

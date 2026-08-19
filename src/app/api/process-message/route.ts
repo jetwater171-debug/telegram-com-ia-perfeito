@@ -21,6 +21,7 @@ import {
 } from '@/lib/fishAudio';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
+import { buildDeliveredPreviewCaption } from '@/lib/previewMoment';
 
 export const maxDuration = 120;
 
@@ -1957,7 +1958,6 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
 
         let mediaUrl = null;
         let mediaType = null;
-        let caption = "";
         let selectedPreviewAsset: any = null;
 
         if (aiResponse.action === 'send_custom_preview') {
@@ -1973,7 +1973,6 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     mediaUrl = previewRow.media_url;
                     mediaType = previewRow.media_type;
                     selectedPreviewAsset = previewRow;
-                    caption = "";
                 }
             }
             if (!mediaUrl) {
@@ -2278,14 +2277,20 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 type: string,
                 url: string,
                 protection: TelegramMediaProtection = mediaProtection,
+                asset: any = selectedPreviewAsset,
             ) => {
                 if (type === 'image') {
+                    const deliveredCaption = buildDeliveredPreviewCaption({
+                        asset,
+                        userText: userOnlyText,
+                        timeZone: String(operationalLeadMemory.metadata?.redirect_timezone || ''),
+                    });
                     await sendTelegramAction(botToken, chatId, 'upload_photo');
                     const heartbeat = setInterval(() => {
                         void sendTelegramAction(botToken, chatId, 'upload_photo');
                     }, 4_000);
                     try {
-                        await sendTelegramPhoto(botToken, chatId, url, caption, protection);
+                        await sendTelegramPhoto(botToken, chatId, url, deliveredCaption, protection);
                     } finally {
                         clearInterval(heartbeat);
                     }
@@ -2297,7 +2302,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                         void sendTelegramAction(botToken, chatId, 'upload_video');
                     }, 4_000);
                     try {
-                        await sendTelegramVideo(botToken, chatId, url, caption, protection);
+                        await sendTelegramVideo(botToken, chatId, url, '', protection);
                     } finally {
                         clearInterval(heartbeat);
                     }
@@ -2343,7 +2348,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
             let deliveryRecovered = false;
 
             try {
-                await sendResolvedMedia(deliveredType, deliveredUrl);
+                await sendResolvedMedia(deliveredType, deliveredUrl, mediaProtection, selectedPreviewAsset);
             } catch (primaryError: any) {
                 deliveryErrors.push(`principal ${deliveredType}:${deliveredUrl} -> ${primaryError?.message || primaryError}`);
                 console.error('[MÍDIA] Ativo principal falhou, tentando fallback:', primaryError);
@@ -2362,21 +2367,24 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                         url: String(registeredSameType.media_url),
                         type: String(registeredSameType.media_type),
                         protection: protectionForPreview(registeredSameType),
+                        asset: registeredSameType,
                     },
                     registeredAnyType && {
                         url: String(registeredAnyType.media_url),
                         type: String(registeredAnyType.media_type),
                         protection: protectionForPreview(registeredAnyType),
+                        asset: registeredAnyType,
                     },
-                ].filter((candidate): candidate is { url: string; type: string; protection: TelegramMediaProtection } => Boolean(candidate?.url));
+                ].filter((candidate): candidate is { url: string; type: string; protection: TelegramMediaProtection; asset: any } => Boolean(candidate?.url));
 
                 let recovered = false;
                 for (const candidate of fallbackCandidates) {
                     try {
-                        await sendResolvedMedia(candidate.type, candidate.url, candidate.protection);
+                        await sendResolvedMedia(candidate.type, candidate.url, candidate.protection, candidate.asset);
                         deliveredUrl = candidate.url;
                         deliveredType = candidate.type;
                         mediaProtection = candidate.protection;
+                        selectedPreviewAsset = candidate.asset;
                         recovered = true;
                         deliveryRecovered = true;
                         break;
