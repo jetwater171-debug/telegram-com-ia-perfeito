@@ -1556,7 +1556,10 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
 
             const requestedSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
             const tarado = Number(aiResponse.lead_stats?.tarado || 0);
-            const chosenPreview = (unusedCatalog.length > 0 ? unusedCatalog : relevantCatalog)
+            const candidatePool = unusedCatalog.length > 0
+                ? unusedCatalog
+                : (relevantCatalog.length > 0 ? relevantCatalog : catalog);
+            const chosenPreview = candidatePool
                 .map((asset: any) => {
                     const inRange = tarado >= Number(asset.min_tarado ?? 0)
                         && tarado <= Number(asset.max_tarado ?? 100);
@@ -1565,7 +1568,7 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                         score: scorePreviewForContext(asset, userOnlyText, requestedSpec.tags) + (inRange ? 3 : -3),
                     };
                 })
-                .sort((a: any, b: any) => b.score - a.score)[0]?.asset;
+                .sort((a: any, b: any) => b.score - a.score)[0]?.asset || candidatePool[0];
 
             if (chosenPreview) {
                 aiResponse.action = 'send_custom_preview';
@@ -2090,35 +2093,36 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                 .order('created_at', { ascending: false })
                 .limit(1000);
             if (mediaType) query = query.eq('media_type', mediaType);
-            const { data, error } = await query;
+            let { data, error } = await query;
             if (error) {
                 console.warn('[MÍDIA] Falha ao procurar prévia cadastrada:', error.message);
-                return null;
             }
+            if (!data || data.length === 0) {
+                // Se procurou vídeo e não achou nenhum no banco, busca qualquer mídia do catálogo
+                const { data: anyData } = await supabase
+                    .from('preview_assets')
+                    .select('id,name,description,triggers,tags,media_url,media_type,priority,min_tarado,max_tarado,ai_analysis')
+                    .eq('enabled', true)
+                    .order('priority', { ascending: false })
+                    .limit(1000);
+                data = anyData || [];
+            }
+            if (!data || data.length === 0) return null;
+
             const excluded = new Set(excludeUrls.map((url) => String(url || '')));
-            const tarado = Number(aiResponse.lead_stats?.tarado || 0);
-            const available = (data || []).filter((item: any) => item.media_url && !excluded.has(String(item.media_url)));
-            if (available.length === 0) {
-                if (mediaType === 'video') {
-                    const { data: imgData } = await supabase
-                        .from('preview_assets')
-                        .select('id,name,description,triggers,tags,media_url,media_type,priority,ai_analysis')
-                        .eq('enabled', true)
-                        .eq('media_type', 'image')
-                        .order('priority', { ascending: false })
-                        .limit(50);
-                    const validImg = (imgData || []).filter((item: any) => item.media_url && !excluded.has(String(item.media_url)));
-                    if (validImg.length > 0) return validImg[0];
-                }
-                return null;
-            }
-            const ranked = available
+            const valid = (data || []).filter((item: any) => item.media_url);
+            if (valid.length === 0) return null;
+
+            const available = valid.filter((item: any) => !excluded.has(String(item.media_url)));
+            const pool = available.length > 0 ? available : valid;
+
+            const ranked = pool
                 .map((item: any) => ({
                     item,
                     score: scorePreviewForContext(item, userOnlyText, preferredTags),
                 }))
                 .sort((a: any, b: any) => b.score - a.score);
-            return ranked[0].item;
+            return ranked[0]?.item || pool[0];
         };
 
         let mediaUrl = null;
@@ -2468,6 +2472,15 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
                     await sendTelegramMessage(botToken, chatId, "amor nao consegui gerar o pix agora... que raiva");
                 }
                 break;
+            }
+        }
+
+        if (!mediaUrl && MEDIA_ACTIONS.has(String(aiResponse.action || ''))) {
+            const registered = await getRegisteredPreview(undefined, [], preferredPreviewTags, false);
+            if (registered?.media_url) {
+                mediaUrl = registered.media_url;
+                mediaType = registered.media_type || 'image';
+                selectedPreviewAsset = registered;
             }
         }
 
