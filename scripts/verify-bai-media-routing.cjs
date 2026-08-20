@@ -19,7 +19,8 @@ assert.match(gemini, /preferGemini:\s*hasMedia/);
 assert.match(gemini, /gateway\.provider === ["']bai["']/);
 assert.match(adminApi, /bai_api_key/);
 assert.match(adminApi, /\/chat\/completions/);
+assert.match(adminApi, /max_tokens:\s*provider === ["']bai["'] \? 8 : 2/);
 assert.match(adminPage, /B\.AI · DeepSeek V4 Flash/);
 assert.match(adminPage, /Foto e outras mídias pulam esta rota e caem no Gemini/);
 
-console.log('BAI_MEDIA_ROUTING_OK text_primary=bai model=deepseek-v4-flash media_fallback=gemini panel=ready');
+console.log('BAI_MEDIA_ROUTING_OK text_primary=bai model=deepseek-v4-flash media_fallback=gemini panel=ready connection_test_max_tokens=8');

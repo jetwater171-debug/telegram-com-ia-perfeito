@@ -288,7 +288,12 @@ export async function PUT(req: NextRequest) {
                 response = await fetchWithTimeout(`${config.base}/chat/completions`, {
                     method: "POST",
                     headers: { Authorization: `Bearer ${config.key}`, "Content-Type": "application/json" },
-                    body: JSON.stringify({ model, messages: [{ role: "user", content: "Responda apenas OK" }], max_tokens: 2, temperature: 0 }),
+                    body: JSON.stringify({
+                        model,
+                        messages: [{ role: "user", content: "Responda apenas OK" }],
+                        max_tokens: provider === "bai" ? 8 : 2,
+                        temperature: 0,
+                    }),
                 });
             } else {
                 if (!config.base) throw new Error("informe a URL base do gateway");
