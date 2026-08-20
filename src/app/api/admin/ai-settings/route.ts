@@ -31,6 +31,7 @@ const CONFIG_KEYS = [
     "ai_gateway_recent_events", "ai_gateway_stats",
     "fish_audio_api_key", "fish_audio_enabled", "fish_audio_voice_id", "fish_audio_model",
     "fish_audio_frequency_percent", "fish_audio_cooldown_minutes", "fish_audio_max_chars",
+    "mem0_api_key", "mem0_enabled", "mem0_top_k",
 ];
 
 const DEFAULTS = {
@@ -116,6 +117,7 @@ const buildSettings = (map: Record<string, string>) => {
     const cloudflare = secretState(map, "cloudflare_ai_api_token", "CLOUDFLARE_AI_API_TOKEN");
     const custom = secretState(map, "ai_custom_gateway_api_key", "AI_CUSTOM_GATEWAY_API_KEY");
     const fish = secretState(map, "fish_audio_api_key", "FISH_AUDIO_API_KEY");
+    const mem0 = secretState(map, "mem0_api_key", "MEM0_API_KEY");
 
     return {
         baiApiKeyMasked: bai.masked, baiApiKeySaved: bai.saved, baiApiKeySource: bai.source,
@@ -128,6 +130,7 @@ const buildSettings = (map: Record<string, string>) => {
         cloudflareApiTokenMasked: cloudflare.masked, cloudflareApiTokenSaved: cloudflare.saved, cloudflareApiTokenSource: cloudflare.source,
         customApiKeyMasked: custom.masked, customApiKeySaved: custom.saved, customApiKeySource: custom.source,
         fishAudioApiKeyMasked: fish.masked, fishAudioApiKeySaved: fish.saved, fishAudioApiKeySource: fish.source,
+        mem0ApiKeyMasked: mem0.masked, mem0ApiKeySaved: mem0.saved, mem0ApiKeySource: mem0.source,
         openrouterBaseUrl: map.openrouter_base_url || DEFAULTS.openrouter_base_url,
         openrouterReferer: map.openrouter_referer || DEFAULTS.openrouter_referer,
         openrouterTitle: map.openrouter_title || DEFAULTS.openrouter_title,
@@ -167,6 +170,8 @@ const buildSettings = (map: Record<string, string>) => {
         fishAudioFrequencyPercent: Number(map.fish_audio_frequency_percent || DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent),
         fishAudioCooldownMinutes: Number(map.fish_audio_cooldown_minutes || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes),
         fishAudioMaxChars: Math.min(320, Math.max(60, Number(map.fish_audio_max_chars) || DEFAULT_FISH_AUDIO_SETTINGS.maxChars)),
+        mem0Enabled: map.mem0_enabled === "true",
+        mem0TopK: Math.min(12, Math.max(3, Number(map.mem0_top_k) || 8)),
     };
 };
 
@@ -224,6 +229,8 @@ export async function POST(req: NextRequest) {
             { key: "fish_audio_frequency_percent", value: String(clampNumber(body.fishAudioFrequencyPercent, 1, 100, DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent)) },
             { key: "fish_audio_cooldown_minutes", value: String(clampNumber(body.fishAudioCooldownMinutes, 1, 1440, DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes)) },
             { key: "fish_audio_max_chars", value: String(clampNumber(body.fishAudioMaxChars, 60, 320, DEFAULT_FISH_AUDIO_SETTINGS.maxChars)) },
+            { key: "mem0_enabled", value: body.mem0Enabled === true ? "true" : "false" },
+            { key: "mem0_top_k", value: String(clampNumber(body.mem0TopK, 3, 12, 8)) },
         ];
 
         const secretInputs: Array<[string, unknown]> = [
@@ -233,6 +240,7 @@ export async function POST(req: NextRequest) {
             ["nvidia_api_key", body.nvidiaApiKey],
             ["cerebras_api_key", body.cerebrasApiKey], ["cloudflare_ai_api_token", body.cloudflareApiToken],
             ["ai_custom_gateway_api_key", body.customApiKey], ["fish_audio_api_key", body.fishAudioApiKey],
+            ["mem0_api_key", body.mem0ApiKey],
         ];
         for (const [key, rawValue] of secretInputs) {
             const value = cleanText(rawValue, "", 4000);

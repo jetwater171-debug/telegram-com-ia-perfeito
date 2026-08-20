@@ -38,6 +38,13 @@ import {
     shouldDeliverRequestedMedia,
 } from '@/lib/previewDeliveryPolicy';
 import { evaluateSalesTiming, extractExplicitBudget, guardPrematureSaleMessages } from '@/lib/salesTiming';
+import {
+    addMem0LeadTurn,
+    formatMem0LeadMemoryContext,
+    mem0LeadUserId,
+    normalizeMem0LeadMemorySettings,
+    searchMem0LeadMemories,
+} from '@/lib/mem0LeadMemory';
 
 export const maxDuration = 120;
 
@@ -794,6 +801,9 @@ export async function POST(req: NextRequest) {
                 'fish_audio_frequency_percent',
                 'fish_audio_cooldown_minutes',
                 'fish_audio_max_chars',
+                'mem0_api_key',
+                'mem0_enabled',
+                'mem0_top_k',
             ]),
     ]);
     const session = sessionResult.data;
@@ -816,6 +826,12 @@ export async function POST(req: NextRequest) {
         cooldownMinutes: Number(botConfig.fish_audio_cooldown_minutes || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes),
         maxChars: Number(botConfig.fish_audio_max_chars || DEFAULT_FISH_AUDIO_SETTINGS.maxChars),
     });
+    const mem0Settings = normalizeMem0LeadMemorySettings({
+        apiKey: botConfig.mem0_api_key || process.env.MEM0_API_KEY || '',
+        enabled: botConfig.mem0_enabled === 'true',
+        topK: Number(botConfig.mem0_top_k || 8),
+    });
+    const mem0UserId = mem0LeadUserId(chatId);
 
     const waitWithChatAction = async (
         action: Parameters<typeof sendTelegramAction>[2],
@@ -1206,6 +1222,26 @@ export async function POST(req: NextRequest) {
         '- Este plano pertence apenas ao cerebro. Se a relacao ainda for nova, nao deixe a intencao comercial aparecer na fala da Lari.',
     ].join('\n');
     extraScript = [extraScript, adaptiveSalesDirective].filter(Boolean).join('\n\n');
+
+    if (mem0Settings.enabled && mem0Settings.apiKey && userOnlyText.trim()) {
+        try {
+            const humanMemories = await searchMem0LeadMemories({
+                settings: mem0Settings,
+                userId: mem0UserId,
+                query: userOnlyText,
+            });
+            const humanMemoryContext = formatMem0LeadMemoryContext(humanMemories);
+            if (humanMemoryContext) {
+                extraScript = [extraScript, humanMemoryContext].filter(Boolean).join('\n\n');
+            }
+            console.log('[MEM0] Memórias recuperadas', {
+                sessionId: session.id,
+                count: humanMemories.length,
+            });
+        } catch (error: any) {
+            console.warn('[MEM0] Busca adiada; conversa continua com a memória local:', error?.message || error);
+        }
+    }
 
     const context = {
         userCity: hasCity ? userCity : undefined,
@@ -2113,6 +2149,25 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         });
 
         await sendTelegramMessage(botToken, chatId, msgText);
+    }
+
+    if (mem0Settings.enabled && mem0Settings.apiKey && userOnlyText.trim()) {
+        try {
+            const memoryResult = await addMem0LeadTurn({
+                settings: mem0Settings,
+                userId: mem0UserId,
+                sessionId: String(session.id),
+                userText: userOnlyText,
+                assistantMessages: outgoingToSend,
+                occurredAt: lastGroupedUserAt,
+            });
+            console.log('[MEM0] Turno enviado para consolidação', {
+                sessionId: session.id,
+                status: 'status' in memoryResult ? memoryResult.status : 'skipped',
+            });
+        } catch (error: any) {
+            console.warn('[MEM0] Gravação adiada; resposta já foi entregue:', error?.message || error);
+        }
     }
 
     if (combinedText.includes(triggerPrefix)) {

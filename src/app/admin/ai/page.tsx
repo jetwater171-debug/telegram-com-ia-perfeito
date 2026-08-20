@@ -18,6 +18,7 @@ type AiSettings = {
     cloudflareApiTokenMasked: string; cloudflareApiTokenSaved: boolean; cloudflareApiTokenSource: string;
     customApiKeyMasked: string; customApiKeySaved: boolean; customApiKeySource: string;
     fishAudioApiKeyMasked: string; fishAudioApiKeySaved: boolean; fishAudioApiKeySource: string;
+    mem0ApiKeyMasked: string; mem0ApiKeySaved: boolean; mem0ApiKeySource: string;
     aiModelOrder: string; aiStrategyModelOrder: string; aiDraftModelOrder: string; aiReviewModelOrder: string; aiEvaluatorModelOrder: string;
     aiStrategyEnabled: boolean; aiReviewEnabled: boolean; aiEvaluatorEnabled: boolean;
     aiSharedRateLimitEnabled: boolean; sharedRateLimitReady: boolean;
@@ -28,6 +29,7 @@ type AiSettings = {
     cloudflareAccountId: string; customBaseUrl: string; customModel: string; customTiers: string; customWeight: number;
     fishAudioEnabled: boolean; fishAudioVoiceId: string; fishAudioModel: string;
     fishAudioFrequencyPercent: number; fishAudioCooldownMinutes: number; fishAudioMaxChars: number;
+    mem0Enabled: boolean; mem0TopK: number;
 };
 
 type AiEvent = { at: string; role: string; provider: string; model: string; status: string; message?: string; durationMs?: number };
@@ -58,6 +60,7 @@ const emptySettings: AiSettings = {
     cloudflareApiTokenMasked: "", cloudflareApiTokenSaved: false, cloudflareApiTokenSource: "missing",
     customApiKeyMasked: "", customApiKeySaved: false, customApiKeySource: "missing",
     fishAudioApiKeyMasked: "", fishAudioApiKeySaved: false, fishAudioApiKeySource: "missing",
+    mem0ApiKeyMasked: "", mem0ApiKeySaved: false, mem0ApiKeySource: "missing",
     aiModelOrder: PROVIDER_ORDER.join(","), aiStrategyModelOrder: PROVIDER_ORDER.join(","), aiDraftModelOrder: PROVIDER_ORDER.join(","), aiReviewModelOrder: PROVIDER_ORDER.join(","), aiEvaluatorModelOrder: PROVIDER_ORDER.join(","),
     aiStrategyEnabled: true, aiReviewEnabled: true, aiEvaluatorEnabled: true,
     aiSharedRateLimitEnabled: true, sharedRateLimitReady: false,
@@ -68,6 +71,7 @@ const emptySettings: AiSettings = {
     cloudflareAccountId: "", customBaseUrl: "", customModel: "auto", customTiers: "starter,buyer", customWeight: 5,
     fishAudioEnabled: false, fishAudioVoiceId: "24522123b5804bf691a8450d9187f03e", fishAudioModel: "s2.1-pro-free",
     fishAudioFrequencyPercent: 18, fishAudioCooldownMinutes: 30, fishAudioMaxChars: 240,
+    mem0Enabled: false, mem0TopK: 8,
 };
 
 const inputClass = "w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/60 focus:bg-black/40";
@@ -271,6 +275,25 @@ export default function AdminAiPage() {
         }
     };
 
+    const testMem0 = async () => {
+        setTesting((current) => ({ ...current, mem0: true }));
+        setTestResults((current) => ({ ...current, mem0: "Testando..." }));
+        try {
+            const response = await fetch("/api/admin/mem0/test", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mem0ApiKey: secretDrafts.mem0 || "" }),
+            });
+            const data = await response.json();
+            if (!response.ok || data?.error) throw new Error(data?.error || `HTTP ${response.status}`);
+            setTestResults((current) => ({ ...current, mem0: `Conectado em ${data.latencyMs}ms` }));
+        } catch (error: any) {
+            setTestResults((current) => ({ ...current, mem0: `Falhou: ${error?.message || error}` }));
+        } finally {
+            setTesting((current) => ({ ...current, mem0: false }));
+        }
+    };
+
     return (
         <div className="min-h-screen bg-[#070a0f] text-slate-100">
             <header className="sticky top-0 z-20 border-b border-white/10 bg-[#070a0f]/95 backdrop-blur-xl">
@@ -379,6 +402,35 @@ export default function AdminAiPage() {
                         <Toggle title="Cérebro progressivo" description="Ativa mais camadas somente depois da compra." checked={settings.aiStrategyEnabled} onChange={(value) => updateSetting("aiStrategyEnabled", value)} />
                         <Toggle title="Revisora" description="Corrige respostas críticas e clientes compradores." checked={settings.aiReviewEnabled} onChange={(value) => updateSetting("aiReviewEnabled", value)} />
                         <Toggle title="Avaliadora elite" description="Quarta camada para clientes acima de R$ 200." checked={settings.aiEvaluatorEnabled} onChange={(value) => updateSetting("aiEvaluatorEnabled", value)} />
+                    </Panel>
+
+                    <Panel title="Memória humana · Mem0">
+                        <div className="space-y-3">
+                            <StatusPill source={settings.mem0ApiKeySource} />
+                            <p className="text-xs leading-5 text-slate-400">O Mem0 Platform extrai e busca lembranças com a própria infraestrutura. Aqui você precisa somente da chave Mem0, sem outra chave de IA.</p>
+                            <Field label="API Key do Mem0">
+                                <input
+                                    type="password"
+                                    value={secretDrafts.mem0 || ""}
+                                    onChange={(event) => setSecretDrafts((current) => ({ ...current, mem0: event.target.value }))}
+                                    onBlur={() => {
+                                        const value = String(secretDrafts.mem0 || "").trim();
+                                        if (value) void persist({ mem0ApiKey: value })
+                                            .then(() => setSecretDrafts((current) => ({ ...current, mem0: "" })))
+                                            .then(() => load());
+                                    }}
+                                    className={inputClass}
+                                    placeholder={settings.mem0ApiKeyMasked ? "Cole somente para trocar" : "Cole a chave Mem0"}
+                                />
+                            </Field>
+                            <a href="https://app.mem0.ai/dashboard/api-keys" target="_blank" rel="noreferrer" className="block rounded-xl border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-center text-sm font-semibold text-cyan-100">Criar chave no Mem0 ↗</a>
+                            <Toggle title="Ativar memória humana" description="Busca lembranças relevantes antes da resposta e grava o turno depois do envio." checked={settings.mem0Enabled} onChange={(value) => updateSetting("mem0Enabled", value)} />
+                            <Field label="Lembranças por turno">
+                                <input type="number" min={3} max={12} value={settings.mem0TopK} onChange={(event) => updateSetting("mem0TopK", Number(event.target.value))} className={inputClass} />
+                            </Field>
+                            <button type="button" onClick={() => void testMem0()} disabled={testing.mem0} className="w-full rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold hover:bg-white/5 disabled:opacity-50">{testing.mem0 ? "Testando..." : "Testar conexão Mem0"}</button>
+                            {testResults.mem0 && <p className={`text-xs ${testResults.mem0.startsWith("Conectado") ? "text-emerald-300" : "text-amber-200"}`}>{testResults.mem0}</p>}
+                        </div>
                     </Panel>
 
                     <Panel title="Fish Audio">
