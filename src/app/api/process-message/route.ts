@@ -4,6 +4,7 @@ import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode, sendTelegramVoice, type TelegramMediaProtection } from '@/lib/telegram';
 import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
+import { reconcilePendingPayments } from '@/lib/paymentReconciliation';
 import { calculateLeadScore, markLeadPaid, parseLeadScore, toStoredLeadScore } from '@/lib/leadScoring';
 import { shapeConversationBubbles } from '@/lib/conversationBubbles';
 import { findLatestConversationStartAt } from '@/lib/conversationEpisode';
@@ -25,6 +26,11 @@ import {
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
 import { buildDeliveredPreviewCaption, isPhotoTakenNow } from '@/lib/previewMoment';
+import {
+    filterUnsentPreviewAssets,
+    normalizePreviewMediaKey as normalizeMediaUrlKey,
+    shouldDeliverRequestedMedia,
+} from '@/lib/previewDeliveryPolicy';
 import { evaluateSalesTiming, extractExplicitBudget, guardPrematureSaleMessages } from '@/lib/salesTiming';
 
 export const maxDuration = 120;
@@ -258,19 +264,6 @@ const removeLeadEchoes = (messages: unknown[], userText: string) => {
         ...leadLines,
     ].filter(Boolean));
     return messages.filter((message) => !leadPhrases.has(normalizeLoopText(message)));
-};
-
-const normalizeMediaUrlKey = (value: unknown) => {
-    const raw = String(value || '').trim();
-    if (!raw) return '';
-    try {
-        const url = new URL(raw);
-        url.search = '';
-        url.hash = '';
-        return url.toString();
-    } catch {
-        return raw.replace(/[?#].*$/, '');
-    }
 };
 
 const userAskedToRepeatMedia = (text: string) => /\b(de novo|outra vez|reenviar|reenvia|envia de novo|manda de novo|a mesma foto|o mesmo video|o mesmo vídeo)\b/i.test(text || '');
@@ -987,6 +980,23 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        // Concilia o PIX pendente antes de montar o contexto. Assim a próxima
+        // mensagem do lead já enxerga o LTV correto mesmo quando o gateway não
+        // chamou o webhook.
+        try {
+            const paymentSync = await reconcilePendingPayments({
+                sessionId,
+                limit: 3,
+                minCheckIntervalMs: 15_000,
+                notify: true,
+            });
+            if (Number.isFinite(paymentSync.latestSessionTotal)) {
+                session.total_paid = Number(paymentSync.latestSessionTotal);
+            }
+        } catch (paymentSyncError: any) {
+            console.warn('[PROCESSADOR] Conciliação de pagamento adiada:', paymentSyncError?.message || paymentSyncError);
+        }
+
     // Se chegamos aqui, DEVEMOS manter o status digitando ativo se o processamento demorar?
     // Digitando no Telegram dura ~5s. Pode ter expirado ou estar perto. 
     // Vamos enviar de novo só por segurança/frescor para o atraso real de geração.
@@ -1452,43 +1462,26 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         /\b(toma|olha só|olha so|olha essa|como eu t[oô]|te esperando|aqui pra vc|te mandei|olha a fotinha|olha aqui|olha amor|olha como|separei pra vc|olha o look|olha meu look|olha eu|tirando foto|tirei essa|tirei agora|fotinha pra vc|foto pra vc|olha essa foto|deitadinha aqui|olha como eu fico)\b/i.test(msg)
     );
 
-    const pastDeliveredMediaCount = recentSalesHistory.filter((m: any) =>
-        m.sender === 'bot' && (m.media_url || /\[MÍDIA/i.test(m.content || ''))
-    ).length;
-
-    // Verifica se a última mensagem do bot continha mídia (para não mandar duas mídias em turnos colados)
-    const lastBotSentMedia = recentSalesHistory.slice(-2).some((m: any) =>
-        m.sender === 'bot' && (m.media_url || /\[MÍDIA/i.test(m.content || ''))
-    );
-
-    const hasPaid = Number(session.total_paid || 0) > 0;
-    const isAskingRepeat = userAskedToRepeatMedia(userOnlyText);
-
     const isInitialGreeting = /^\s*(\/start(?:\s+.*)?|oi|oii|oiii|ola|olá|boa tarde|bom dia|boa noite|eai|fala|opa)\s*$/i.test(userOnlyText.trim())
         && recentSalesHistory.filter((m: any) => m.sender === 'user').length <= 1;
 
-    let shouldDeliverMedia = (userAskedMedia || botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || '')))
-        && !(isInitialGreeting && !userAskedMedia);
+    const modelAttemptedMedia = botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || ''));
+    let shouldDeliverMedia = shouldDeliverRequestedMedia({
+        userAskedMedia,
+        userAffirmedMedia,
+        isInitialGreeting,
+    });
+    let mediaSuppressedForPolicy = modelAttemptedMedia && !shouldDeliverMedia;
+    let mediaSuppressedForRepetition = false;
+    let sentMediaUrlsForSession: string[] = [];
+    let sentMediaKeysForSession = new Set<string>();
 
-    if (isInitialGreeting && !userAskedMedia) {
+    // A Lari pode oferecer uma prévia na conversa, mas o arquivo só sai depois
+    // que o lead pede ou confirma. Isso corta mídia espontânea sem mudar o texto
+    // ou o raciocínio do cérebro.
+    if (!shouldDeliverMedia && MEDIA_ACTIONS.has(String(aiResponse.action || ''))) {
+        console.log('[PREVIAS] Ação de mídia sem pedido explícito foi convertida em conversa.');
         aiResponse.action = 'none';
-        shouldDeliverMedia = false;
-    }
-
-    // Evita somente mídia espontânea em sequência. Pedido explícito do lead continua
-    // sendo atendido e o catálogo escolhe um arquivo ainda não entregue.
-    if (lastBotSentMedia && !hasPaid && !isAskingRepeat && shouldDeliverMedia && !userAskedMedia) {
-        console.log('[FUNIL] Mídia espontânea consecutiva evitada; mantendo conversa textual.');
-        aiResponse.action = 'none';
-        shouldDeliverMedia = false;
-    }
-
-    // O número de prévias nunca força pitch nem bloqueia um novo pedido explícito.
-    // Depois de várias entregas, apenas iniciativas não solicitadas são desativadas.
-    if (pastDeliveredMediaCount >= 4 && !hasPaid && shouldDeliverMedia && !userAskedMedia) {
-        console.log('[FUNIL] Prévia espontânea desativada após várias entregas; sem pitch automático.');
-        aiResponse.action = 'none';
-        shouldDeliverMedia = false;
     }
 
     // Pedido de mídia só vira cobrança quando o lead também manifesta uma compra real.
@@ -1559,8 +1552,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
 
     // A IA pode escolher de novo o mesmo preview_id. Antes de escrever qualquer
     // promessa de envio, trocamos por uma mídia nunca usada nesta conversa.
-    let mediaSuppressedForRepetition = false;
-    if (MEDIA_ACTIONS.has(String(aiResponse.action || '')) && !userAskedToRepeatMedia(userOnlyText)) {
+    if (MEDIA_ACTIONS.has(String(aiResponse.action || ''))) {
         const [sentMediaResult, catalogResult] = await Promise.all([
             supabase
                 .from('messages')
@@ -1578,11 +1570,10 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         ]);
 
         if (!sentMediaResult.error && !catalogResult.error) {
-            const sentMediaKeys = new Set(
-                (sentMediaResult.data || [])
-                    .map((row: any) => normalizeMediaUrlKey(row.media_url))
-                    .filter(Boolean),
-            );
+            sentMediaUrlsForSession = (sentMediaResult.data || [])
+                .map((row: any) => String(row.media_url || '').trim())
+                .filter(Boolean);
+            sentMediaKeysForSession = new Set(sentMediaUrlsForSession.map(normalizeMediaUrlKey).filter(Boolean));
             const catalog = (catalogResult.data || []).filter((asset: any) => asset.media_url);
             const isImgAsset = (t?: string | null) => t === 'image' || t === 'photo' || !t;
             const isVidAsset = (t?: string | null) => t === 'video';
@@ -1595,22 +1586,16 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             const relevantCatalog = requestedType
                 ? catalog.filter((asset: any) => requestedType === 'video' ? isVidAsset(asset.media_type) : isImgAsset(asset.media_type))
                 : catalog;
-            let unusedCatalog = relevantCatalog.filter((asset: any) =>
-                !sentMediaKeys.has(normalizeMediaUrlKey(asset.media_url))
-            );
+            let unusedCatalog = filterUnsentPreviewAssets(relevantCatalog, sentMediaUrlsForSession);
 
             // Vídeo pode cair para uma foto inédita se não houver vídeos
             if (unusedCatalog.length === 0 && requestedType === 'video') {
-                unusedCatalog = catalog.filter((asset: any) =>
-                    !sentMediaKeys.has(normalizeMediaUrlKey(asset.media_url))
-                );
+                unusedCatalog = filterUnsentPreviewAssets(catalog, sentMediaUrlsForSession);
             }
 
             const requestedSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
             const tarado = Number(aiResponse.lead_stats?.tarado || 0);
-            const candidatePool = unusedCatalog.length > 0
-                ? unusedCatalog
-                : (relevantCatalog.length > 0 ? relevantCatalog : catalog);
+            const candidatePool = unusedCatalog;
             const chosenPreview = candidatePool
                 .map((asset: any) => {
                     const inRange = tarado >= Number(asset.min_tarado ?? 0)
@@ -1625,9 +1610,19 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             if (chosenPreview) {
                 aiResponse.action = 'send_custom_preview';
                 aiResponse.preview_id = chosenPreview.id;
+            } else {
+                console.log('[PREVIAS] Catálogo esgotado para esta conversa; repetição bloqueada.');
+                aiResponse.action = 'none';
+                aiResponse.preview_id = null;
+                shouldDeliverMedia = false;
+                mediaSuppressedForRepetition = true;
             }
         } else {
             console.warn('[PREVIAS] Falha no preflight anti-repeticao:', sentMediaResult.error?.message || catalogResult.error?.message);
+            aiResponse.action = 'none';
+            aiResponse.preview_id = null;
+            shouldDeliverMedia = false;
+            mediaSuppressedForRepetition = true;
         }
     }
 
@@ -1866,15 +1861,17 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             isConversationStart,
         });
     }
-    if (mediaSuppressedForRepetition) {
+    if (mediaSuppressedForRepetition || mediaSuppressedForPolicy) {
         safeMessages = safeMessages.filter((message: string) => !isMediaAnnouncement(message));
     }
-    if (safeMessages.length === 0 && (!userAskedMedia || mediaSuppressedForRepetition)) {
+    if (safeMessages.length === 0 && (!userAskedMedia || mediaSuppressedForRepetition || mediaSuppressedForPolicy)) {
         safeMessages = hasExplicitSexualFantasyTrigger(userOnlyText)
             ? ['vc é bem direto hein kkk', 'gostei de saber o que passou na sua cabeça']
             : mediaSuppressedForRepetition
-                ? ['essa eu já te mandei, vou escolher outra diferente pra vc']
-                : ['entendi, me explica só essa parte melhor'];
+                ? ['essa eu já tinha te mandado, me pede outra diferente']
+                : mediaSuppressedForPolicy
+                    ? ['kkk me empolguei, continua me contando']
+                    : ['entendi, me explica só essa parte melhor'];
     }
     if (cityQuestion && hasCity) {
         const forcedCityAnswer = `sou de ${userCity}, e vc?`;
@@ -2131,7 +2128,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
 
         const getRegisteredPreview = async (
             mediaType?: 'image' | 'video',
-            excludeUrls: string[] = [],
+            excludeUrls: string[] = sentMediaUrlsForSession,
             preferredTags: string[] = preferredPreviewTags,
             requireRelevant = false,
         ) => {
@@ -2166,7 +2163,8 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             if (candidateList.length === 0) return null;
 
             const available = candidateList.filter((item: any) => !excluded.has(normalizeMediaUrlKey(item.media_url)));
-            const pool = available.length > 0 ? available : candidateList;
+            if (available.length === 0) return null;
+            const pool = available;
 
             const ranked = pool
                 .map((item: any) => ({
@@ -2189,14 +2187,14 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                     .select('*')
                     .eq('id', previewId)
                     .maybeSingle();
-                if (previewRow?.media_url) {
+                if (previewRow?.media_url && !sentMediaKeysForSession.has(normalizeMediaUrlKey(previewRow.media_url))) {
                     mediaUrl = previewRow.media_url;
                     mediaType = previewRow.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = previewRow;
                 }
             }
             if (!mediaUrl) {
-                const fallbackPreview = await getRegisteredPreview(undefined, [], requestedPreviewSpec.tags, false);
+                const fallbackPreview = await getRegisteredPreview(undefined, sentMediaUrlsForSession, requestedPreviewSpec.tags, false);
                 if (fallbackPreview) {
                     mediaUrl = fallbackPreview.media_url;
                     mediaType = fallbackPreview.media_type === 'video' ? 'video' : 'image';
@@ -2209,8 +2207,8 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                 case 'send_lingerie_photo':
                 case 'send_wet_finger_photo':
                 case 'send_ass_photo_preview': {
-                    const registered = await getRegisteredPreview('image', [], preferredPreviewTags, false)
-                        || await getRegisteredPreview(undefined, [], preferredPreviewTags, false);
+                    const registered = await getRegisteredPreview('image', sentMediaUrlsForSession, preferredPreviewTags, false)
+                        || await getRegisteredPreview(undefined, sentMediaUrlsForSession, preferredPreviewTags, false);
                     mediaUrl = registered?.media_url || null;
                     mediaType = registered?.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = registered;
@@ -2218,9 +2216,9 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                 }
                 case 'send_video_preview':
                 case 'send_hot_video_preview': {
-                    const registered = await getRegisteredPreview('video', [], preferredPreviewTags, false)
-                        || await getRegisteredPreview('image', [], preferredPreviewTags, false)
-                        || await getRegisteredPreview(undefined, [], preferredPreviewTags, false);
+                    const registered = await getRegisteredPreview('video', sentMediaUrlsForSession, preferredPreviewTags, false)
+                        || await getRegisteredPreview('image', sentMediaUrlsForSession, preferredPreviewTags, false)
+                        || await getRegisteredPreview(undefined, sentMediaUrlsForSession, preferredPreviewTags, false);
                     mediaUrl = registered?.media_url || null;
                     mediaType = registered?.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = registered;
@@ -2529,7 +2527,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         }
 
         if (!mediaUrl && MEDIA_ACTIONS.has(String(aiResponse.action || ''))) {
-            const registered = await getRegisteredPreview(undefined, [], preferredPreviewTags, false);
+            const registered = await getRegisteredPreview(undefined, sentMediaUrlsForSession, preferredPreviewTags, false);
             if (registered?.media_url) {
                 mediaUrl = registered.media_url;
                 mediaType = registered.media_type || 'image';
@@ -2592,17 +2590,14 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                 return;
             };
 
-            const userAskedRepeatMedia = userAskedToRepeatMedia(userOnlyText);
-            const { data: recentMediaRows } = !userAskedRepeatMedia
-                ? await supabase
-                    .from('messages')
-                    .select('media_url')
-                    .eq('session_id', session.id)
-                    .eq('sender', 'bot')
-                    .not('media_url', 'is', null)
-                    .order('created_at', { ascending: false })
-                    .limit(1000)
-                : { data: [] };
+            const { data: recentMediaRows } = await supabase
+                .from('messages')
+                .select('media_url')
+                .eq('session_id', session.id)
+                .eq('sender', 'bot')
+                .not('media_url', 'is', null)
+                .order('created_at', { ascending: false })
+                .limit(1000);
             const recentUrls = new Set((recentMediaRows || []).map((row: any) => String(row.media_url || '')).filter(Boolean));
             const recentUrlKeys = new Set([...recentUrls].map(normalizeMediaUrlKey).filter(Boolean));
 
@@ -2616,6 +2611,10 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                     mediaType = alternative.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = alternative;
                     mediaProtection = protectionForPreview(alternative);
+                } else {
+                    console.log('[PREVIAS] Entrega cancelada porque só restavam arquivos repetidos.');
+                    await persistMediaDeliveryStatus('failed');
+                    return NextResponse.json({ success: true, mediaSkipped: 'duplicate_catalog_exhausted' });
                 }
             }
 

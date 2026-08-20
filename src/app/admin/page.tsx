@@ -112,6 +112,18 @@ export default function AdminDashboard() {
     }, []);
 
     const fetchSessions = async () => {
+        // A WiinPay nem sempre entrega webhook. O painel força uma conciliação
+        // idempotente antes de ler a receita, sem depender do lead dizer "paguei".
+        try {
+            const syncResponse = await fetch("/api/admin/payment-sync", {
+                method: "POST",
+                cache: "no-store",
+            });
+            if (!syncResponse.ok) console.warn("Falha ao sincronizar pagamentos no painel");
+        } catch (error) {
+            console.warn("Sincronização de pagamentos indisponível", error);
+        }
+
         const { data } = await supabase
             .from("sessions")
             .select("*")
