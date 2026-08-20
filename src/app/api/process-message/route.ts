@@ -11,6 +11,7 @@ import { shapeConversationBubbles } from '@/lib/conversationBubbles';
 import { findLatestConversationStartAt } from '@/lib/conversationEpisode';
 import {
     buildConversationRecoveryMessages,
+    buildProcessingFailureRecoveryMessages,
     filterConversationConsistencyMessages,
     refineNewRelationshipMessages,
 } from '@/lib/conversationQuality';
@@ -30,7 +31,7 @@ import {
 } from '@/lib/fishAudio';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
-import { buildDeliveredPreviewCaption, isPhotoTakenNow } from '@/lib/previewMoment';
+import { buildDeliveredPreviewCaption, isPhotoTakenNow, rankPreviewCandidatesByMoment } from '@/lib/previewMoment';
 import {
     filterUnsentPreviewAssets,
     normalizePreviewMediaKey as normalizeMediaUrlKey,
@@ -1058,7 +1059,10 @@ export async function POST(req: NextRequest) {
     const combinedText = filteredGroupMessages.map((m: any) => m.content).join("\n");
     const userOnlyText = filteredGroupMessages.filter((m: any) => m.sender === 'user').map((m: any) => m.content).join("\n");
     const conversationStartAt = findLatestConversationStartAt(filteredGroupMessages);
-    const isConversationStart = Boolean(conversationStartAt);
+    const receivedStartCommand = Boolean(conversationStartAt);
+    // /start é só um comando técnico. Ele representa primeiro contato apenas
+    // quando a sessão nunca recebeu uma resposta anterior da Lari.
+    const isConversationStart = receivedStartCommand && !lastBotMsg;
     const lastGroupedUserAt = filteredGroupMessages
         .filter((m: any) => m.sender === 'user' && m.created_at)
         .map((m: any) => String(m.created_at))
@@ -1380,6 +1384,8 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
     }
     if (isConversationStart) {
         finalUserMessage = `${finalUserMessage}\n\n[INICIO DE CONVERSA: /start e uma entrada tecnica. Trate como primeiro contato desta conversa. Nao diga sumido, saudade, voltou, finalmente ou qualquer frase de reencontro. Nao existe resposta fixa: apenas converse no estagio real de desconhecidos.]`;
+    } else if (receivedStartCommand) {
+        finalUserMessage = `${finalUserMessage}\n\n[RETOMADA DE CONVERSA: /start e apenas um comando tecnico. Este lead ja conversou com voce. Ignore o comando na fala, preserve a memoria, a intimidade e o assunto que ja existem e responda como uma menina de 19 anos responderia naturalmente naquele momento. Nao se apresente de novo, nao pergunte o nome outra vez e nao use uma saudacao fixa.]`;
     }
     if (repetition.repeats >= 2) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead repetiu a mesma mensagem ${repetition.repeats}x ("${repetition.last}"). Responda diferente, quebre o loop e puxe o assunto com algo novo e humano. Nao repita a mesma frase.]`;
@@ -1569,7 +1575,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                 .limit(1000),
             supabase
                 .from('preview_assets')
-                .select('id,name,description,triggers,tags,media_url,media_type,priority,min_tarado,max_tarado')
+                .select('id,name,description,triggers,tags,media_url,media_type,priority,min_tarado,max_tarado,stage,ai_analysis')
                 .eq('enabled', true)
                 .not('media_url', 'is', null)
                 .limit(1000),
@@ -1602,16 +1608,30 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             const requestedSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
             const tarado = Number(aiResponse.lead_stats?.tarado || 0);
             const candidatePool = unusedCatalog;
-            const chosenPreview = candidatePool
-                .map((asset: any) => {
+            const rankedPreviews = rankPreviewCandidatesByMoment({
+                assets: candidatePool,
+                context: {
+                    userText: userOnlyText,
+                    preferredTags: requestedSpec.tags,
+                    timeZone: String(leadMemory.metadata?.redirect_timezone || ''),
+                    funnelState: String(aiResponse.current_state || session.funnel_step || ''),
+                    leadHeat: tarado,
+                },
+                baseScore: (asset: any) => {
                     const inRange = tarado >= Number(asset.min_tarado ?? 0)
                         && tarado <= Number(asset.max_tarado ?? 100);
-                    return {
-                        asset,
-                        score: scorePreviewForContext(asset, userOnlyText, requestedSpec.tags) + (inRange ? 3 : -3),
-                    };
-                })
-                .sort((a: any, b: any) => b.score - a.score)[0]?.asset || candidatePool[0];
+                    return scorePreviewForContext(asset, userOnlyText, requestedSpec.tags) + (inRange ? 3 : -3);
+                },
+            });
+            console.log('[PREVIAS] Ranking contextual do momento:', JSON.stringify(rankedPreviews.slice(0, 3).map((entry) => ({
+                id: entry.asset.id,
+                score: entry.score,
+                period: entry.moment.period,
+                requested: entry.moment.requestedSensuality,
+                asset: entry.moment.assetSensuality,
+                reasons: entry.moment.reasons,
+            }))));
+            const chosenPreview = rankedPreviews[0]?.asset || candidatePool[0];
 
             if (chosenPreview) {
                 aiResponse.action = 'send_custom_preview';
@@ -1868,10 +1888,12 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             && Date.parse(String(message.created_at || '')) >= episodeStartedAtMs).length
         : Number.POSITIVE_INFINITY;
     const isEarlyConversationEpisode = isConversationStart || episodeLeadTurns <= 3;
-    if (!relationshipStageBeforeTurn
+    const isReturningGreeting = Boolean(lastBotMsg)
+        && /^\s*(?:\/start(?:\s+\S+)?|oi+e*|ola+|olá+|e\s*ai|eai|bom dia|boa tarde|boa noite)[!?.\s]*$/i.test(userOnlyText);
+    if (!isReturningGreeting && (!relationshipStageBeforeTurn
         || relationshipStageBeforeTurn === 'new'
         || relationshipStageBeforeTurn === 'unknown'
-        || isEarlyConversationEpisode) {
+        || isEarlyConversationEpisode)) {
         safeMessages = refineNewRelationshipMessages(safeMessages, {
             userText: userOnlyText,
             lastBotContent,
@@ -2180,13 +2202,18 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             if (available.length === 0) return null;
             const pool = available;
 
-            const ranked = pool
-                .map((item: any) => ({
-                    item,
-                    score: scorePreviewForContext(item, userOnlyText, preferredTags),
-                }))
-                .sort((a: any, b: any) => b.score - a.score);
-            return ranked[0]?.item || pool[0];
+            const ranked = rankPreviewCandidatesByMoment({
+                assets: pool,
+                context: {
+                    userText: userOnlyText,
+                    preferredTags,
+                    timeZone: String(operationalLeadMemory.metadata?.redirect_timezone || ''),
+                    funnelState: String(aiResponse.current_state || session.funnel_step || ''),
+                    leadHeat: Number(aiResponse.lead_stats?.tarado || 0),
+                },
+                baseScore: (item: any) => scorePreviewForContext(item, userOnlyText, preferredTags),
+            });
+            return ranked[0]?.asset || pool[0];
         };
 
         let mediaUrl = null;
@@ -2754,28 +2781,67 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                 .limit(1);
 
             if (!alreadyDelivered?.length) {
-                const { data: latestUserMessage } = await supabase
+                const { data: recentRecoveryRows, error: recentRecoveryError } = await supabase
                     .from('messages')
-                    .select('content')
+                    .select('sender,content,created_at')
                     .eq('session_id', sessionId)
-                    .eq('sender', 'user')
+                    .in('sender', ['user', 'bot'])
                     .order('created_at', { ascending: false })
-                    .limit(1)
-                    .single();
-                const latestText = String(latestUserMessage?.content || '').trim();
-                const fallbackMessages = /^\/start(?:\s|$)/i.test(latestText)
-                    ? ['oiii tudo bem?', 'como vc se chama?']
-                    : ['oii, me fala mais disso'];
+                    .limit(80);
+                if (recentRecoveryError) throw recentRecoveryError;
 
-                for (const fallbackMessage of fallbackMessages) {
+                const recentRows = recentRecoveryRows || [];
+                const latestText = String(recentRows.find((row: any) => row.sender === 'user')?.content || '').trim();
+                const recentBotTexts = recentRows
+                    .filter((row: any) => row.sender === 'bot')
+                    .map((row: any) => String(row.content || ''))
+                    .filter(Boolean);
+                const recentUserTexts = recentRows
+                    .filter((row: any) => row.sender === 'user')
+                    .map((row: any) => String(row.content || ''))
+                    .filter(Boolean);
+                const fallbackMessages = buildProcessingFailureRecoveryMessages({
+                    userText: latestText,
+                    recentBotTexts,
+                    recentUserTexts,
+                    isFirstContact: recentBotTexts.length === 0 && recentUserTexts.length <= 1,
+                });
+                const safeReason = reason
+                    .replace(/(?:sk|key|token|secret)[-_][a-z0-9_-]{8,}/gi, '[REDACTED]')
+                    .slice(0, 1200);
+                const recoveryDebug = {
+                    timestamp: new Date().toISOString(),
+                    run_id: `local-recovery-${crypto.randomUUID()}`,
+                    model: 'contextual-local-recovery',
+                    provider: 'local',
+                    tier: 'recovery',
+                    duration_ms: Math.max(0, Date.now() - Date.parse(processingAttemptStartedAt)),
+                    system_prompt: 'Recuperação contextual determinística acionada após falha do processamento principal.',
+                    user_prompt: latestText,
+                    clean_history: recentRows.slice().reverse().map((row: any) => ({
+                        role: row.sender === 'bot' ? 'assistant' : 'user',
+                        content: String(row.content || ''),
+                    })),
+                    raw_response: { recovery_reason: safeReason },
+                    final_response: { messages: fallbackMessages, action: 'none', recovered: true },
+                };
+
+                for (let recoveryIndex = 0; recoveryIndex < fallbackMessages.length; recoveryIndex += 1) {
+                    const fallbackMessage = fallbackMessages[recoveryIndex];
                     await sendTelegramMessage(botToken, chatId, fallbackMessage);
-                    await supabase.from('messages').insert({
+                    const recoveryInsert = await insertMessageWithAiDebug(supabase, {
                         session_id: session.id,
                         sender: 'bot',
                         content: fallbackMessage,
-                    });
+                    }, withAiDebugMessageIndex(recoveryDebug, recoveryIndex));
+                    if (recoveryInsert.debugError) {
+                        console.warn('[AI DEBUG] Recuperacao salva sem ai_debug:', errorMessage(recoveryInsert.debugError));
+                    }
+                    if (recoveryInsert.error) {
+                        console.warn('[PROCESSADOR] Falha ao persistir recuperacao:', errorMessage(recoveryInsert.error));
+                    }
                 }
-                console.log(`[PROCESSADOR] Recuperacao local enviada para a sessao ${sessionId}.`);
+                console.log(`[PROCESSADOR] Recuperacao contextual enviada para a sessao ${sessionId}.`);
             } else {
                 console.log(`[PROCESSADOR] Recuperacao local dispensada: a sessao ${sessionId} ja recebeu resposta.`);
             }

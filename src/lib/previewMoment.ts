@@ -9,6 +9,25 @@ type PreviewMomentAsset = {
 };
 
 type PreviewPeriod = 'madrugada' | 'manha' | 'tarde' | 'noite';
+type PreviewSensuality = 'casual' | 'sensual' | 'hot' | 'explicit';
+
+export type PreviewMomentContext = {
+    userText?: string;
+    preferredTags?: string[];
+    timeZone?: string | null;
+    now?: Date;
+    funnelState?: string | null;
+    leadHeat?: number;
+};
+
+export type PreviewMomentFit = {
+    score: number;
+    period: PreviewPeriod;
+    requestedSensuality: PreviewSensuality;
+    assetSensuality: PreviewSensuality;
+    hardMismatch: boolean;
+    reasons: string[];
+};
 
 const normalize = (value: unknown) => String(value || '')
     .normalize('NFD')
@@ -48,6 +67,174 @@ const compatiblePeriods = (analysis: Record<string, unknown>) => {
     const raw = analysis.time_compatibility;
     if (Array.isArray(raw)) return raw.map(normalize).filter(Boolean);
     return normalize(raw).split(/[;,|/]/).map((item) => item.trim()).filter(Boolean);
+};
+
+const sensualityRank: Record<PreviewSensuality, number> = {
+    casual: 0,
+    sensual: 1,
+    hot: 2,
+    explicit: 3,
+};
+
+const assetSearchableText = (asset: PreviewMomentAsset | null | undefined) => {
+    if (!asset) return '';
+    const analysis = asset.ai_analysis && typeof asset.ai_analysis === 'object' ? asset.ai_analysis : {};
+    return normalize([
+        asset.name,
+        asset.description,
+        list(asset.tags),
+        list(asset.triggers),
+        analysis.visual_summary,
+        analysis.pose,
+        analysis.outfit,
+        analysis.setting,
+        analysis.expression,
+        analysis.explicitness,
+        analysis.sensuality_level,
+        analysis.lighting,
+        list(analysis.accessories),
+        list(analysis.body_focus),
+        list(analysis.tags),
+        list(analysis.conversation_contexts),
+        analysis.moment_context,
+        analysis.send_when,
+        list(analysis.avoid_when),
+    ].join(' '));
+};
+
+const inferAssetSensuality = (asset: PreviewMomentAsset): PreviewSensuality => {
+    const analysis = asset.ai_analysis && typeof asset.ai_analysis === 'object' ? asset.ai_analysis : {};
+    const declared = normalize(analysis.sensuality_level);
+    if (declared === 'casual' || declared === 'sensual' || declared === 'hot' || declared === 'explicit') {
+        return declared;
+    }
+
+    const explicitness = normalize(analysis.explicitness);
+    if (explicitness === 'explicit') return 'explicit';
+    if (explicitness === 'nude') return 'hot';
+    if (explicitness === 'suggestive') return 'sensual';
+
+    const searchable = assetSearchableText(asset);
+    if (/\b(explicit|sexo|penetracao|masturb|gozando|dedando)\b/i.test(searchable)) return 'explicit';
+    if (/\b(nua|pelada|sem roupa|nude|peitos de fora|buceta)\b/i.test(searchable)) return 'hot';
+    if (/\b(sensual|lingerie|calcinha|sutia|decote|bunda|empinad|provocante)\b/i.test(searchable)) return 'sensual';
+    return 'casual';
+};
+
+const inferRequestedSensuality = (context: PreviewMomentContext): PreviewSensuality => {
+    const text = normalize(`${context.userText || ''} ${(context.preferredTags || []).join(' ')}`);
+    const state = normalize(context.funnelState);
+    if (/\b(explicit|sexo|penetracao|masturb|dedando|gozando|buceta|foto pelada|nude|sem roupa)\b/i.test(text)) return 'explicit';
+    if (/\b(safad|bem quente|putaria|tesao|pelad|peitos|bunda|de quatro)\b/i.test(text)) return 'hot';
+    if (/\b(sensual|provocante|lingerie|calcinha|decote|gostosa)\b/i.test(text)) return 'sensual';
+    if (/\b(normal|selfie|rosto|carinha|sorriso|look|roupa|vestida)\b/i.test(text)) return 'casual';
+    if (/hot talk|trigger phase|preview/.test(state)) return Number(context.leadHeat || 0) >= 60 ? 'hot' : 'sensual';
+    return 'casual';
+};
+
+export const scorePreviewMomentFit = ({
+    asset,
+    context,
+}: {
+    asset: PreviewMomentAsset;
+    context: PreviewMomentContext;
+}): PreviewMomentFit => {
+    const analysis = asset.ai_analysis && typeof asset.ai_analysis === 'object' ? asset.ai_analysis : {};
+    const period = localPeriod(context.timeZone, context.now || new Date());
+    const periods = compatiblePeriods(analysis);
+    const requestedSensuality = inferRequestedSensuality(context);
+    const assetSensuality = inferAssetSensuality(asset);
+    const requestedRank = sensualityRank[requestedSensuality];
+    const assetRank = sensualityRank[assetSensuality];
+    const searchable = assetSearchableText(asset);
+    const reasons: string[] = [];
+    let score = 0;
+
+    if (periods.length === 0 || periods.includes('qualquer') || periods.includes('any')) {
+        score += 4;
+        reasons.push('horario-flexivel');
+    } else if (periods.includes(period)) {
+        score += 14;
+        reasons.push(`horario-${period}`);
+    } else {
+        score -= 22;
+        reasons.push(`horario-incompativel-${period}`);
+    }
+
+    if (/\b(cama|deitad|quarto|lencol|travesseiro|luz baixa)\b/i.test(searchable)) {
+        score += period === 'noite' || period === 'madrugada' ? 7 : 1;
+        reasons.push(period === 'noite' || period === 'madrugada' ? 'cena-noturna-coerente' : 'cena-de-quarto-neutra');
+    }
+    if (/\b(praia|parque|rua|externa|sol|ceu azul|piscina)\b/i.test(searchable)) {
+        score += period === 'manha' || period === 'tarde' ? 7 : -12;
+        reasons.push(period === 'manha' || period === 'tarde' ? 'cena-diurna-coerente' : 'cena-diurna-fora-do-momento');
+    }
+
+    const sensualityDelta = assetRank - requestedRank;
+    if (sensualityDelta === 0) {
+        score += 18;
+        reasons.push('intensidade-exata');
+    } else if (sensualityDelta === -1) {
+        score += 7;
+        reasons.push('aquecimento-gradual');
+    } else if (sensualityDelta < -1) {
+        score -= 3;
+        reasons.push('intensidade-abaixo');
+    } else {
+        score -= sensualityDelta * 18;
+        reasons.push('intensidade-acima');
+    }
+
+    const declaredContexts = Array.isArray(analysis.conversation_contexts)
+        ? analysis.conversation_contexts.map(normalize).filter(Boolean)
+        : [];
+    const sensualityContext = requestedSensuality === 'casual'
+        ? 'casual_chat'
+        : requestedSensuality === 'sensual'
+            ? 'flirting'
+            : requestedSensuality === 'hot'
+                ? 'hot_talk'
+                : 'explicit_request';
+    const stateContext = /\b(welcome|starter|new|discover details|build connection)\b/.test(normalize(context.funnelState))
+        ? 'first_contact'
+        : sensualityContext;
+    if (declaredContexts.includes(stateContext) || declaredContexts.includes(sensualityContext)) {
+        score += 10;
+        reasons.push(`contexto-${stateContext}`);
+    }
+
+    const avoidWhen = Array.isArray(analysis.avoid_when) ? analysis.avoid_when.map(normalize) : [];
+    const avoidText = avoidWhen.join(' ');
+    const avoidsCurrentPeriod = avoidWhen.includes(period) || avoidText.includes(period);
+    const avoidsCurrentContext = [stateContext, sensualityContext].some((contextKey) =>
+        avoidWhen.includes(contextKey) || avoidText.includes(contextKey.replace(/_/g, ' '))
+    );
+    if (avoidsCurrentPeriod || avoidsCurrentContext) {
+        score -= 35;
+        reasons.push('regra-evitar');
+    }
+
+    const hardMismatch = sensualityDelta >= 2 || avoidsCurrentPeriod || avoidsCurrentContext;
+    return { score, period, requestedSensuality, assetSensuality, hardMismatch, reasons };
+};
+
+export const rankPreviewCandidatesByMoment = <T extends PreviewMomentAsset>({
+    assets,
+    context,
+    baseScore = () => 0,
+}: {
+    assets: T[];
+    context: PreviewMomentContext;
+    baseScore?: (asset: T) => number;
+}) => {
+    const ranked = assets.map((asset) => {
+        const moment = scorePreviewMomentFit({ asset, context });
+        return { asset, moment, score: baseScore(asset) + moment.score };
+    });
+    const eligible = ranked.some((entry) => !entry.moment.hardMismatch)
+        ? ranked.filter((entry) => !entry.moment.hardMismatch)
+        : ranked;
+    return eligible.sort((left, right) => right.score - left.score);
 };
 
 export const isPhotoTakenNow = ({

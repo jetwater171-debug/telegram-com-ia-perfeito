@@ -157,3 +157,59 @@ export const buildConversationRecoveryMessages = (options: {
     });
     return filtered.length > 0 ? filtered.slice(0, 1) : ['vou responder direito sem te fazer repetir'];
 };
+
+export const buildProcessingFailureRecoveryMessages = (options: {
+    userText?: string;
+    recentBotTexts?: unknown[];
+    recentUserTexts?: unknown[];
+    isFirstContact?: boolean;
+}) => {
+    const userText = normalize(options.userText);
+    const recentBotTexts = (options.recentBotTexts || []).map(normalize).filter(Boolean);
+    const recentUserTexts = (options.recentUserTexts || []).map(normalize).filter(Boolean);
+    const startsConversation = /^\/start(?:\s+\S+)?$/i.test(userText);
+    const greetingOnly = isGreetingOnly(userText);
+
+    // A recuperação roda fora da IA. No primeiro contato ela precisa preservar a
+    // abertura humana em vez de fingir que existe um assunto para o lead explicar.
+    if ((startsConversation || greetingOnly) && options.isFirstContact !== false) {
+        return ['oiii, tudo bem?', 'como vc se chama?'];
+    }
+
+    if (startsConversation || greetingOnly) {
+        const greetings = filterConversationConsistencyMessages([
+            'oiii, tudo bem?',
+            'oii, tudo certinho?',
+            'oiii, como vc tá?',
+        ], {
+            currentUserText: userText,
+            recentUserTexts,
+            recentBotTexts,
+        });
+        return greetings.length > 0 ? greetings.slice(0, 1) : ['oiii'];
+    }
+
+    const asksQuestion = /\?|\b(quem|qual|quais|quanto|quantos|quanta|quantas|como|quando|onde|por que|porque|pq|cad[eê]|o que|oq)\b/i.test(lower(userText));
+    const recoveryPairs = asksQuestion
+        ? [
+            ['eita, travou aqui bem na hora que eu fui te responder kkk', 'manda essa pergunta de novo pra mim?'],
+            ['pera, deu uma travadinha aqui bem na hora kkk', 'repete só essa pergunta pra mim?'],
+            ['ixi, meu telegram travou na hora da resposta', 'manda a pergunta mais uma vez?'],
+        ]
+        : [
+            ['eita, travou aqui bem na hora que eu fui te responder kkk', 'manda essa última de novo pra mim?'],
+            ['pera, deu uma travadinha aqui bem na hora kkk', 'repete só essa última pra mim?'],
+            ['ixi, meu telegram travou na hora da resposta', 'manda sua última mensagem mais uma vez?'],
+        ];
+
+    for (const pair of recoveryPairs) {
+        const filtered = filterConversationConsistencyMessages(pair, {
+            currentUserText: userText,
+            recentUserTexts,
+            recentBotTexts,
+        });
+        if (filtered.length === pair.length) return filtered;
+    }
+
+    return ['voltei, manda só sua última mensagem de novo?'];
+};

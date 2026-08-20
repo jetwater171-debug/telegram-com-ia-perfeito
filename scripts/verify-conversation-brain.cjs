@@ -84,5 +84,9 @@ assert.match(geminiSource, /Mensagens do lead neste episodio/);
 assert.match(geminiSource, /isNewRelationship/);
 assert.match(processSource, /refineNewRelationshipMessages/);
 assert.match(processSource, /isEarlyConversationEpisode/);
+assert.match(processSource, /const receivedStartCommand = Boolean\(conversationStartAt\)/);
+assert.match(processSource, /const isConversationStart = receivedStartCommand && !lastBotMsg/);
+assert.match(processSource, /RETOMADA DE CONVERSA/);
+assert.match(processSource, /const isReturningGreeting = Boolean\(lastBotMsg\)/);
 
 console.log('CONVERSATION_BRAIN_OK history=80 separate_brain=1 episode_reset=1 first_contact=1 persona=1 self_review=1');

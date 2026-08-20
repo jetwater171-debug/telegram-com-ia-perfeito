@@ -19,6 +19,11 @@ export type PreviewVisionAnalysis = {
     moment_context: string;
     time_compatibility: Array<'madrugada' | 'manha' | 'tarde' | 'noite' | 'qualquer'>;
     explicitness: 'safe' | 'suggestive' | 'nude' | 'explicit';
+    sensuality_level: 'casual' | 'sensual' | 'hot' | 'explicit';
+    lighting: 'daylight' | 'night' | 'indoor' | 'neutral';
+    conversation_contexts: string[];
+    send_when: string;
+    avoid_when: string[];
     body_focus: string[];
     tags: string[];
     triggers: string[];
@@ -85,7 +90,7 @@ const generateHeuristicAnalysis = (filename: string): PreviewVisionAnalysis => {
         .replace(/[_\-]+/g, ' ')
         .trim();
     const lower = nameClean.toLowerCase();
-    const tags: string[] = ['foto', 'previa', 'sensual'];
+    const tags: string[] = ['foto', 'previa'];
     const triggers: string[] = [];
 
     if (/milk|leite/i.test(lower)) { tags.push('leite', 'rosto', 'boca', 'banho', 'lambuzada'); triggers.push('foto com leite', 'leite no rosto'); }
@@ -97,6 +102,21 @@ const generateHeuristicAnalysis = (filename: string): PreviewVisionAnalysis => {
     if (/peito|boobs|seios|decote/i.test(lower)) { tags.push('peitos', 'decote', 'seios'); triggers.push('foto dos peitos', 'foto de decote'); }
     if (/nude|pelada|sem roupa/i.test(lower)) { tags.push('pelada', 'sem roupa', 'nude', 'explicita'); triggers.push('foto pelada', 'nude'); }
     if (/pes|feet|pe/i.test(lower)) { tags.push('pes', 'pezinhos', 'unhas'); triggers.push('foto dos pes'); }
+
+    const explicitness = /sexo|penetracao|masturb|dedando|gozando/i.test(lower)
+        ? 'explicit'
+        : /nude|pelada|sem roupa/i.test(lower)
+            ? 'nude'
+            : /lingerie|calcinha|sutia|decote|bunda|peito|leite/i.test(lower)
+                ? 'suggestive'
+                : 'safe';
+    const sensualityLevel = explicitness === 'explicit'
+        ? 'explicit'
+        : explicitness === 'nude'
+            ? 'hot'
+            : explicitness === 'suggestive'
+                ? 'sensual'
+                : 'casual';
 
     return {
         name: nameClean.slice(0, 80) || 'Prévia da Lari',
@@ -116,7 +136,22 @@ const generateHeuristicAnalysis = (filename: string): PreviewVisionAnalysis => {
                 ? 'deitada no quarto'
                 : 'selfie espontanea',
         time_compatibility: /bed|cama|deitada|quarto/i.test(lower) ? ['madrugada', 'manha', 'tarde', 'noite'] : ['qualquer'],
-        explicitness: /nude|pelada|leite/i.test(lower) ? 'explicit' : 'suggestive',
+        explicitness,
+        sensuality_level: sensualityLevel,
+        lighting: /noite|night|escuro|luz baixa/i.test(lower) ? 'night' : /sol|dia|day|praia|externa/i.test(lower) ? 'daylight' : 'indoor',
+        conversation_contexts: sensualityLevel === 'casual'
+            ? ['casual_chat', 'first_contact']
+            : sensualityLevel === 'sensual'
+                ? ['flirting', 'preview']
+                : sensualityLevel === 'hot'
+                    ? ['hot_talk', 'explicit_request']
+                    : ['explicit_request'],
+        send_when: /banho|chuveiro/i.test(lower)
+            ? 'quando a conversa estiver no contexto de banho ou o lead pedir foto no banho'
+            : /bed|cama|deitada|quarto/i.test(lower)
+                ? 'quando a conversa combinar com quarto, descanso ou noite'
+                : 'quando o pedido e a intensidade da conversa combinarem com a foto',
+        avoid_when: sensualityLevel === 'casual' ? [] : ['first_contact', 'casual_chat'],
         body_focus: tags.filter((t) => ['bunda', 'peitos', 'rosto', 'pes', 'calcinha'].includes(t)),
         tags: Array.from(new Set(tags)),
         triggers: triggers.length ? triggers : ['manda uma foto', 'quero ver foto sua'],
@@ -134,6 +169,19 @@ const normalizeAnalysis = (input: any, model: string): PreviewVisionAnalysis => 
         : 'suggestive';
     const minTarado = Math.round(clamp(input?.min_tarado, 0, 100, explicitness === 'safe' ? 0 : 25));
     const maxTarado = Math.round(clamp(input?.max_tarado, minTarado, 100, 100));
+    const inferredSensuality = explicitness === 'explicit'
+        ? 'explicit'
+        : explicitness === 'nude'
+            ? 'hot'
+            : explicitness === 'suggestive'
+                ? 'sensual'
+                : 'casual';
+    const sensualityLevel = ['casual', 'sensual', 'hot', 'explicit'].includes(input?.sensuality_level)
+        ? input.sensuality_level
+        : inferredSensuality;
+    const lighting = ['daylight', 'night', 'indoor', 'neutral'].includes(input?.lighting)
+        ? input.lighting
+        : 'neutral';
 
     let name = cleanText(input?.name, 100);
     name = name.replace(/^(mulher jovem|mulher morena|uma mulher|garota|modelo)\b/i, 'Lari');
@@ -164,10 +212,16 @@ const normalizeAnalysis = (input: any, model: string): PreviewVisionAnalysis => 
         plausible_as_recent: input?.plausible_as_recent !== false,
         moment_context: cleanText(input?.moment_context, 180),
         time_compatibility: cleanList(input?.time_compatibility, 5)
+            .map((period) => period.normalize('NFD').replace(/\p{Diacritic}/gu, ''))
             .filter((period): period is 'madrugada' | 'manha' | 'tarde' | 'noite' | 'qualquer' =>
                 ['madrugada', 'manha', 'tarde', 'noite', 'qualquer'].includes(period)
             ),
         explicitness,
+        sensuality_level: sensualityLevel,
+        lighting,
+        conversation_contexts: cleanList(input?.conversation_contexts, 12),
+        send_when: cleanText(input?.send_when, 300),
+        avoid_when: cleanList(input?.avoid_when, 12),
         body_focus: cleanList(input?.body_focus, 10),
         tags,
         triggers: cleanList(input?.triggers, 20),
@@ -200,6 +254,8 @@ Analise minuciosamente a foto com foco em catalogação e casamento perfeito em 
 6. INTENÇÃO & CONTEXTO: Qual é o clima da foto? (brincadeira com comida/food play, fetiche de gozar na cara/boca, exibicionismo, carinho deitada, provocação).
 7. TRIGGERS DE CONVERSA: Liste de 10 a 20 frases reais que um lead no Telegram digitaria quando quiser ver EXATAMENTE essa foto (ex: "manda foto com leite", "quero ver sua boquinha", "foto na cama", "quero sujar sua cara", "foto safada").
 8. CONTINUIDADE DO MOMENTO: Diga se a imagem parece uma foto espontânea que poderia ter acabado de ser tirada durante a conversa. Considere cenário, iluminação, pose, roupa e aparência de ensaio profissional. Descreva o momento natural coerente (ex: acabou de sair do banho, está deitada à noite, selfie no espelho) e em quais períodos do dia a cena é plausível. Não marque ensaio, praia diurna ou evento como foto instantânea fora de contexto.
+9. MOMENTO DE ENVIO: Classifique separadamente a intensidade como casual, sensual, hot ou explicit; a iluminação como daylight, night, indoor ou neutral; e liste os contextos de conversa em que a imagem deve aparecer. Uma foto nua nunca é casual. Uma selfie comum nunca deve ser classificada como hot só porque pertence ao catálogo adulto.
+10. REGRAS DE COERÊNCIA: Escreva quando enviar e quando evitar. Considere primeiro contato, conversa casual, flerte, conversa quente, pedido explícito, pós-banho, manhã, tarde, noite e madrugada. Não invente que uma foto diurna externa acabou de ser tirada à noite.
 
 Retorne SOMENTE um JSON válido com a estrutura:
 {
@@ -217,6 +273,11 @@ Retorne SOMENTE um JSON válido com a estrutura:
   "moment_context": "situação natural coerente para apresentar a foto como recém-tirada",
   "time_compatibility": ["madrugada", "manha", "tarde", "noite"],
   "explicitness": "safe" | "suggestive" | "nude" | "explicit",
+  "sensuality_level": "casual" | "sensual" | "hot" | "explicit",
+  "lighting": "daylight" | "night" | "indoor" | "neutral",
+  "conversation_contexts": ["first_contact", "casual_chat", "flirting", "hot_talk", "explicit_request", "post_shower", "bedtime"],
+  "send_when": "regra curta e objetiva de quando esta foto encaixa",
+  "avoid_when": ["contextos ou períodos em que esta foto quebra a continuidade"],
   "body_focus": ["partes do corpo em evidência"],
   "tags": ["15 a 25 tags em português para busca e casamento perfeito"],
   "triggers": ["10 a 20 frases exatas que os leads mandam no Telegram para pedir essa foto"],
@@ -260,7 +321,7 @@ Retorne SOMENTE um JSON válido com a estrutura:
                             ],
                         }],
                         temperature: 0.1,
-                        max_tokens: 1200,
+                        max_tokens: 1600,
                         response_format: { type: 'json_object' },
                     }),
                 });
