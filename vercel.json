@@ -1,5 +1,5 @@
 {
   "crons": [
-    { "path": "/api/cron/reengagement", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/reengagement", "schedule": "0 12 * * *" }
   ]
 }
