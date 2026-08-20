@@ -24,7 +24,8 @@ const loadPureTypeScriptModule = (relativePath) => {
     const webhook = read('src/app/api/telegram/route.ts');
     const vision = read('src/lib/previewVision.ts');
 
-    assert.match(models, /DEFAULT_GEMINI_MODEL = "gemini-3\.6-flash"/);
+    assert.match(models, /DEFAULT_GEMINI_MODEL = "gemini-3\.7-flash"/);
+    assert.match(models, /DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-3\.6-flash"/);
     assert.match(models, /"gemini-2\.5-flash": "gemini-3\.6-flash"/);
     assert.match(models, /"llama-3\.1-8b-instant": DEFAULT_GROQ_STARTER_MODEL/);
     assert.match(models, /deepseek\/deepseek-v4-flash-0731/);

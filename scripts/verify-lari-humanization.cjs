@@ -80,9 +80,9 @@ assert.equal(prompts.needsLariReview({ relationshipStage: 'familiar', userText: 
 assert.equal(prompts.needsLariReview({ relationshipStage: 'familiar', userText: 'fiz churrasco hoje', messages: ['aí sim kkk ficou bom?'], strategyConfidence: 0.95 }), false);
 
 const starter = orchestration.resolveAiOrchestrationPlan(0);
-assert.equal(starter.separateStrategy, true);
-assert.equal(orchestration.shouldRunAiReview(starter, true), true);
-assert.equal(models.normalizeGeminiModelName('gemini-3.5-flash'), 'gemini-3.6-flash');
+assert.equal(starter.separateStrategy, false);
+assert.equal(orchestration.shouldRunAiReview(starter, true), false);
+assert.equal(models.normalizeGeminiModelName('gemini-3.5-flash'), 'gemini-3.5-flash');
 assert.equal(models.normalizeGroqModelName('llama-3.1-8b-instant'), 'openai/gpt-oss-20b');
 
 const geminiSource = fs.readFileSync(path.resolve(__dirname, '../src/lib/gemini.ts'), 'utf8');

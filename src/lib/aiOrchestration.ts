@@ -83,14 +83,14 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
         tier: 'starter',
         label: 'primeiro ciclo',
         totalPaid,
-        separateStrategy: true,
-        reviewMode: 'critical',
+        separateStrategy: false,
+        reviewMode: 'none',
         evaluator: false,
         historyMessageLimit: 80,
         historyMaxEntries: 80,
         historyMaxChars: 24_000,
         promptBlockMaxChars: 16_000,
-        objective: 'cerebro geral economico separado + Lari, com revisao quando a naturalidade estiver em risco',
+        objective: 'uma chamada forte e integrada para conversar como Lari com o cerebro geral embutido',
     };
 };
 

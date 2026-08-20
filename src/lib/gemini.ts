@@ -2,6 +2,7 @@ import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/ge
 import { AIResponse, LeadStats, AiDebugData } from "@/types";
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import {
+    DEFAULT_GEMINI_FALLBACK_MODEL,
     DEFAULT_GEMINI_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_GROQ_QUALITY_MODEL,
@@ -760,12 +761,16 @@ const parseAiModelEntry = (entry: string, role: AiRole, settings: AiRuntimeSetti
 
     const providerMatch = trimmed.match(/^(openrouter|gemini):(.+)$/i);
     if (!providerMatch) {
-        return { provider: "openrouter", model: trimmed, label: `openrouter:${trimmed}` };
+        const model = normalizeOpenRouterPrimaryModel(trimmed);
+        return { provider: "openrouter", model, label: `openrouter:${model}` };
     }
 
     const provider = providerMatch[1].toLowerCase() as AiProvider;
-    const model = providerMatch[2].trim();
-    if (!model) return null;
+    const configuredModel = providerMatch[2].trim();
+    if (!configuredModel) return null;
+    const model = provider === "openrouter"
+        ? normalizeOpenRouterPrimaryModel(configuredModel)
+        : configuredModel;
     return { provider, model, label: `${provider}:${model}` };
 };
 
@@ -799,7 +804,7 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings, tier?: AiI
     const globalOrder = parseAiModelOrder(settings.aiModelOrder, role, settings);
     const defaults = parseAiModelOrder(DEFAULT_PROVIDER_ORDER, role, settings);
 
-    // Adiciona todos os modelos reais do OpenRouter (DeepSeek e Qwen) na cadeia de tentativa
+    // Mantém somente fallbacks nomeados e previsíveis; nunca usa o roteador aleatório /free.
     const extraOpenRouterModels: AiGatewayConfig[] = settings.openRouterApiKey
         ? OPENROUTER_MODEL_FALLBACK_ORDER.map((model) => ({
             provider: "openrouter" as AiProvider,
@@ -863,12 +868,21 @@ const getTierAwareGatewayOrder = ({
     const normal = getAiGatewayOrder(role, settings, tier);
     const geminiPrimary: AiGatewayConfig[] = [];
 
-    // Prioridade máxima e imediata para o Gemini oficial da Google AI Studio
+    // Linha principal estrita: qualidade primeiro, depois capacidade. A lista normal
+    // entra apenas quando todos estes modelos estiverem indisponíveis ou em cooldown.
     if (settings.geminiApiKey) {
-        geminiPrimary.push(
-            { provider: 'gemini', model: DEFAULT_GEMINI_MODEL, label: `gemini:${DEFAULT_GEMINI_MODEL}` },
-            { provider: 'gemini', model: DEFAULT_GEMINI_LITE_MODEL, label: `gemini:${DEFAULT_GEMINI_LITE_MODEL}` }
-        );
+        const roleModel = getRoleProviderModel(role, 'gemini', settings);
+        [
+            DEFAULT_GEMINI_MODEL,
+            DEFAULT_GEMINI_FALLBACK_MODEL,
+            'gemini-3.5-flash',
+            DEFAULT_GEMINI_LITE_MODEL,
+            roleModel,
+        ].forEach((model) => geminiPrimary.push({
+            provider: 'gemini',
+            model,
+            label: `gemini:${model}`,
+        }));
     }
 
     const seen = new Set<string>();
@@ -1031,7 +1045,9 @@ const callOpenRouterJson = async <T,>(
     }
 
     const body: Record<string, unknown> = {
-        model: gateway.model,
+        model: gateway.provider === 'openrouter'
+            ? normalizeOpenRouterPrimaryModel(gateway.model)
+            : gateway.model,
         messages: toOpenRouterMessages(systemInstruction, history, userContent, mediaPart),
         temperature: role === "draft" ? 0.85 : 0.35,
         max_tokens: 1200,
@@ -1139,12 +1155,13 @@ const callAiGatewayJson = async <T,>(options: {
         openRouterHistory,
         options.mediaPart ? '[media]' : '',
     );
-    const candidates: GatewayRouteCandidate<AiGatewayConfig>[] = gateways.map((gateway) => {
+    const candidates: GatewayRouteCandidate<AiGatewayConfig>[] = gateways.map((gateway, priority) => {
         const policy = gateway.policy || resolveGatewayRatePolicy(gateway.provider, gateway.model);
         return {
             key: `${gateway.provider}:${gateway.model}`,
             provider: gateway.provider,
             model: gateway.model,
+            priority,
             weight: Math.max(1, Number(gateway.weight || (gateway.provider === 'gemini' ? 57 : gateway.provider === 'groq' ? 18 : 7))),
             policy,
             value: { ...gateway, policy },

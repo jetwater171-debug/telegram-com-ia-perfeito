@@ -14,6 +14,7 @@ export type GatewayRouteCandidate<T = unknown> = {
     key: string;
     provider: string;
     model: string;
+    priority?: number;
     weight: number;
     policy: GatewayRatePolicy;
     value: T;
@@ -92,7 +93,16 @@ const providerDefaults = (provider: string, model: string): GatewayRatePolicy =>
         return { rpm: 18, tpm: 200_000, rpd: 50, tpd: 2_000_000, maxConcurrency: 3, timeoutMs: 18_000, maxQueueMs: 2_200 };
     }
     if (normalizedProvider === 'gemini') {
-        return { rpm: 120, tpm: 4_000_000, rpd: 50_000, tpd: 100_000_000, maxConcurrency: 15, timeoutMs: 12_000, maxQueueMs: 1_500 };
+        const isFlashLite = normalizedModel.includes('flash-lite');
+        return {
+            rpm: isFlashLite ? 15 : 10,
+            tpm: 1_000_000,
+            rpd: isFlashLite ? 500 : 20,
+            tpd: isFlashLite ? 500_000_000 : 20_000_000,
+            maxConcurrency: isFlashLite ? 6 : 4,
+            timeoutMs: 15_000,
+            maxQueueMs: 1_500,
+        };
     }
     if (normalizedProvider === 'cloudflare') {
         return { rpm: 30, tpm: 300_000, rpd: 5_000, tpd: 5_000_000, maxConcurrency: 6, timeoutMs: 16_000, maxQueueMs: 2_500 };
@@ -220,8 +230,12 @@ export class AdaptiveGatewayRouter {
             const eligible = candidates
                 .filter((candidate) => !options.exclude?.has(candidate.key))
                 .map((candidate) => ({ candidate, ...this.availability(candidate, options.estimatedTokens, now) }));
-            const available = eligible
-                .filter((item) => item.waitMs === 0)
+            const ready = eligible.filter((item) => item.waitMs === 0);
+            const bestPriority = ready.length > 0
+                ? Math.min(...ready.map((item) => Number(item.candidate.priority ?? 0)))
+                : 0;
+            const available = ready
+                .filter((item) => Number(item.candidate.priority ?? 0) === bestPriority)
                 .sort((left, right) => this.score(right.candidate, right.state, options.routingKey) - this.score(left.candidate, left.state, options.routingKey));
 
             if (available.length > 0) {

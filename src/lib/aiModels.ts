@@ -1,14 +1,14 @@
-export const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
+export const DEFAULT_GEMINI_MODEL = "gemini-3.7-flash";
+export const DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-3.6-flash";
 export const DEFAULT_GEMINI_LITE_MODEL = "gemini-3.5-flash-lite";
 export const DEFAULT_GROQ_STARTER_MODEL = "openai/gpt-oss-20b";
 export const DEFAULT_GROQ_QUALITY_MODEL = "openai/gpt-oss-120b";
 
 export const OPENROUTER_MODEL_FALLBACK_ORDER = [
     "deepseek/deepseek-chat",
-    "qwen/qwen-2.5-72b-instruct",
-    "meta-llama/llama-3.3-70b-instruct",
     "openai/gpt-4o-mini",
-    "openrouter/free",
+    "meta-llama/llama-3.3-70b-instruct",
+    "qwen/qwen-2.5-72b-instruct",
 ] as const;
 
 export const DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat";
@@ -29,11 +29,10 @@ export const normalizeOpenRouterPrimaryModel = (value?: string | null) => {
 };
 
 export const GEMINI_MODEL_OPTIONS = [
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
-    "gemini-3.7-flash",
-    "gemini-2.5-flash",
 ] as const;
 
 const GEMINI_MODEL_MIGRATIONS: Record<string, string> = {
@@ -46,9 +45,8 @@ const GEMINI_MODEL_MIGRATIONS: Record<string, string> = {
     "gemini-1.5-flash-8b": "gemini-3.5-flash-lite",
     "gemini-1.5-pro": "gemini-3.6-flash",
     "gemini-1.5-pro-latest": "gemini-3.6-flash",
-    "gemini-3.5-flash": "gemini-3.6-flash",
-    "gemini-3.1-flash": "gemini-3.5-flash",
-    "gemini-flash": "gemini-3.5-flash",
+    "gemini-3.1-flash": DEFAULT_GEMINI_FALLBACK_MODEL,
+    "gemini-flash": DEFAULT_GEMINI_MODEL,
     "gemini-flash-lite": "gemini-3.5-flash-lite",
 };
 

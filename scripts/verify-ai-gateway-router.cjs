@@ -36,10 +36,11 @@ const policy = (overrides = {}) => ({
     maxQueueMs: 0,
     ...overrides,
 });
-const candidate = (key, weight = 10, overrides = {}) => ({
+const candidate = (key, weight = 10, overrides = {}, priority) => ({
     key,
     provider: key.split(':')[0],
     model: key.split(':').slice(1).join(':'),
+    priority,
     weight,
     policy: policy(overrides),
     value: key,
@@ -62,6 +63,24 @@ const candidate = (key, weight = 10, overrides = {}) => ({
     assert.equal(nvidia.maxConcurrency, 4);
     const nvidiaOverride = resolveGatewayRatePolicy('nvidia', 'meta/llama-3.1-8b-instruct', { NVIDIA_GATEWAY_RPM: '11' });
     assert.equal(nvidiaOverride.rpm, 11);
+    const geminiQuality = resolveGatewayRatePolicy('gemini', 'gemini-3.7-flash', {});
+    assert.equal(geminiQuality.rpd, 20);
+    assert.equal(geminiQuality.tpm, 1_000_000);
+    const geminiCapacity = resolveGatewayRatePolicy('gemini', 'gemini-3.5-flash-lite', {});
+    assert.equal(geminiCapacity.rpd, 500);
+
+    for (let index = 0; index < 128; index += 1) {
+        const strictRouter = new AdaptiveGatewayRouter();
+        const strictPrimary = candidate('gemini:gemini-3.7-flash', 1, {}, 0);
+        const strictSecond = candidate('gemini:gemini-3.6-flash', 100, {}, 1);
+        const strictThird = candidate('groq:openai/gpt-oss-120b', 1000, {}, 2);
+        const strictLease = await strictRouter.acquire(
+            [strictPrimary, strictSecond, strictThird],
+            { routingKey: `strict-${index}`, estimatedTokens: 10, maxQueueMs: 0 },
+        );
+        assert.equal(strictLease.candidate.key, strictPrimary.key, 'lowest numeric priority must always win while ready');
+        strictLease.succeed(50);
+    }
 
     const fallbackRouter = new AdaptiveGatewayRouter();
     const first = candidate('primary:model', 20, { maxConcurrency: 1 });
@@ -99,7 +118,7 @@ const candidate = (key, weight = 10, overrides = {}) => ({
         (error) => error instanceof GatewayCapacityError,
     );
 
-    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 concurrency=1 rpm=1 circuit=1 env_limits=1 nvidia=1');
+    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 concurrency=1 rpm=1 circuit=1 env_limits=1 gemini_quota=1 nvidia=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);
