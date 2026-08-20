@@ -8,7 +8,11 @@ import { reconcilePendingPayments } from '@/lib/paymentReconciliation';
 import { calculateLeadScore, markLeadPaid, parseLeadScore, toStoredLeadScore } from '@/lib/leadScoring';
 import { shapeConversationBubbles } from '@/lib/conversationBubbles';
 import { findLatestConversationStartAt } from '@/lib/conversationEpisode';
-import { refineNewRelationshipMessages } from '@/lib/conversationQuality';
+import {
+    buildConversationRecoveryMessages,
+    filterConversationConsistencyMessages,
+    refineNewRelationshipMessages,
+} from '@/lib/conversationQuality';
 import {
     mergeLeadMemoryPatch,
     mergeUniqueLeadMemoryValues as mergeUnique,
@@ -252,18 +256,6 @@ const sanitizeOutgoingMessage = (text: unknown) => {
     out = out.replace(/\s*(?:\.{3,}|…)\s*$/u, '');
     out = fixGluedWords(out);
     return out;
-};
-
-const removeLeadEchoes = (messages: unknown[], userText: string) => {
-    const leadLines = String(userText || '')
-        .split(/\r?\n/)
-        .map((line) => normalizeLoopText(line))
-        .filter(Boolean);
-    const leadPhrases = new Set([
-        normalizeLoopText(userText),
-        ...leadLines,
-    ].filter(Boolean));
-    return messages.filter((message) => !leadPhrases.has(normalizeLoopText(message)));
 };
 
 const userAskedToRepeatMedia = (text: string) => /\b(de novo|outra vez|reenviar|reenvia|envia de novo|manda de novo|a mesma foto|o mesmo video|o mesmo vídeo)\b/i.test(text || '');
@@ -1811,24 +1803,36 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
 
     // 6. Enviar Respostas
 
-    const { data: recentBotTextRows } = await supabase
+    const { data: recentConversationTextRows } = await supabase
         .from('messages')
-        .select('content')
+        .select('sender,content')
         .eq('session_id', session.id)
-        .eq('sender', 'bot')
+        .in('sender', ['user', 'bot'])
         .order('created_at', { ascending: false })
-        .limit(30);
-    const recentBotTextKeys = new Set(
-        (recentBotTextRows || [])
-            .map((row: any) => normalizeLoopText(row.content || ''))
-            .filter((text: string) => text && !text.startsWith('midia ')),
-    );
+        .limit(80);
+    const recentBotTexts = (recentConversationTextRows || [])
+        .filter((row: any) => row.sender === 'bot')
+        .map((row: any) => String(row.content || ''))
+        .filter((text: string) => text && !normalizeLoopText(text).startsWith('midia '));
+    const recentUserTexts = (recentConversationTextRows || [])
+        .filter((row: any) => row.sender === 'user')
+        .map((row: any) => String(row.content || ''))
+        .filter(Boolean);
+    const buildRecoveryMessages = () => buildConversationRecoveryMessages({
+        userText: userOnlyText,
+        recentBotTexts,
+        recentUserTexts,
+        action: String(aiResponse.action || 'none'),
+    });
 
     const outgoingMessages = normalizeAiMessageList(aiResponse.messages);
 
-    let safeMessages = removeLeadEchoes(
+    let safeMessages = filterConversationConsistencyMessages(
         outgoingMessages.length > 0 ? outgoingMessages : ['oii?'],
-        userOnlyText,
+        {
+            currentUserText: userOnlyText,
+            recentUserTexts,
+        },
     )
         .map((m) => sanitizeOutgoingMessage(m))
         .filter(Boolean);
@@ -1865,13 +1869,9 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         safeMessages = safeMessages.filter((message: string) => !isMediaAnnouncement(message));
     }
     if (safeMessages.length === 0 && (!userAskedMedia || mediaSuppressedForRepetition || mediaSuppressedForPolicy)) {
-        safeMessages = hasExplicitSexualFantasyTrigger(userOnlyText)
-            ? ['vc é bem direto hein kkk', 'gostei de saber o que passou na sua cabeça']
-            : mediaSuppressedForRepetition
-                ? ['essa eu já tinha te mandado, me pede outra diferente']
-                : mediaSuppressedForPolicy
-                    ? ['kkk me empolguei, continua me contando']
-                    : ['entendi, me explica só essa parte melhor'];
+        safeMessages = mediaSuppressedForRepetition
+            ? ['essa eu já tinha te mandado, me pede outra diferente']
+            : buildRecoveryMessages();
     }
     if (cityQuestion && hasCity) {
         const forcedCityAnswer = `sou de ${userCity}, e vc?`;
@@ -1898,13 +1898,13 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         maxChars: aiResponse.max_chars_per_message || 100,
     });
 
-    safeMessages = safeMessages.filter((message: string) =>
-        !recentBotTextKeys.has(normalizeLoopText(message))
-    );
+    safeMessages = filterConversationConsistencyMessages(safeMessages, {
+        currentUserText: userOnlyText,
+        recentUserTexts,
+        recentBotTexts,
+    });
     if (safeMessages.length === 0 && !MEDIA_ACTIONS.has(String(aiResponse.action || 'none'))) {
-        safeMessages = hasExplicitSexualFantasyTrigger(userOnlyText)
-            ? ['vc é bem direto hein kkk']
-            : ['entendi, me conta só essa parte melhor'];
+        safeMessages = buildRecoveryMessages();
     }
 
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));

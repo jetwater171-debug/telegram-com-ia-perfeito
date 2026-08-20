@@ -6,6 +6,30 @@ const isLoneLaugh = (value: unknown) => /^(?:k{2,}|r+s+|h{2,}a+h*)[!?.\s]*$/i.te
 const isGenericDayQuestion = (value: unknown) => /^(?:e\s+)?como (?:ta|esta|foi) (?:o )?seu dia\??$/i.test(lower(value));
 const asksName = (value: unknown) => /\b(como (?:vc|voce) se chama|qual (?:e )?seu nome|como eu te chamo)\b/i.test(lower(value));
 
+const tokens = (value: unknown) => lower(value).match(/[a-z0-9]+/g) || [];
+
+const isMeaningfulPhrase = (value: unknown) => {
+    const text = lower(value);
+    return text.length >= 8 && tokens(text).length >= 2;
+};
+
+const isNearDuplicate = (left: unknown, right: unknown) => {
+    const leftText = lower(left);
+    const rightText = lower(right);
+    if (!leftText || !rightText) return false;
+    if (leftText === rightText) return true;
+
+    const leftTokens = new Set(tokens(leftText));
+    const rightTokens = new Set(tokens(rightText));
+    if (leftTokens.size < 4 || rightTokens.size < 4) return false;
+
+    let shared = 0;
+    leftTokens.forEach((token) => {
+        if (rightTokens.has(token)) shared += 1;
+    });
+    return shared / Math.min(leftTokens.size, rightTokens.size) >= 0.8;
+};
+
 const stripPrematureEndearments = (value: unknown) => normalize(value)
     .replace(/\b(amorzinho|amor|anjo|vida|bb|bebe|bebê|lindo|gostoso|sumido)\b/gi, '')
     .replace(/\s+([,!.?])/g, '$1')
@@ -50,4 +74,86 @@ export const refineNewRelationshipMessages = (messages: unknown[], options: {
         return options.hasKnownName ? ['eaii, tudo bem?'] : ['oiii, tudo bem?', 'como vc se chama?'];
     }
     return unique.slice(0, 2);
+};
+
+export const filterConversationConsistencyMessages = (messages: unknown[], options: {
+    currentUserText?: string;
+    recentUserTexts?: unknown[];
+    recentBotTexts?: unknown[];
+}) => {
+    const recentUserTexts = [options.currentUserText, ...(options.recentUserTexts || [])]
+        .map(normalize)
+        .filter(isMeaningfulPhrase);
+    const recentBotTexts = (options.recentBotTexts || [])
+        .map(normalize)
+        .filter(isMeaningfulPhrase);
+    const accepted: string[] = [];
+
+    for (const item of messages || []) {
+        const message = normalize(item);
+        if (!message) continue;
+
+        const echoesLead = isMeaningfulPhrase(message)
+            && recentUserTexts.some((leadText) => isNearDuplicate(message, leadText));
+        const repeatsBot = isMeaningfulPhrase(message)
+            && recentBotTexts.some((botText) => isNearDuplicate(message, botText));
+        const repeatsBatch = accepted.some((acceptedMessage) => isNearDuplicate(message, acceptedMessage));
+        if (echoesLead || repeatsBot || repeatsBatch) continue;
+        accepted.push(message);
+    }
+
+    return accepted;
+};
+
+export const buildConversationRecoveryMessages = (options: {
+    userText?: string;
+    recentBotTexts?: unknown[];
+    recentUserTexts?: unknown[];
+    action?: string;
+}) => {
+    const userText = lower(options.userText);
+    const action = lower(options.action);
+    const complaint = /\b(ja falei|repet|enrolando|nao respondeu|que resposta|nada a ver|parece bot|e bot|mentira|engan|errando|deu erro|nao funciona)\b/i.test(userText);
+    const asksMedia = /\b(foto|fotinha|video|audio|voz|manda|mostra|quero ver)\b/i.test(userText)
+        || action.startsWith('send_');
+    const asksPaymentOrAccess = /\b(pix|pagar|pagamento|vip|acesso|link|chamada)\b/i.test(userText)
+        || action.includes('payment');
+    const affirmed = /^(sim|quero|pode|manda|bora|vamos|claro|com certeza|ok|beleza)\b/i.test(userText);
+
+    const candidates = complaint
+        ? [
+            'vc tem razão, vc já explicou e eu que repeti',
+            'eu me perdi na resposta e não vou te fazer repetir de novo',
+            'vc já tinha deixado isso claro, eu que respondi outra coisa',
+        ]
+        : asksPaymentOrAccess
+            ? [
+                'entendi, vou direto no que vc pediu agora',
+                'sim, peguei o que vc quer e vou resolver essa parte',
+                'fechou, sem enrolar agora',
+            ]
+            : asksMedia
+                ? [
+                    'sim, entendi direitinho o que vc pediu',
+                    'peguei a ideia, pode deixar',
+                    'agora entendi o que vc quer ver',
+                ]
+                : affirmed
+                    ? [
+                        'sim, pode deixar',
+                        'fechou, entendi',
+                        'ta bom, peguei a ideia',
+                    ]
+                    : [
+                        'agora eu entendi o que vc quis dizer',
+                        'peguei seu ponto agora',
+                        'sim, entendi direito agora',
+                    ];
+
+    const filtered = filterConversationConsistencyMessages(candidates, {
+        currentUserText: options.userText,
+        recentUserTexts: options.recentUserTexts,
+        recentBotTexts: options.recentBotTexts,
+    });
+    return filtered.length > 0 ? filtered.slice(0, 1) : ['vou responder direito sem te fazer repetir'];
 };
