@@ -72,6 +72,18 @@ const providerDefaults = (provider: string, model: string): GatewayRatePolicy =>
     const normalizedProvider = provider.toLowerCase();
     const normalizedModel = model.toLowerCase();
 
+    if (normalizedProvider === 'bai') {
+        return {
+            rpm: 60,
+            tpm: 1_000_000,
+            rpd: 100_000,
+            tpd: 1_000_000_000,
+            maxConcurrency: 12,
+            timeoutMs: 20_000,
+            maxQueueMs: 2_000,
+        };
+    }
+
     if (normalizedProvider === 'groq') {
         const instant8b = normalizedModel.includes('llama-3.1-8b-instant') || normalizedModel.includes('8b');
         return {

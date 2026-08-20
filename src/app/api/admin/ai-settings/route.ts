@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer as supabase } from "@/lib/supabaseServer";
 import {
+    DEFAULT_BAI_MODEL,
     DEFAULT_GEMINI_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_GROQ_QUALITY_MODEL,
@@ -13,10 +14,11 @@ import {
 import { DEFAULT_FISH_AUDIO_SETTINGS, normalizeFishAudioModel } from "@/lib/fishAudio";
 import { aiGatewayRouter } from "@/lib/aiGatewayRouter";
 
-const PROVIDERS = ["gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"] as const;
+const PROVIDERS = ["bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"] as const;
 type ProviderKey = typeof PROVIDERS[number];
 
 const CONFIG_KEYS = [
+    "bai_api_key", "bai_model",
     "openrouter_api_key", "gemini_api_key", "groq_api_key", "nvidia_api_key", "mistral_api_key", "cerebras_api_key",
     "cloudflare_ai_api_token", "cloudflare_account_id", "ai_custom_gateway_api_key", "ai_custom_gateway_base_url",
     "ai_custom_gateway_model", "ai_custom_gateway_tiers", "ai_custom_gateway_weight",
@@ -32,6 +34,7 @@ const CONFIG_KEYS = [
 ];
 
 const DEFAULTS = {
+    bai_model: process.env.BAI_MODEL || DEFAULT_BAI_MODEL,
     openrouter_base_url: "https://openrouter.ai/api/v1",
     openrouter_referer: process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
     openrouter_title: "Lari Telegram Bot",
@@ -82,6 +85,7 @@ const normalizeProviderOrder = (value?: string) => {
         .filter((item): item is ProviderKey => PROVIDERS.includes(item));
     const legacyTwoProviderOrder = parts.length > 0 && parts.every((provider) => provider === "openrouter" || provider === "gemini");
     if (legacyTwoProviderOrder) return PROVIDERS.join(",");
+    if (!parts.includes("bai")) return Array.from(new Set(["bai", ...parts, ...PROVIDERS])).join(",");
     return Array.from(new Set([...parts, ...PROVIDERS])).join(",");
 };
 
@@ -102,6 +106,7 @@ const secretState = (map: Record<string, string>, settingKey: string, envKey: st
 };
 
 const buildSettings = (map: Record<string, string>) => {
+    const bai = secretState(map, "bai_api_key", "BAI_API_KEY");
     const openrouter = secretState(map, "openrouter_api_key", "OPENROUTER_API_KEY");
     const gemini = secretState(map, "gemini_api_key", "GEMINI_API_KEY");
     const groq = secretState(map, "groq_api_key", "GROQ_API_KEY");
@@ -113,6 +118,7 @@ const buildSettings = (map: Record<string, string>) => {
     const fish = secretState(map, "fish_audio_api_key", "FISH_AUDIO_API_KEY");
 
     return {
+        baiApiKeyMasked: bai.masked, baiApiKeySaved: bai.saved, baiApiKeySource: bai.source,
         openrouterApiKeyMasked: openrouter.masked, openrouterApiKeySaved: openrouter.saved, openrouterApiKeySource: openrouter.source,
         geminiApiKeyMasked: gemini.masked, geminiApiKeySaved: gemini.saved, geminiApiKeySource: gemini.source,
         groqApiKeyMasked: groq.masked, groqApiKeySaved: groq.saved, groqApiKeySource: groq.source,
@@ -130,6 +136,7 @@ const buildSettings = (map: Record<string, string>) => {
         customModel: map.ai_custom_gateway_model || process.env.AI_CUSTOM_DRAFT_MODEL || "auto",
         customTiers: map.ai_custom_gateway_tiers || process.env.AI_CUSTOM_GATEWAY_TIERS || "starter,buyer",
         customWeight: Number(map.ai_custom_gateway_weight || process.env.AI_CUSTOM_GATEWAY_WEIGHT || 5),
+        baiModel: map.bai_model || DEFAULTS.bai_model,
         groqModel: normalizeGroqModelName(map.groq_model, DEFAULTS.groq_model),
         groqStarterModel: normalizeGroqModelName(map.groq_starter_model, DEFAULTS.groq_starter_model),
         nvidiaModel: map.nvidia_model || DEFAULTS.nvidia_model,
@@ -179,6 +186,7 @@ export async function POST(req: NextRequest) {
         const body = await req.json();
         const providerOrder = normalizeProviderOrder(body.aiModelOrder || body.aiDraftModelOrder);
         const rows: { key: string; value: string }[] = [
+            { key: "bai_model", value: cleanText(body.baiModel, DEFAULTS.bai_model) },
             { key: "openrouter_base_url", value: cleanText(body.openrouterBaseUrl, DEFAULTS.openrouter_base_url) },
             { key: "openrouter_referer", value: cleanText(body.openrouterReferer, DEFAULTS.openrouter_referer) },
             { key: "openrouter_title", value: cleanText(body.openrouterTitle, DEFAULTS.openrouter_title) },
@@ -219,6 +227,7 @@ export async function POST(req: NextRequest) {
         ];
 
         const secretInputs: Array<[string, unknown]> = [
+            ["bai_api_key", body.baiApiKey],
             ["openrouter_api_key", body.openrouterApiKey], ["gemini_api_key", body.geminiApiKey],
             ["groq_api_key", body.groqApiKey], ["mistral_api_key", body.mistralApiKey],
             ["nvidia_api_key", body.nvidiaApiKey],
@@ -259,6 +268,7 @@ export async function PUT(req: NextRequest) {
             response = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", { headers: { Authorization: `Bearer ${key}` } });
         } else {
             const config = {
+                bai: { key: readSecret(body.apiKey) || readSecret(map.bai_api_key) || readSecret(process.env.BAI_API_KEY), base: String(process.env.BAI_BASE_URL || "https://api.b.ai/v1").replace(/\/$/, "") },
                 groq: { key: readSecret(body.apiKey) || readSecret(map.groq_api_key) || readSecret(process.env.GROQ_API_KEY), base: "https://api.groq.com/openai/v1" },
                 nvidia: { key: readSecret(body.apiKey) || readSecret(map.nvidia_api_key) || readSecret(process.env.NVIDIA_API_KEY), base: "https://integrate.api.nvidia.com/v1" },
                 mistral: { key: readSecret(body.apiKey) || readSecret(map.mistral_api_key) || readSecret(process.env.MISTRAL_API_KEY), base: "https://api.mistral.ai/v1" },
@@ -271,8 +281,10 @@ export async function PUT(req: NextRequest) {
                 const accountId = cleanText(body.accountId || map.cloudflare_account_id || process.env.CLOUDFLARE_ACCOUNT_ID);
                 if (!accountId) throw new Error("informe o Account ID da Cloudflare");
                 response = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search`, { headers: { Authorization: `Bearer ${config.key}` } });
-            } else if (provider === "nvidia") {
-                const model = cleanText(body.model || map.nvidia_model || DEFAULTS.nvidia_model);
+            } else if (provider === "nvidia" || provider === "bai") {
+                const model = provider === "bai"
+                    ? cleanText(body.model || map.bai_model || DEFAULTS.bai_model)
+                    : cleanText(body.model || map.nvidia_model || DEFAULTS.nvidia_model);
                 response = await fetchWithTimeout(`${config.base}/chat/completions`, {
                     method: "POST",
                     headers: { Authorization: `Bearer ${config.key}`, "Content-Type": "application/json" },

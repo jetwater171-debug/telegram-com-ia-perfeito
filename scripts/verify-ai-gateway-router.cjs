@@ -68,6 +68,12 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
     assert.equal(geminiQuality.tpm, 1_000_000);
     const geminiCapacity = resolveGatewayRatePolicy('gemini', 'gemini-3.5-flash-lite', {});
     assert.equal(geminiCapacity.rpd, 500);
+    const bai = resolveGatewayRatePolicy('bai', 'deepseek-v4-flash', {});
+    assert.equal(bai.rpm, 60);
+    assert.equal(bai.maxConcurrency, 12);
+    assert.equal(bai.tpm, 1_000_000);
+    const baiOverride = resolveGatewayRatePolicy('bai', 'deepseek-v4-flash', { BAI_GATEWAY_CONCURRENCY: '7' });
+    assert.equal(baiOverride.maxConcurrency, 7);
 
     for (let index = 0; index < 128; index += 1) {
         const strictRouter = new AdaptiveGatewayRouter();
@@ -118,7 +124,7 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         (error) => error instanceof GatewayCapacityError,
     );
 
-    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 concurrency=1 rpm=1 circuit=1 env_limits=1 gemini_quota=1 nvidia=1');
+    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 concurrency=1 rpm=1 circuit=1 env_limits=1 gemini_quota=1 nvidia=1 bai=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

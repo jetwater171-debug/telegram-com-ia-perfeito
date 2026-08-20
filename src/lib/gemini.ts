@@ -2,6 +2,7 @@ import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/ge
 import { AIResponse, LeadStats, AiDebugData } from "@/types";
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import {
+    DEFAULT_BAI_MODEL,
     DEFAULT_GEMINI_FALLBACK_MODEL,
     DEFAULT_GEMINI_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
@@ -430,7 +431,7 @@ const parseRetryAfterMs = (value: string | null) => {
 };
 
 type AiRole = "strategy" | "draft" | "review" | "evaluator";
-type AiProvider = "openrouter" | "gemini" | "groq" | "nvidia" | "mistral" | "cerebras" | "cloudflare" | "custom";
+type AiProvider = "bai" | "openrouter" | "gemini" | "groq" | "nvidia" | "mistral" | "cerebras" | "cloudflare" | "custom";
 
 type AiGatewayConfig = {
     provider: AiProvider;
@@ -476,6 +477,8 @@ type AiRuntimeSettings = {
 };
 
 const AI_SETTING_KEYS = [
+    "bai_api_key",
+    "bai_model",
     "openrouter_api_key",
     "gemini_api_key",
     "openrouter_base_url",
@@ -524,7 +527,7 @@ const ROLE_ENV_KEYS: Record<AiRole, string> = {
     evaluator: "AI_EVALUATOR_MODEL_ORDER",
 };
 
-const DEFAULT_PROVIDER_ORDER = "gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom";
+const DEFAULT_PROVIDER_ORDER = "bai,gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom";
 const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
     strategy: DEFAULT_OPENROUTER_MODEL,
     draft: DEFAULT_OPENROUTER_MODEL,
@@ -583,6 +586,21 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>): AiGatewayC
             });
         }
     };
+
+    const baiModel = configured('bai_model', 'BAI_MODEL', DEFAULT_BAI_MODEL);
+    addProvider({
+        provider: 'bai',
+        apiKey: configured('bai_api_key', 'BAI_API_KEY'),
+        baseUrl: process.env.BAI_BASE_URL || 'https://api.b.ai/v1',
+        models: {
+            strategy: baiModel,
+            draft: baiModel,
+            review: baiModel,
+            evaluator: baiModel,
+        },
+        tiers: ['starter', 'buyer', 'premium', 'elite'],
+        weight: 40,
+    });
 
     const groqApiKey = configured('groq_api_key', 'GROQ_API_KEY');
     const groqStarterModel = normalizeGroqModelName(configured('groq_starter_model', 'GROQ_STARTER_MODEL', DEFAULT_GROQ_STARTER_MODEL), DEFAULT_GROQ_STARTER_MODEL);
@@ -757,7 +775,7 @@ const parseAiModelEntry = (entry: string, role: AiRole, settings: AiRuntimeSetti
         const model = getRoleProviderModel(role, provider, settings);
         return { provider, model, label: `${provider}:${model}` };
     }
-    if (["groq", "nvidia", "mistral", "cerebras", "cloudflare", "custom"].includes(providerOnly)) return null;
+    if (["bai", "groq", "nvidia", "mistral", "cerebras", "cloudflare", "custom"].includes(providerOnly)) return null;
 
     const providerMatch = trimmed.match(/^(openrouter|gemini):(.+)$/i);
     if (!providerMatch) {
@@ -783,13 +801,14 @@ const parseAiModelOrder = (value: string | null | undefined, role: AiRole, setti
 };
 
 const parseProviderPreference = (value: string | null | undefined) => {
-    const supported: AiProvider[] = ['gemini', 'groq', 'nvidia', 'cloudflare', 'mistral', 'openrouter', 'cerebras', 'custom'];
+    const supported: AiProvider[] = ['bai', 'gemini', 'groq', 'nvidia', 'cloudflare', 'mistral', 'openrouter', 'cerebras', 'custom'];
     const parsed = String(value || '')
         .split(',')
         .map((entry) => entry.trim().toLowerCase().split(':')[0] as AiProvider)
         .filter((provider): provider is AiProvider => supported.includes(provider));
     const legacyTwoProviderOrder = parsed.length > 0 && parsed.every((provider) => provider === 'openrouter' || provider === 'gemini');
     if (legacyTwoProviderOrder) return supported;
+    if (!parsed.includes('bai')) return Array.from(new Set(['bai', ...parsed, ...supported]));
     return Array.from(new Set([...parsed, ...supported]));
 };
 
@@ -859,18 +878,20 @@ const getTierAwareGatewayOrder = ({
     settings,
     tier,
     routingKey,
+    preferGemini = false,
 }: {
     role: AiRole;
     settings: AiRuntimeSettings;
     tier?: AiIntelligenceTier;
     routingKey?: string;
+    preferGemini?: boolean;
 }) => {
     const normal = getAiGatewayOrder(role, settings, tier);
     const geminiPrimary: AiGatewayConfig[] = [];
 
     // Linha principal estrita: qualidade primeiro, depois capacidade. A lista normal
     // entra apenas quando todos estes modelos estiverem indisponíveis ou em cooldown.
-    if (settings.geminiApiKey) {
+    if (preferGemini && settings.geminiApiKey) {
         const roleModel = getRoleProviderModel(role, 'gemini', settings);
         [
             DEFAULT_GEMINI_MODEL,
@@ -1062,6 +1083,8 @@ const callOpenRouterJson = async <T,>(
                 schema: toOpenRouterJsonSchema(responseSchemaConfig),
             },
         };
+    } else if (gateway.provider === 'bai') {
+        body.response_format = { type: 'json_object' };
     }
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -1082,7 +1105,7 @@ const callOpenRouterJson = async <T,>(
 
     const payload = parseJsonText<any>(responseBody);
     const content = payload?.choices?.[0]?.message?.content;
-    if (!content) throw new Error(`OpenRouter empty response from ${gateway.model}`);
+    if (!content) throw new Error(`${gateway.provider} empty response from ${gateway.model}`);
     return {
         data: parseJsonText<T>(String(content)),
         resolvedModel: String(payload?.model || gateway.model),
@@ -1132,13 +1155,15 @@ const callAiGatewayJson = async <T,>(options: {
     orchestrationTier?: AiIntelligenceTier;
     routingKey?: string;
 }): Promise<{ data: T; gateway: AiGatewayConfig; attempts: string[] }> => {
-    const hasImage = String(options.mediaPart?.inlineData?.mimeType || '').startsWith('image/');
-    const providerOnly = hasImage ? 'gemini' : options.providerOnly;
+    const mediaMimeType = String(options.mediaPart?.inlineData?.mimeType || '').trim();
+    const hasMedia = Boolean(mediaMimeType);
+    const providerOnly = hasMedia ? 'gemini' : options.providerOnly;
     const gateways = getTierAwareGatewayOrder({
         role: options.role,
         settings: options.settings,
         tier: options.orchestrationTier,
         routingKey: options.routingKey,
+        preferGemini: hasMedia,
     })
         .filter((gateway) => !providerOnly || gateway.provider === providerOnly);
     const attempts: string[] = [];
@@ -1162,7 +1187,7 @@ const callAiGatewayJson = async <T,>(options: {
             provider: gateway.provider,
             model: gateway.model,
             priority,
-            weight: Math.max(1, Number(gateway.weight || (gateway.provider === 'gemini' ? 57 : gateway.provider === 'groq' ? 18 : 7))),
+            weight: Math.max(1, Number(gateway.weight || (gateway.provider === 'bai' ? 40 : gateway.provider === 'gemini' ? 57 : gateway.provider === 'groq' ? 18 : 7))),
             policy,
             value: { ...gateway, policy },
         };
