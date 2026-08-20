@@ -14,6 +14,7 @@ import {
     OPENROUTER_MODEL_FALLBACK_ORDER,
 } from '@/lib/aiModels';
 import { buildCleanAiHistory } from '@/lib/aiHistory';
+import { toSerializableDebugValue } from '@/lib/aiDebug';
 import { normalizeAiMessageList } from '@/lib/aiMessageNormalization';
 import { filterConversationEpisodeMessages } from '@/lib/conversationEpisode';
 import { scorePreviewForContext } from '@/lib/previewCatalog';
@@ -1746,7 +1747,7 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                 prompt: draftPrompt,
                 user_prompt: draftParts[0].text,
                 gateway_attempts: draftResult.attempts,
-                output: draftResult.data,
+                output: toSerializableDebugValue(draftResult.data),
             };
 
             console.log(`AI Gateway Draft (${draftResult.gateway.label}) Attempt ${attempt + 1}:`, responseText);
@@ -1931,6 +1932,7 @@ Faca a avaliacao final.`
                 content: String(h.parts?.[0]?.text || ''),
             }));
 
+            const rawResponseForDebug = toSerializableDebugValue(draftResult.data) as Record<string, any>;
             const debugStages: Record<string, any> = {};
             if (strategyResultInfo) debugStages.strategy = strategyResultInfo;
             if (draftResultInfo) debugStages.draft = draftResultInfo;
@@ -1940,7 +1942,7 @@ Faca a avaliacao final.`
                 stage.clean_history = cleanHistoryForDebug;
             }
 
-            jsonResponse.ai_debug = {
+            const aiDebug: AiDebugData = {
                 timestamp: new Date().toISOString(),
                 run_id: crypto.randomUUID(),
                 model: draftResult?.gateway?.model || 'gemini-3.5-flash',
@@ -1950,7 +1952,7 @@ Faca a avaliacao final.`
                 system_prompt: draftPrompt,
                 user_prompt: draftParts[0]?.text || userMessage,
                 clean_history: cleanHistoryForDebug,
-                raw_response: draftResult.data as Record<string, any>,
+                raw_response: rawResponseForDebug,
                 final_response: {
                     internal_thought: jsonResponse.internal_thought,
                     lead_classification: jsonResponse.lead_classification,
@@ -1971,6 +1973,7 @@ Faca a avaliacao final.`
                 media: { attached: Boolean(media), mime_type: media?.mimeType || null },
                 tokens_estimated: estimateAiTokens(draftPrompt, draftParts[0]?.text || userMessage, cleanHistoryForDebug),
             };
+            jsonResponse.ai_debug = toSerializableDebugValue(aiDebug);
 
             console.log("[AI Gateway Final Return] Stats Calculados:", JSON.stringify(jsonResponse.lead_stats));
 
