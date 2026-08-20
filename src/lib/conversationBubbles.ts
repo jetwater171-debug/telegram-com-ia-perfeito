@@ -34,7 +34,7 @@ const findNaturalMidpoint = (text: string) => {
     return candidates[0] || -1;
 };
 
-const splitBubble = (raw: string, maxChars: number, encourageSplit: boolean) => {
+const splitBubble = (raw: string, maxChars: number) => {
     const text = compact(raw);
     if (!text) return [];
 
@@ -52,13 +52,6 @@ const splitBubble = (raw: string, maxChars: number, encourageSplit: boolean) => 
         return splitByWords(part, maxChars);
     });
 
-    if (encourageSplit && chunks.length === 1 && chunks[0].length >= 62) {
-        const midpoint = findNaturalMidpoint(chunks[0]);
-        if (midpoint > 0) {
-            return [chunks[0].slice(0, midpoint), chunks[0].slice(midpoint)].map(compact).filter(Boolean);
-        }
-    }
-
     return chunks;
 };
 
@@ -73,14 +66,13 @@ export const shapeConversationBubbles = (
     messages: string[],
     options: ShapeConversationBubblesOptions = {},
 ) => {
-    const preferredCount = Math.max(2, Math.min(3, Number(options.preferredCount || 2)));
-    const maxBubbles = Math.max(2, Math.min(3, Number(options.maxBubbles || 3)));
-    const maxChars = Math.max(60, Math.min(120, Number(options.maxChars || 90)));
-    const encourageSplit = messages.length < preferredCount;
+    const preferredCount = Math.max(1, Math.min(6, Number(options.preferredCount || 1)));
+    const maxBubbles = Math.max(1, Math.min(6, Number(options.maxBubbles || Math.max(1, preferredCount))));
+    const maxChars = Math.max(55, Math.min(130, Number(options.maxChars || 100)));
     const seen = new Set<string>();
 
     return messages
-        .flatMap((message) => splitBubble(message, maxChars, encourageSplit))
+        .flatMap((message) => splitBubble(message, maxChars))
         .map(compact)
         .filter((message) => {
             const key = normalizedKey(message);
@@ -90,4 +82,3 @@ export const shapeConversationBubbles = (
         })
         .slice(0, maxBubbles);
 };
-

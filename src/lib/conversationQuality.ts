@@ -3,6 +3,16 @@ const lower = (value: unknown) => normalize(value).normalize('NFD').replace(/\p{
 const isGreeting = (value: unknown) => /^(oi+e*|ola+|e\s*ai|eai|bom dia|boa tarde|boa noite)([,!?.\s].*)?$/i.test(lower(value));
 const isGreetingOnly = (value: unknown) => /^(oi+e*|ola+|e\s*ai|eai|bom dia|boa tarde|boa noite|tudo bem)[!?.\s]*$/i.test(lower(value));
 const isLoneLaugh = (value: unknown) => /^(?:k{2,}|r+s+|h{2,}a+h*)[!?.\s]*$/i.test(lower(value));
+const isGenericDayQuestion = (value: unknown) => /^(?:e\s+)?como (?:ta|esta|foi) (?:o )?seu dia\??$/i.test(lower(value));
+const asksName = (value: unknown) => /\b(como (?:vc|voce) se chama|qual (?:e )?seu nome|como eu te chamo)\b/i.test(lower(value));
+
+const stripPrematureEndearments = (value: unknown) => normalize(value)
+    .replace(/\b(amorzinho|amor|anjo|vida|bb|bebe|bebê|lindo|gostoso|sumido)\b/gi, '')
+    .replace(/\s+([,!.?])/g, '$1')
+    .replace(/,\s*([!?])/g, '$1')
+    .replace(/^[,\s]+|[,\s]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 export const refineNewRelationshipMessages = (messages: unknown[], options: {
     userText: string;
@@ -13,10 +23,14 @@ export const refineNewRelationshipMessages = (messages: unknown[], options: {
     const userText = normalize(options.userText);
     const userOnlyGreeting = isGreetingOnly(userText) || /^\/start(?:\s+\S+)?$/i.test(userText);
     const lastBotAlreadyGreeted = isGreeting(options.lastBotContent) || /\btudo bem\b/i.test(lower(options.lastBotContent));
-    let cleaned = (messages || []).map((m) => normalize(m)).filter(Boolean).filter((message) => !isLoneLaugh(message));
+    let cleaned = (messages || []).map(stripPrematureEndearments).filter(Boolean).filter((message) => !isLoneLaugh(message));
 
     if (userOnlyGreeting && lastBotAlreadyGreeted) {
         cleaned = cleaned.filter((message) => !isGreeting(message));
+    }
+    if (userOnlyGreeting && !options.hasKnownName) {
+        cleaned = cleaned.filter((message) => !isGenericDayQuestion(message));
+        if (!cleaned.some(asksName)) cleaned.push('como vc se chama?');
     }
 
     const unique: string[] = [];
@@ -29,11 +43,11 @@ export const refineNewRelationshipMessages = (messages: unknown[], options: {
     }
     if (options.isConversationStart && userOnlyGreeting) {
         return options.hasKnownName
-            ? ['oii lindo, tudo bem?', 'como ta seu dia hj?']
-            : ['oii, tudo bem?', 'como eu te chamo, anjo?'];
+            ? ['oiii, tudo bem?']
+            : ['oiii, tudo bem?', 'como vc se chama?'];
     }
     if (unique.length === 0) {
-        return ['to adorando conversar com vc amor', 'me fala mais de vc vida'];
+        return options.hasKnownName ? ['eaii, tudo bem?'] : ['oiii, tudo bem?', 'como vc se chama?'];
     }
-    return unique.slice(0, 3);
+    return unique.slice(0, 2);
 };

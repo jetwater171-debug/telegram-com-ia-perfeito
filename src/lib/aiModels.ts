@@ -1,7 +1,7 @@
-export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+export const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
 export const DEFAULT_GEMINI_LITE_MODEL = "gemini-3.5-flash-lite";
-export const DEFAULT_GROQ_STARTER_MODEL = "llama-3.1-8b-instant";
-export const DEFAULT_GROQ_QUALITY_MODEL = "llama-3.3-70b-versatile";
+export const DEFAULT_GROQ_STARTER_MODEL = "openai/gpt-oss-20b";
+export const DEFAULT_GROQ_QUALITY_MODEL = "openai/gpt-oss-120b";
 
 export const OPENROUTER_MODEL_FALLBACK_ORDER = [
     "deepseek/deepseek-chat",
@@ -29,6 +29,7 @@ export const normalizeOpenRouterPrimaryModel = (value?: string | null) => {
 };
 
 export const GEMINI_MODEL_OPTIONS = [
+    "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.7-flash",
@@ -36,14 +37,16 @@ export const GEMINI_MODEL_OPTIONS = [
 ] as const;
 
 const GEMINI_MODEL_MIGRATIONS: Record<string, string> = {
-    "gemini-2.0-flash": "gemini-3.5-flash",
+    "gemini-2.5-flash-lite": "gemini-3.5-flash-lite",
+    "gemini-2.5-flash": "gemini-3.6-flash",
+    "gemini-2.0-flash": "gemini-3.6-flash",
     "gemini-2.0-flash-lite": "gemini-3.5-flash-lite",
-    "gemini-2.0-flash-exp": "gemini-3.5-flash",
-    "gemini-1.5-flash": "gemini-3.5-flash",
+    "gemini-2.0-flash-exp": "gemini-3.6-flash",
+    "gemini-1.5-flash": "gemini-3.6-flash",
     "gemini-1.5-flash-8b": "gemini-3.5-flash-lite",
-    "gemini-1.5-pro": "gemini-3.5-flash",
-    "gemini-1.5-pro-latest": "gemini-3.5-flash",
-    "gemini-3.6-flash": "gemini-3.5-flash",
+    "gemini-1.5-pro": "gemini-3.6-flash",
+    "gemini-1.5-pro-latest": "gemini-3.6-flash",
+    "gemini-3.5-flash": "gemini-3.6-flash",
     "gemini-3.1-flash": "gemini-3.5-flash",
     "gemini-flash": "gemini-3.5-flash",
     "gemini-flash-lite": "gemini-3.5-flash-lite",
@@ -59,8 +62,8 @@ export const normalizeGeminiModelName = (
 };
 
 const GROQ_MODEL_MIGRATIONS: Record<string, string> = {
-    "openai/gpt-oss-20b": DEFAULT_GROQ_STARTER_MODEL,
-    "openai/gpt-oss-120b": DEFAULT_GROQ_QUALITY_MODEL,
+    "llama-3.1-8b-instant": DEFAULT_GROQ_STARTER_MODEL,
+    "llama-3.3-70b-versatile": DEFAULT_GROQ_QUALITY_MODEL,
     "qwen/qwen3-32b": DEFAULT_GROQ_QUALITY_MODEL,
     "meta-llama/llama-4-scout-17b-16e-instruct": DEFAULT_GROQ_QUALITY_MODEL,
 };

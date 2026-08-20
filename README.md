@@ -99,7 +99,7 @@ O gateway não usa mais uma lista cega. Cada chamada passa por um roteador que c
 - afinidade estável por lead sem concentrar todos os leads no mesmo provedor;
 - circuit breaker diferente para chave inválida, quota, timeout, erro 5xx e JSON ruim;
 - fila curta por nível do cliente e fallback imediato quando outra rota tem capacidade;
-- modelo Groq 8B no primeiro contato e modelo maior somente depois da primeira compra;
+- modelo Groq GPT-OSS 20B no primeiro contato e GPT-OSS 120B somente nos níveis de maior qualidade;
 - recuperação textual em outro provedor quando a visão do Gemini não responder.
 
 Os limites conservadores podem ser ajustados sem alterar código. Exemplo:
@@ -119,7 +119,23 @@ Para coordenar várias instâncias da Vercel, execute `ai_gateway_capacity_migra
 
 O painel `/admin/ai` possui autosave, teste de conexão, estado da chave, ordem visual dos provedores e link direto para criar cada API key.
 
-O prompt compacto é o padrão. Para diagnóstico temporário do prompt antigo, use `LARI_LEGACY_PROMPT=true`.
+### Cérebro de conversa humanizado
+
+O contrato comportamental fica centralizado em `src/lib/lariConversationPrompts.ts` e é compartilhado por três etapas:
+
+1. **Cérebro geral:** separa fatos de hipóteses, lê estágio/necessidade e escolhe um único próximo passo.
+2. **Lari:** responde primeiro à mensagem literal, preserva ritmo e escreve normalmente 1 balão; mídia e venda só entram quando o turno sustenta.
+3. **Revisora:** entra em primeiro contato, estágio novo, mídia, preço, pagamento, baixa confiança ou rascunho frágil.
+
+O histórico operacional continua em 80/100/120 mensagens conforme o nível, mas cada `/start` abre um episódio novo. O formatador não divide uma resposta apenas para fabricar volume. Não existe mais prompt legado alternativo: produção, testes e painel usam o mesmo contrato central.
+
+Validação rápida do comportamento:
+
+```powershell
+node scripts/verify-lari-humanization.cjs
+node scripts/verify-conversation-brain.cjs
+node scripts/verify-ai-orchestration.cjs
+```
 
 Padrao sem variaveis de ordem:
 

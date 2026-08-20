@@ -1246,8 +1246,8 @@ ${combinedText}
 Leia todas as mensagens acima como uma fala agrupada do lead, com visao geral da conversa.
 Nao responda linha por linha.
 Responda principalmente a ultima intencao do lead, usando o contexto das mensagens anteriores.
-Em conversa normal, prefira 2-4 baloes curtos e naturais, como mensagens seguidas no Telegram.
-Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas se houver fantasia sexual explicita ja aberta pelo lead.`;
+Em conversa normal, prefira 1 balao curto; use 2 apenas quando a segunda ideia realmente precisar de outra mensagem.
+Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas em negociacao ou fantasia adulta explicita ja estabelecida.`;
     let mediaData = undefined;
 
     // Detectar Audio
@@ -1382,13 +1382,13 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead repetiu a mesma mensagem ${repetition.repeats}x ("${repetition.last}"). Responda diferente, quebre o loop e puxe o assunto com algo novo e humano. Nao repita a mesma frase.]`;
     }
     if (hasExplicitSexualFantasyTrigger(userOnlyText)) {
-        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead abriu putaria explicita. Antes de vender ou perguntar outra coisa, continue a fantasia no mesmo tema que ele trouxe. Faca ele imaginar a cena em varios baloes curtos, explicitos e naturais. Se a conversa estiver muito quente, pode usar 4-6 baloes; se estiver menos quente, use menos. Depois puxe para uma previa/oferta coerente se couber.]`;
+        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead abriu putaria explicita. Antes de vender ou perguntar outra coisa, responda ao mesmo tema e preserve os papeis da cena. Use 1-2 baloes por padrao e no maximo 4 se a fantasia ja estiver estabelecida. So puxe previa ou oferta quando houver uma ponte real.]`;
     }
     if (cityQuestion && hasCity) {
-        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou onde voce mora. Voce mora na MESMA cidade do lead: "${userCity}". Responda no PRIMEIRO BALAO de forma humana, curta e natural: "sou de ${userCity} amor, e vc?". NAO diga "cidade vizinha", NAO diga "daqui" e NAO responda seco.]`;
+        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou onde voce mora. Voce mora na MESMA cidade do lead: "${userCity}". Responda no PRIMEIRO BALAO de forma humana, curta e natural: "sou de ${userCity}, e vc?". NAO diga "cidade vizinha", NAO diga "daqui" e NAO responda seco.]`;
     }
     if (cityQuestion && !hasCity) {
-        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou sua cidade, mas voce AINDA NAO sabe a cidade dele. Pergunte primeiro "de onde vc e anjo?" e NAO diga sua cidade agora.]`;
+        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou sua cidade, mas voce AINDA NAO sabe a cidade dele. Pergunte primeiro "e vc, é de onde?" e NAO diga sua cidade agora.]`;
     }
 
     console.log("[PROCESSADOR] Iniciando geração da resposta", {
@@ -1475,32 +1475,20 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         shouldDeliverMedia = false;
     }
 
-    // Se a última mensagem do bot acabou de ser uma mídia, não manda outra colada imediatamente:
-    // Faz um charme/conversa primeiro para intercalar os envios com papo real!
-    if (lastBotSentMedia && !hasPaid && !isAskingRepeat && shouldDeliverMedia) {
-        console.log('[FUNIL] Mídia colada consecutiva evitada. Intercalando com conversa/charme.');
+    // Evita somente mídia espontânea em sequência. Pedido explícito do lead continua
+    // sendo atendido e o catálogo escolhe um arquivo ainda não entregue.
+    if (lastBotSentMedia && !hasPaid && !isAskingRepeat && shouldDeliverMedia && !userAskedMedia) {
+        console.log('[FUNIL] Mídia espontânea consecutiva evitada; mantendo conversa textual.');
         aiResponse.action = 'none';
         shouldDeliverMedia = false;
-        if (userAskedMedia) {
-            aiResponse.messages = [
-                'calma amor, assim vc me deixa sem fôlego kkk',
-                'me conta primeiro o que vc mais gostou daquela última que te mandei...'
-            ];
-        }
     }
 
-    // Limite de 3 a 4 prévias gratuitas no total por conversa:
-    // Após 4 prévias, bloqueia novas mídias grátis e fecha com chave de ouro no VIP
-    if (pastDeliveredMediaCount >= 4 && !hasPaid && !isAskingRepeat) {
-        console.log('[FUNIL] Limite de 4 prévias atingido. Conduzindo lead para VIP.');
+    // O número de prévias nunca força pitch nem bloqueia um novo pedido explícito.
+    // Depois de várias entregas, apenas iniciativas não solicitadas são desativadas.
+    if (pastDeliveredMediaCount >= 4 && !hasPaid && shouldDeliverMedia && !userAskedMedia) {
+        console.log('[FUNIL] Prévia espontânea desativada após várias entregas; sem pitch automático.');
         aiResponse.action = 'none';
         shouldDeliverMedia = false;
-        if (userAskedMedia) {
-            aiResponse.messages = [
-                'amor já te mandei várias prévias gostosas hj...',
-                'todos os meus vídeos completos sem censura e me tocando tão no meu VIP secreto... o acesso tá só R$ 19,90 hj, quer que eu te libere?'
-            ];
-        }
     }
 
     // Pedido de mídia só vira cobrança quando o lead também manifesta uma compra real.
@@ -1860,12 +1848,22 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
         extractedName: aiResponse.extracted_user_name,
         lastBotContent
     });
-    if (isConversationStart) {
+    const relationshipStageBeforeTurn = String(leadMemory.relationship_stage || 'new').trim().toLowerCase();
+    const episodeStartedAtMs = Date.parse(String(leadMemory.metadata?.conversation_started_at || ''));
+    const episodeLeadTurns = Number.isFinite(episodeStartedAtMs)
+        ? recentSalesHistory.filter((message: any) => message.sender === 'user'
+            && Date.parse(String(message.created_at || '')) >= episodeStartedAtMs).length
+        : Number.POSITIVE_INFINITY;
+    const isEarlyConversationEpisode = isConversationStart || episodeLeadTurns <= 3;
+    if (!relationshipStageBeforeTurn
+        || relationshipStageBeforeTurn === 'new'
+        || relationshipStageBeforeTurn === 'unknown'
+        || isEarlyConversationEpisode) {
         safeMessages = refineNewRelationshipMessages(safeMessages, {
             userText: userOnlyText,
             lastBotContent,
             hasKnownName: sessionHasUsefulName(session.user_name) || userProbablyProvidedName(userOnlyText, aiResponse.extracted_user_name),
-            isConversationStart: true,
+            isConversationStart,
         });
     }
     if (mediaSuppressedForRepetition) {
@@ -1873,11 +1871,13 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     }
     if (safeMessages.length === 0 && (!userAskedMedia || mediaSuppressedForRepetition)) {
         safeMessages = hasExplicitSexualFantasyTrigger(userOnlyText)
-            ? ['so de imaginar vc me comendo ja fico toda arrepiada']
-            : ['to adorando conversar com vc amor', 'me fala mais de vc'];
+            ? ['vc é bem direto hein kkk', 'gostei de saber o que passou na sua cabeça']
+            : mediaSuppressedForRepetition
+                ? ['essa eu já te mandei, vou escolher outra diferente pra vc']
+                : ['entendi, me explica só essa parte melhor'];
     }
     if (cityQuestion && hasCity) {
-        const forcedCityAnswer = `sou de ${userCity} amor, e vc?`;
+        const forcedCityAnswer = `sou de ${userCity}, e vc?`;
         const withoutGenericCity = safeMessages.filter((msg: string) => {
             const norm = normalizeLoopText(msg);
             return !/(cidade vizinha|daqui|de onde vc|de onde voce|de onde você)/i.test(norm);
@@ -1887,12 +1887,18 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
 
     const stage = String(aiResponse.current_state || '').toUpperCase();
     const explicitFantasy = hasExplicitSexualFantasyTrigger(userOnlyText);
-    const maxMessagesForTurn = explicitFantasy ? 3 : 3;
+    const maxMessagesForTurn = (() => {
+        if (isEarlyConversationEpisode) return 2;
+        if (stage === 'PAYMENT_CHECK' || aiResponse.action === 'generate_pix_payment') return 2;
+        if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 3;
+        if (explicitFantasy) return 4;
+        return 3;
+    })();
 
     safeMessages = shapeConversationBubbles(safeMessages, {
-        preferredCount: 2,
+        preferredCount: aiResponse.recommended_message_count || 1,
         maxBubbles: maxMessagesForTurn,
-        maxChars: aiResponse.max_chars_per_message || 80,
+        maxChars: aiResponse.max_chars_per_message || 100,
     });
 
     safeMessages = safeMessages.filter((message: string) =>
@@ -1900,8 +1906,8 @@ Cada balao deve ter uma funcao e normalmente ate 90 caracteres. Use mais apenas 
     );
     if (safeMessages.length === 0 && !MEDIA_ACTIONS.has(String(aiResponse.action || 'none'))) {
         safeMessages = hasExplicitSexualFantasyTrigger(userOnlyText)
-            ? ['so de imaginar vc me comendo ja fico toda arrepiada']
-            : ['to adorando conversar com vc amor', 'me fala mais de vc vida'];
+            ? ['vc é bem direto hein kkk']
+            : ['entendi, me conta só essa parte melhor'];
     }
 
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));

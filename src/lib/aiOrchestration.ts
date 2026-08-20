@@ -83,14 +83,14 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
         tier: 'starter',
         label: 'primeiro ciclo',
         totalPaid,
-        separateStrategy: false,
+        separateStrategy: true,
         reviewMode: 'critical',
         evaluator: false,
         historyMessageLimit: 80,
         historyMaxEntries: 80,
         historyMaxChars: 24_000,
         promptBlockMaxChars: 16_000,
-        objective: 'resposta rapida com Gemini direto + Lari, com revisao somente nos momentos criticos',
+        objective: 'cerebro geral economico separado + Lari, com revisao quando a naturalidade estiver em risco',
     };
 };
 

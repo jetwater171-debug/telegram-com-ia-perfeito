@@ -21,6 +21,7 @@ const {
     hasConversationStartCommand,
 } = loadPureTypeScriptModule('../src/lib/conversationEpisode.ts');
 const { refineNewRelationshipMessages } = loadPureTypeScriptModule('../src/lib/conversationQuality.ts');
+const { buildLariCorePrompt, needsLariReview } = loadPureTypeScriptModule('../src/lib/lariConversationPrompts.ts');
 const { buildCleanAiHistory } = loadPureTypeScriptModule('../src/lib/aiHistory.ts');
 
 assert.equal(hasConversationStartCommand('/start\noi'), true);
@@ -49,7 +50,18 @@ const firstOpening = refineNewRelationshipMessages(
     ['Oi, tudo bem?', 'Como tá o seu dia, amor?', 'kkk'],
     { userText: '/start', lastBotContent: '', hasKnownName: false, isConversationStart: true },
 );
-assert.deepEqual(firstOpening, ['Oi, tudo bem?', 'como vc se chama?']);
+assert.deepEqual(firstOpening, ['oiii, tudo bem?', 'como vc se chama?']);
+
+const corePrompt = buildLariCorePrompt({
+    localTime: '21:30', localPeriod: 'noite', city: 'São Paulo', deviceType: 'Android', totalPaid: 0,
+    stats: {}, memorySummary: 'nome: Leo', previewsCatalog: 'foto-1', antiRepeatText: 'oiii', dynamicInstructions: 'nenhuma',
+});
+assert.match(corePrompt, /NÚCLEO HUMANO QUE VALE EM QUALQUER SITUAÇÃO/);
+assert.match(corePrompt, /INTELIGÊNCIA SOCIAL POR TRÁS DA LARI/);
+assert.match(corePrompt, /revisão silenciosa/i);
+assert.doesNotMatch(corePrompt, /Churrasco \/ Picanha|MULTIMODALIDADE CONTÍNUA|mande fotos com frequência/i);
+assert.equal(needsLariReview({ relationshipStage: 'new', messages: ['oi amor'] }), true);
+assert.equal(needsLariReview({ relationshipStage: 'familiar', messages: ['entendi seu ponto'], strategyConfidence: 0.9 }), false);
 
 const eightyMessages = Array.from({ length: 80 }, (_, index) => ({
     sender: index % 2 === 0 ? 'user' : 'bot',
@@ -62,9 +74,11 @@ assert.match(cleanHistory.at(-1).parts[0].text, /mensagem 80/);
 
 const geminiSource = fs.readFileSync(path.resolve(__dirname, '../src/lib/gemini.ts'), 'utf8');
 const processSource = fs.readFileSync(path.resolve(__dirname, '../src/app/api/process-message/route.ts'), 'utf8');
-assert.match(geminiSource, /NÚCLEO HUMANO QUE VALE EM QUALQUER SITUAÇÃO/);
-assert.match(geminiSource, /INTELIGÊNCIA SOCIAL POR TRÁS DA LARI/);
-assert.match(geminiSource, /revisão silenciosa/);
+assert.match(geminiSource, /buildLariCorePrompt/);
+assert.match(geminiSource, /buildLariStrategyPrompt/);
+assert.match(geminiSource, /buildLariDraftPrompt/);
+assert.match(geminiSource, /buildLariReviewPrompt/);
+assert.doesNotMatch(geminiSource, /const useSeparateReviewCall = false/);
 assert.match(geminiSource, /filterConversationEpisodeMessages/);
 assert.match(geminiSource, /Mensagens do lead neste episodio/);
 assert.match(geminiSource, /isNewRelationship/);
