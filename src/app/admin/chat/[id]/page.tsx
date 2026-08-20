@@ -342,21 +342,7 @@ export default function AdminChatPage() {
                             <SegmentButton active={showThoughts} onClick={() => setShowThoughts(!showThoughts)}>Ideias IA</SegmentButton>
                             <SegmentButton
                                 active={showAdvancedView}
-                                onClick={() => {
-                                    const next = !showAdvancedView;
-                                    setShowAdvancedView(next);
-                                    if (next) {
-                                        const latestAiMsg = [...messages].reverse().find((m) => m.ai_debug || m.sender === "thought" || m.sender === "bot");
-                                        if (latestAiMsg) {
-                                            const associatedDebug = findAssociatedDebug(messages, latestAiMsg);
-                                            setSelectedInspectorMessage({
-                                                debugData: latestAiMsg.ai_debug || associatedDebug,
-                                                createdAt: latestAiMsg.created_at,
-                                                thoughtContent: latestAiMsg.sender === "thought" ? latestAiMsg.content : undefined,
-                                            });
-                                        }
-                                    }
-                                }}
+                                onClick={() => setShowAdvancedView((current) => !current)}
                             >
                                 ⚡ Visão Avançada
                             </SegmentButton>
@@ -650,7 +636,7 @@ function MessageBubble({
                             className="flex items-center gap-1.5 rounded-md border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-200 transition hover:border-cyan-400/60 hover:bg-cyan-400/20"
                             title="Inspecionar o prompt completo e a resposta da IA para esta mensagem"
                         >
-                            <span>⚡ Ver Prompt & Resposta IA</span>
+                            <span>⚡ {effectiveDebug ? "Ver Prompt & Resposta IA" : "Sem dados deste turno"}</span>
                             {effectiveDebug?.model && <span className="opacity-75">· {effectiveDebug.model}</span>}
                             {effectiveDebug?.duration_ms ? <span className="text-emerald-300">· {effectiveDebug.duration_ms}ms</span> : null}
                         </button>
@@ -668,6 +654,7 @@ function findAssociatedDebug(messages: Message[], currentMsg: Message): AiDebugD
         if (msgIndex >= 0) {
             for (let i = msgIndex - 1; i >= 0; i--) {
                 const prev = messages[i];
+                if (prev.sender === "user") break;
                 if (prev.sender === "thought" && prev.ai_debug) {
                     const diffMs = Math.abs(new Date(currentMsg.created_at).getTime() - new Date(prev.created_at).getTime());
                     if (diffMs <= 120_000) {

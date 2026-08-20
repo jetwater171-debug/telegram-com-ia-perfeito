@@ -1668,6 +1668,8 @@ ${purchaseHistoryText}
                     provider: strategyResult.gateway.provider,
                     duration_ms: Date.now() - strategyStartTime,
                     prompt: strategyPrompt,
+                    user_prompt: `Analise este lead e gere o plano completo do proximo turno.\n\nMENSAGEM ATUAL:\n${userMessage}`,
+                    gateway_attempts: strategyResult.attempts,
                     output: strategyResult.data,
                 };
             } catch (strategyError: any) {
@@ -1742,6 +1744,8 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                 provider: draftResult.gateway.provider,
                 duration_ms: Date.now() - draftStartTime,
                 prompt: draftPrompt,
+                user_prompt: draftParts[0].text,
+                gateway_attempts: draftResult.attempts,
                 output: draftResult.data,
             };
 
@@ -1813,6 +1817,8 @@ Revise e corrija se necessario.`
                     provider: reviewResult.gateway.provider,
                     duration_ms: Date.now() - reviewStartTime,
                     prompt: reviewPrompt,
+                    user_prompt: `MENSAGEM DO LEAD:\n${userMessage}\n\nESTRATEGIA:\n${JSON.stringify(strategy)}\n\nRASCUNHO DA LARI:\n${JSON.stringify(jsonResponse)}\n\nRevise e corrija se necessario.`,
+                    gateway_attempts: reviewResult.attempts,
                     output: reviewResult.data,
                 };
             } catch (reviewError: any) {
@@ -1877,6 +1883,8 @@ Faca a avaliacao final.`
                         provider: evaluatorResult.gateway.provider,
                         duration_ms: Date.now() - evaluatorStartTime,
                         prompt: evaluatorPrompt,
+                        user_prompt: `MENSAGEM DO LEAD:\n${userMessage}\n\nESTRATEGIA:\n${JSON.stringify(strategy)}\n\nRESPOSTA FINAL PROPOSTA:\n${JSON.stringify(jsonResponse)}\n\nFaca a avaliacao final.`,
+                        gateway_attempts: evaluatorResult.attempts,
                         output: evaluatorResult.data,
                     };
 
@@ -1928,9 +1936,13 @@ Faca a avaliacao final.`
             if (draftResultInfo) debugStages.draft = draftResultInfo;
             if (reviewResultInfo) debugStages.review = reviewResultInfo;
             if (evaluatorResultInfo) debugStages.evaluator = evaluatorResultInfo;
+            for (const stage of Object.values(debugStages)) {
+                stage.clean_history = cleanHistoryForDebug;
+            }
 
             jsonResponse.ai_debug = {
                 timestamp: new Date().toISOString(),
+                run_id: crypto.randomUUID(),
                 model: draftResult?.gateway?.model || 'gemini-3.5-flash',
                 provider: draftResult?.gateway?.provider || 'gemini',
                 tier: orchestration.tier,
@@ -1938,7 +1950,8 @@ Faca a avaliacao final.`
                 system_prompt: draftPrompt,
                 user_prompt: draftParts[0]?.text || userMessage,
                 clean_history: cleanHistoryForDebug,
-                raw_response: {
+                raw_response: draftResult.data as Record<string, any>,
+                final_response: {
                     internal_thought: jsonResponse.internal_thought,
                     lead_classification: jsonResponse.lead_classification,
                     lead_stats: jsonResponse.lead_stats,
@@ -1955,6 +1968,7 @@ Faca a avaliacao final.`
                     max_chars_per_message: jsonResponse.max_chars_per_message,
                 },
                 stages: Object.keys(debugStages).length > 0 ? debugStages : undefined,
+                media: { attached: Boolean(media), mime_type: media?.mimeType || null },
                 tokens_estimated: estimateAiTokens(draftPrompt, draftParts[0]?.text || userMessage, cleanHistoryForDebug),
             };
 

@@ -96,11 +96,16 @@ export interface AiDebugStage {
     provider?: string;
     duration_ms?: number;
     prompt?: string;
+    user_prompt?: string;
+    clean_history?: Array<{ role: string; content: string }>;
+    gateway_attempts?: string[];
     output?: any;
 }
 
 export interface AiDebugData {
     timestamp: string;
+    run_id?: string;
+    message_index?: number;
     model?: string;
     provider?: string;
     tier?: string;
@@ -109,6 +114,8 @@ export interface AiDebugData {
     user_prompt: string;
     clean_history?: Array<{ role: string; content: string }>;
     raw_response?: Record<string, any>;
+    final_response?: Record<string, any>;
+    media?: { attached: boolean; mime_type?: string | null };
     stages?: {
         strategy?: AiDebugStage;
         draft?: AiDebugStage;
@@ -117,4 +124,3 @@ export interface AiDebugData {
     };
     tokens_estimated?: number;
 }
-

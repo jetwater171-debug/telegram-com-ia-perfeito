@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractAiMessageText, normalizeAiMessageList } from '@/lib/aiMessageNormalization';
+import { errorMessage, insertMessageWithAiDebug, withAiDebugMessageIndex } from '@/lib/aiDebug';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode, sendTelegramVoice, type TelegramMediaProtection } from '@/lib/telegram';
@@ -1463,6 +1464,19 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         userAffirmedMedia,
         isInitialGreeting,
     });
+
+    let generatedMessageIndex = 0;
+    const insertGeneratedMessage = async (row: Record<string, unknown>) => {
+        const indexedDebug = withAiDebugMessageIndex(aiResponse.ai_debug, generatedMessageIndex++);
+        const result = await insertMessageWithAiDebug(supabase, row, indexedDebug);
+        if (result.debugError) {
+            console.warn("[AI DEBUG] O envio ao lead continuou, mas o ai_debug nao foi persistido:", errorMessage(result.debugError));
+        }
+        if (result.error) {
+            console.warn("[PROCESSADOR] Falha ao persistir mensagem gerada:", errorMessage(result.error));
+        }
+        return result;
+    };
     let mediaSuppressedForPolicy = modelAttemptedMedia && !shouldDeliverMedia;
     let mediaSuppressedForRepetition = false;
     let sentMediaUrlsForSession: string[] = [];
@@ -1760,19 +1774,19 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
 
     if (aiResponse.internal_thought) {
         try {
-            await supabase.from('messages').insert({
+            const thoughtResult = await insertMessageWithAiDebug(supabase, {
                 session_id: session.id,
                 sender: 'thought',
                 content: aiResponse.internal_thought,
-                ai_debug: aiResponse.ai_debug || null
-            });
+            }, withAiDebugMessageIndex(aiResponse.ai_debug, -1));
+            if (thoughtResult.debugError) {
+                console.warn("[AI DEBUG] Thought salvo sem ai_debug:", errorMessage(thoughtResult.debugError));
+            }
+            if (thoughtResult.error) {
+                console.warn("[PROCESSADOR] Falha ao inserir thought:", errorMessage(thoughtResult.error));
+            }
         } catch (insertThoughtErr: any) {
-            console.warn("[PROCESSADOR] Falha ao inserir thought com ai_debug, tentando inserção simples:", insertThoughtErr?.message || insertThoughtErr);
-            await supabase.from('messages').insert({
-                session_id: session.id,
-                sender: 'thought',
-                content: aiResponse.internal_thought
-            });
+            console.warn("[PROCESSADOR] Falha inesperada ao inserir thought:", insertThoughtErr?.message || insertThoughtErr);
         }
     }
 
@@ -1958,7 +1972,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             await waitWithChatAction('typing', humanTextDelayMs(message, 1));
             if (await findNewerUserMessage()) return;
             await sendTelegramMessage(botToken, chatId, message);
-            await supabase.from('messages').insert({
+            await insertGeneratedMessage({
                 session_id: session.id,
                 sender: 'bot',
                 content: message,
@@ -2046,7 +2060,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                     return NextResponse.json({ status: 'superseded_during_recording' });
                 }
                 await sendTelegramVoice(botToken, chatId, preparedAudio.audio);
-                await supabase.from('messages').insert({
+                await insertGeneratedMessage({
                     session_id: session.id,
                     sender: 'bot',
                     content: msgText,
@@ -2070,7 +2084,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             return NextResponse.json({ status: 'superseded_during_typing' });
         }
 
-        await supabase.from('messages').insert({
+        await insertGeneratedMessage({
             session_id: session.id,
             sender: 'bot',
             content: msgText
@@ -2686,7 +2700,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                 });
             }
 
-            await supabase.from('messages').insert({
+            await insertGeneratedMessage({
                 session_id: session.id,
                 sender: 'bot',
                 content: mediaProtection.protectContent

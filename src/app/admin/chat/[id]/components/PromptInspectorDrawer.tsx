@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { AiDebugData, AiDebugStage } from "@/types";
 
 interface PromptInspectorDrawerProps {
@@ -20,17 +20,32 @@ export function PromptInspectorDrawer({
 }: PromptInspectorDrawerProps) {
     const [activeTab, setActiveTab] = useState<"prompt" | "response" | "stages" | "history">("prompt");
     const [promptViewMode, setPromptViewMode] = useState<"all" | "system" | "user">("all");
+    const [responseViewMode, setResponseViewMode] = useState<"raw" | "final">("raw");
     const [selectedStage, setSelectedStage] = useState<string>("strategy");
     const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+    useEffect(() => {
+        if (!open) return;
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") onClose();
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [open, onClose]);
+
     if (!open) return null;
 
-    const copyToClipboard = (text: string, key: string) => {
+    const copyToClipboard = async (text: string, key: string) => {
         if (!text) return;
-        navigator.clipboard.writeText(text);
-        setCopiedKey(key);
+        let feedbackKey = key;
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch {
+            feedbackKey = "copy-error";
+        }
+        setCopiedKey(feedbackKey);
         setTimeout(() => {
-            setCopiedKey((prev) => (prev === key ? null : prev));
+            setCopiedKey((prev) => (prev === feedbackKey ? null : prev));
         }, 2000);
     };
 
@@ -57,9 +72,15 @@ export function PromptInspectorDrawer({
     ].filter(Boolean).join("\n");
 
     const activeStageData = debugData?.stages?.[selectedStage as keyof typeof debugData.stages];
+    const selectedResponse = responseViewMode === "final" && debugData?.final_response
+        ? debugData.final_response
+        : debugData?.raw_response;
 
     return (
         <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Inspetor de Prompt e Resposta da IA"
             className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-xs transition-opacity"
             onClick={onClose}
         >
@@ -117,6 +138,13 @@ export function PromptInspectorDrawer({
                                     <span className="font-mono text-amber-200">~{debugData.tokens_estimated}</span>
                                 </div>
                             ) : null}
+                            {debugData.run_id ? (
+                                <div title={debugData.run_id}>
+                                    <span className="text-slate-500">Execução: </span>
+                                    <span className="font-mono text-violet-200">{debugData.run_id.slice(0, 8)}</span>
+                                    {typeof debugData.message_index === "number" && debugData.message_index >= 0 ? <span className="text-slate-500"> · balão {debugData.message_index + 1}</span> : null}
+                                </div>
+                            ) : null}
                         </div>
 
                         <div className="flex items-center gap-2">
@@ -137,7 +165,7 @@ export function PromptInspectorDrawer({
                             )}
                             {activeTab === "response" && (
                                 <button
-                                    onClick={() => copyToClipboard(JSON.stringify(debugData.raw_response, null, 2), "response")}
+                                    onClick={() => copyToClipboard(JSON.stringify(selectedResponse || {}, null, 2), "response")}
                                     className="flex items-center gap-1.5 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-2.5 py-1 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
                                 >
                                     {copiedKey === "response" ? "✓ Copiado!" : "📋 Copiar JSON"}
@@ -164,7 +192,7 @@ export function PromptInspectorDrawer({
                         📤 Prompt Enviado ({debugData?.system_prompt ? `${debugData.system_prompt.length} chars` : "0"})
                     </TabButton>
                     <TabButton active={activeTab === "response"} onClick={() => setActiveTab("response")}>
-                        📥 Resposta Bruta (JSON)
+                        📥 Saídas JSON
                     </TabButton>
                     {hasStages && (
                         <TabButton active={activeTab === "stages"} onClick={() => setActiveTab("stages")}>
@@ -253,17 +281,29 @@ export function PromptInspectorDrawer({
                             {activeTab === "response" && (
                                 <div className="space-y-4">
                                     <div className="flex items-center justify-between">
-                                        <span className="text-xs text-slate-400">
-                                            JSON integral retornado pelo modelo para esta resposta:
-                                        </span>
+                                        <div className="flex gap-1.5">
+                                            <SubViewButton active={responseViewMode === "raw"} onClick={() => setResponseViewMode("raw")}>
+                                                Retorno bruto do rascunho
+                                            </SubViewButton>
+                                            {debugData.final_response ? (
+                                                <SubViewButton active={responseViewMode === "final"} onClick={() => setResponseViewMode("final")}>
+                                                    Resposta final enviada
+                                                </SubViewButton>
+                                            ) : null}
+                                        </div>
                                         <button
-                                            onClick={() => copyToClipboard(JSON.stringify(debugData.raw_response, null, 2), "response")}
+                                            onClick={() => copyToClipboard(JSON.stringify(selectedResponse || {}, null, 2), "response")}
                                             className="rounded-md border border-white/10 bg-white/[0.04] px-2.5 py-1 text-xs text-slate-300 hover:bg-white/10"
                                         >
                                             {copiedKey === "response" ? "✓ Copiado!" : "Copiar"}
                                         </button>
                                     </div>
-                                    <CodeBlock text={JSON.stringify(debugData.raw_response || {}, null, 2)} language="json" />
+                                    <p className="text-xs text-slate-400">
+                                        {responseViewMode === "final" && debugData.final_response
+                                            ? "JSON normalizado depois das etapas de revisão e avaliação, usado pelo processador."
+                                            : "JSON exato devolvido pela chamada principal de rascunho antes das correções posteriores."}
+                                    </p>
+                                    <CodeBlock text={JSON.stringify(selectedResponse || {}, null, 2)} language="json" />
                                 </div>
                             )}
 
@@ -314,6 +354,28 @@ export function PromptInspectorDrawer({
                                                 </div>
                                                 <CodeBlock text={activeStageData.prompt || "Sem prompt registrado"} />
                                             </div>
+
+                                            {activeStageData.user_prompt ? (
+                                                <div>
+                                                    <div className="mb-2 flex items-center justify-between">
+                                                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Entrada da Etapa:</span>
+                                                        <button
+                                                            onClick={() => copyToClipboard(activeStageData.user_prompt || "", "stage-user")}
+                                                            className="text-xs text-cyan-300 hover:underline"
+                                                        >
+                                                            {copiedKey === "stage-user" ? "✓ Copiado" : "Copiar"}
+                                                        </button>
+                                                    </div>
+                                                    <CodeBlock text={activeStageData.user_prompt} />
+                                                </div>
+                                            ) : null}
+
+                                            {activeStageData.gateway_attempts?.length ? (
+                                                <div className="rounded-lg border border-white/10 bg-black/30 p-3 text-xs">
+                                                    <span className="text-slate-500">Tentativas de gateway: </span>
+                                                    <span className="font-mono text-violet-200">{activeStageData.gateway_attempts.join(" → ")}</span>
+                                                </div>
+                                            ) : null}
 
                                             <div>
                                                 <div className="mb-2 flex items-center justify-between">
