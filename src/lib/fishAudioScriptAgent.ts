@@ -15,6 +15,8 @@ export type PreparedFishAudioScript = {
     source: 'deepseek' | 'deterministic';
 };
 
+export type FishAudioScriptMode = 'voice_render' | 'requested_audio';
+
 type FetchLike = typeof fetch;
 
 const DEFAULT_DELIVERY = 'warm, natural, conversational Brazilian Portuguese, unhurried';
@@ -61,14 +63,20 @@ const makeDeterministicScript = ({
     userText,
     emotionalContext,
     maxChars,
+    mode,
 }: {
     messageText: string;
     userText: string;
     emotionalContext: string;
     maxChars: number;
+    mode: FishAudioScriptMode;
 }): PreparedFishAudioScript => {
-    const spokenText = cleanTextForSpeech(messageText, maxChars);
-    const fishText = buildExpressiveSpeech({ messageText, userText, emotionalContext, maxChars });
+    // Quando alguém pede especificamente um áudio, a fala precisa responder ao
+    // pedido — ela não pode apenas narrar a bolha textual que caiu no turno.
+    const audioRequestFallback = 'oii, te mando sim. fiquei com vontade de falar com você agora.';
+    const sourceText = mode === 'requested_audio' ? audioRequestFallback : messageText;
+    const spokenText = cleanTextForSpeech(sourceText, maxChars);
+    const fishText = buildExpressiveSpeech({ messageText: sourceText, userText, emotionalContext, maxChars });
     return {
         spokenText,
         fishText,
@@ -84,6 +92,8 @@ export const prepareFishAudioScript = async ({
     userText = '',
     emotionalContext = '',
     maxChars = 320,
+    mode = 'voice_render',
+    conversationContext = '',
     fetcher = fetch,
 }: {
     settings: FishAudioScriptAgentSettings;
@@ -91,9 +101,11 @@ export const prepareFishAudioScript = async ({
     userText?: string;
     emotionalContext?: string;
     maxChars?: number;
+    mode?: FishAudioScriptMode;
+    conversationContext?: string;
     fetcher?: FetchLike;
 }): Promise<PreparedFishAudioScript> => {
-    const fallback = makeDeterministicScript({ messageText, userText, emotionalContext, maxChars });
+    const fallback = makeDeterministicScript({ messageText, userText, emotionalContext, maxChars, mode });
     const apiKey = String(settings.apiKey || '').trim();
     if (!apiKey || !fallback.spokenText) return fallback;
 
@@ -106,12 +118,13 @@ Sua função não é conversar com o lead. Sua única função é transformar um
 REGRAS OBRIGATÓRIAS:
 1. spoken_text contém exatamente palavras que devem ser ouvidas. Remova kkk, kkkkk, rs, rsrs, emojis, links e marcas visuais de chat.
 2. Expanda abreviações para fala natural: vc=você, tbm=também, pq=porque, tô/tá preservados quando naturais.
-3. Preserve rigorosamente sentido, pessoa, intenção e informação da mensagem original. Não invente frase, promessa, apelido, pergunta ou fato.
-4. Use português brasileiro oral, jovem e natural. Corrija somente pontuação e escrita necessárias para pronúncia.
-5. delivery é uma única direção curta para atriz de voz, sem colchetes. Prefira naturalidade e ritmo, evitando dramatização excessiva.
-6. reaction deve ser apenas uma destas opções: none, giggle, chuckling, sigh, pause, short pause, inhale. Use reação apenas quando o contexto realmente pedir.
-7. Fish S2.1 usa instruções em [colchetes]. Não use tags de S1 em parênteses, SSML, markdown ou explicações.
-8. Retorne somente JSON válido: {"spoken_text":"...","delivery":"...","reaction":"none"}.`;
+3. No modo VOICE_RENDER, preserve rigorosamente sentido, pessoa, intenção e informação da mensagem original. Não invente frase, promessa, apelido, pergunta ou fato.
+4. No modo REQUESTED_AUDIO, crie a fala que a Lari realmente diria como resposta direta à última mensagem do lead. A mensagem aprovada abaixo é apenas contexto de intenção: não a copie quando estiver desalinhada. Não diga que "entendeu", não explique como áudios funcionam e não descreva a própria geração do áudio. Faça uma resposta curta, concreta e natural de uma menina falando com ele agora.
+5. Use português brasileiro oral, jovem e natural. Corrija somente pontuação e escrita necessárias para pronúncia.
+6. delivery é uma única direção curta para atriz de voz, sem colchetes. Prefira naturalidade e ritmo, evitando dramatização excessiva.
+7. reaction deve ser apenas uma destas opções: none, giggle, chuckling, sigh, pause, short pause, inhale. Use reação apenas quando o contexto realmente pedir.
+8. Fish S2.1 usa instruções em [colchetes]. Não use tags de S1 em parênteses, SSML, markdown ou explicações.
+9. Retorne somente JSON válido: {"spoken_text":"...","delivery":"...","reaction":"none"}.`;
 
     const response = await fetcher(`${baseUrl}/chat/completions`, {
         method: 'POST',
@@ -125,7 +138,7 @@ REGRAS OBRIGATÓRIAS:
                 { role: 'system', content: systemPrompt },
                 {
                     role: 'user',
-                    content: `MENSAGEM APROVADA:\n${messageText}\n\nFALA BASE JÁ NORMALIZADA:\n${fallback.spokenText}\n\nCONTEXTO IMEDIATO DO LEAD:\n${String(userText || '').slice(0, 500)}\n\nCLIMA EMOCIONAL:\n${String(emotionalContext || '').slice(0, 300)}\n\nLIMITE: ${maxChars} caracteres falados.`,
+                    content: `MODO: ${mode === 'requested_audio' ? 'REQUESTED_AUDIO' : 'VOICE_RENDER'}\n\nÚLTIMA MENSAGEM DO LEAD:\n${String(userText || '').slice(0, 500)}\n\nMENSAGEM APROVADA/INTENÇÃO DO TURNO:\n${messageText}\n\nFALA BASE JÁ NORMALIZADA:\n${fallback.spokenText}\n\nCONTEXTO RECENTE:\n${String(conversationContext || '').slice(0, 900)}\n\nCLIMA EMOCIONAL:\n${String(emotionalContext || '').slice(0, 300)}\n\nLIMITE: ${maxChars} caracteres falados.`,
                 },
             ],
             response_format: { type: 'json_object' },
@@ -142,7 +155,10 @@ REGRAS OBRIGATÓRIAS:
     const parsed = typeof rawContent === 'string' ? parseJsonObject(rawContent) : rawContent;
 
     let spokenText = cleanTextForSpeech(parsed?.spoken_text, maxChars);
-    if (!preservesOriginalSpeech(fallback.spokenText, spokenText)) spokenText = fallback.spokenText;
+    if (mode === 'voice_render' && !preservesOriginalSpeech(fallback.spokenText, spokenText)) {
+        spokenText = fallback.spokenText;
+    }
+    if (mode === 'requested_audio' && spokenText.length < 8) spokenText = fallback.spokenText;
     const delivery = cleanInlineValue(parsed?.delivery) || DEFAULT_DELIVERY;
     const requestedReaction = cleanInlineValue(parsed?.reaction, 30).toLowerCase();
     const reaction = requestedReaction === 'none' || !ALLOWED_REACTIONS.has(requestedReaction) ? '' : requestedReaction;

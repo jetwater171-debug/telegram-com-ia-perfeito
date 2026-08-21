@@ -82,6 +82,26 @@ const fakeDeepSeek = async (url, init) => {
     });
     assert.equal(invented.spokenText, 'Você me deixa doida, tô aqui pensando em você.');
 
+    const requestedAudio = await agent.prepareFishAudioScript({
+        settings,
+        mode: 'requested_audio',
+        messageText: 'sim entendi direitinho oq você falou',
+        userText: 'me manda um audiozinho?',
+        conversationContext: 'Lead pediu um áudio curto agora.',
+        fetcher: async () => new Response(JSON.stringify({
+            choices: [{ message: { content: '{"spoken_text":"oii, te mando sim. queria falar com você agora.","delivery":"warm, natural, conversational","reaction":"none"}' } }],
+        }), { status: 200 }),
+    });
+    assert.equal(requestedAudio.spokenText, 'Oii, te mando sim. Queria falar com você agora.');
+    assert.doesNotMatch(requestedAudio.spokenText, /entendi direitinho/i);
+    const requestedFallback = await agent.prepareFishAudioScript({
+        settings: { ...settings, apiKey: '' },
+        mode: 'requested_audio',
+        messageText: 'sim entendi direitinho oq você falou',
+        userText: 'me manda um audiozinho?',
+    });
+    assert.equal(requestedFallback.spokenText, 'Oii, te mando sim. Fiquei com vontade de falar com você agora.');
+
     let fishBody = null;
     const originalFetch = global.fetch;
     global.fetch = async (_url, init) => {
@@ -105,8 +125,9 @@ const fakeDeepSeek = async (url, init) => {
     assert.match(processSource, /prepareFishAudioScript/);
     assert.match(processSource, /content:\s*preparedAudio\.script\.spokenText/);
     assert.match(processSource, /bai_api_key/);
+    assert.match(processSource, /mode: userWantsAudio \? 'requested_audio' : 'voice_render'/);
 
-    console.log('FISH_AUDIO_DIRECTOR_OK deepseek=1 exact_transcript=1 chat_laugh_removed=1 quality_guard=1 opus_validation=1');
+    console.log('FISH_AUDIO_DIRECTOR_OK deepseek=1 requested_audio_author=1 exact_transcript=1 chat_laugh_removed=1 quality_guard=1 opus_validation=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

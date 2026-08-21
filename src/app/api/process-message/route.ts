@@ -2105,6 +2105,14 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                 userText: userOnlyText,
                 emotionalContext,
                 maxChars: fishAudioSettings.maxChars,
+                // Um pedido explícito merece uma resposta criada para ser dita,
+                // não a mera leitura de uma bolha de texto já montada.
+                mode: userWantsAudio ? 'requested_audio' : 'voice_render',
+                conversationContext: [
+                    lastBotContent,
+                    ...recentUserTexts.slice(-3),
+                    ...recentBotTexts.slice(-3),
+                ].filter(Boolean).join('\n').slice(-900),
             }).catch((error: any) => {
                 console.warn('[FISH AUDIO] Diretor DeepSeek indisponível; usando roteiro local:', error?.message || error);
                 return deterministicFallback();
@@ -2134,11 +2142,9 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         if (i === preferredAudioIndex) {
             try {
                 if (!preparedAudioPromise) throw new Error('audio nao preparado');
-                const [preparedAudio] = await Promise.all([
-                    preparedAudioPromise,
-                    waitWithChatAction('record_voice', humanAudioRecordingDelayMs(cleanTextForSpeech(msgText, fishAudioSettings.maxChars))),
-                ]);
+                const preparedAudio = await preparedAudioPromise;
                 if (preparedAudio.error || !preparedAudio.audio) throw preparedAudio.error || new Error('audio vazio');
+                await waitWithChatAction('record_voice', humanAudioRecordingDelayMs(preparedAudio.script.spokenText));
                 const interruptedDuringRecording = await findNewerUserMessage();
                 if (interruptedDuringRecording) {
                     console.log(`[PROCESSADOR] Áudio cancelado porque o lead enviou uma mensagem nova: ${interruptedDuringRecording.id}`);

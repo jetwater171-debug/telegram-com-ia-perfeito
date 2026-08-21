@@ -138,7 +138,11 @@ export const cleanTextForSpeech = (input: string, maxChars = 320) => {
     }
 
     text = text.replace(/[,:;\-–—]+$/u, '').trim();
-    text = text.replace(/^\p{L}/u, (letter) => letter.toLocaleUpperCase('pt-BR'));
+    // A transcrição também aparece no painel: cada sentença começa como uma
+    // fala escrita de verdade, e não como uma continuação minúscula de chat.
+    text = text.replace(/(^|[.!?]\s+)(\p{L})/gu, (_match, prefix: string, letter: string) =>
+        `${prefix}${letter.toLocaleUpperCase('pt-BR')}`,
+    );
     if (text && !/[.!?…]$/u.test(text)) text += '.';
     return text;
 };
