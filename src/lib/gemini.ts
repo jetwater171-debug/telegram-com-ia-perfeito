@@ -1510,9 +1510,12 @@ const callAiGatewayJson = async <T,>(options: {
                         policy.timeoutMs,
                     );
                 } catch (initialError: any) {
-                    if (gateway.provider === 'bai') {
-                        console.warn(`[AI Gateway] Falha inicial no B.AI (${gateway.model}); executando 1 retry imediato...`, initialError?.message || initialError);
-                        await sleep(400);
+                    const isTimeout = /timeout|timed out|abort|excedeu/i.test(initialError?.message || String(initialError));
+                    const isRetryable = gateway.provider === 'bai' || isTimeout;
+                    if (isRetryable) {
+                        const retryTimeoutMs = isTimeout ? Math.min(25_000, policy.timeoutMs + 4_000) : policy.timeoutMs;
+                        console.warn(`[AI Gateway] ${gateway.label} sofreu ${isTimeout ? 'timeout' : 'falha inicial'} (${initialError?.message || initialError}); executando 1 retry com timeout ${retryTimeoutMs}ms...`);
+                        await sleep(500);
                         result = await callOpenRouterJson<T>(
                             options.settings,
                             gateway,
@@ -1523,7 +1526,7 @@ const callAiGatewayJson = async <T,>(options: {
                             options.schemaName,
                             options.responseSchemaConfig,
                             options.mediaPart,
-                            policy.timeoutMs,
+                            retryTimeoutMs,
                         );
                     } else {
                         throw initialError;
@@ -1542,15 +1545,36 @@ const callAiGatewayJson = async <T,>(options: {
 
             const parts: any[] = [{ text: options.text }];
             if (options.mediaPart) parts.push(options.mediaPart);
-            const data = await callGeminiJson<T>(
-                options.settings,
-                gateway,
-                options.systemInstruction,
-                options.responseSchemaConfig,
-                options.history,
-                parts,
-                policy.timeoutMs,
-            );
+            let data: T;
+            try {
+                data = await callGeminiJson<T>(
+                    options.settings,
+                    gateway,
+                    options.systemInstruction,
+                    options.responseSchemaConfig,
+                    options.history,
+                    parts,
+                    policy.timeoutMs,
+                );
+            } catch (geminiError: any) {
+                const isTimeout = /timeout|timed out|abort|excedeu/i.test(geminiError?.message || String(geminiError));
+                if (isTimeout) {
+                    const retryTimeoutMs = Math.min(20_000, policy.timeoutMs + 4_000);
+                    console.warn(`[AI Gateway] Gemini ${gateway.model} sofreu timeout (${geminiError?.message || geminiError}); executando 1 retry com timeout ${retryTimeoutMs}ms...`);
+                    await sleep(500);
+                    data = await callGeminiJson<T>(
+                        options.settings,
+                        gateway,
+                        options.systemInstruction,
+                        options.responseSchemaConfig,
+                        options.history,
+                        parts,
+                        retryTimeoutMs,
+                    );
+                } else {
+                    throw geminiError;
+                }
+            }
             const durationMs = Date.now() - startedAt;
             lease.succeed(durationMs);
             recordAiGatewayEvent({ tier: options.orchestrationTier, role: options.role, provider: gateway.provider, model: gateway.model, status: "success", durationMs, message: `fila ${lease.queueWaitMs}ms | tokens estimados ${estimatedTokens}` });
