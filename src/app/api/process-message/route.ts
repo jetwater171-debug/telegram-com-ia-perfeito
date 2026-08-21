@@ -1493,7 +1493,6 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             payment_details: null,
             lead_memory_patch: {
                 relationship_stage: "new",
-                dominant_type: "desconhecido",
             },
         };
     } else {

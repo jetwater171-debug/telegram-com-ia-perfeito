@@ -270,7 +270,7 @@ export default function AdminChatPage() {
             });
             const data = await res.json();
             setActionMsg(data?.message || (data?.ok ? "Lead chamado!" : "Falha ao chamar"));
-            await loadMessages();
+            if (session?.id) await loadMessages(session.id);
         } catch (e: any) {
             setActionMsg(e?.message || "Erro ao chamar lead");
         } finally {

@@ -365,18 +365,261 @@ const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-const parseJsonText = <T,>(text: string): T => {
-    const raw = String(text || '').trim()
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/\s*```$/i, '')
-        .trim();
-    try {
-        return JSON.parse(raw) as T;
-    } catch {
-        const jsonMatch = raw.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-        if (jsonMatch) return JSON.parse(jsonMatch[0]) as T;
-        throw new Error(`Falha ao extrair JSON da resposta: ${raw.slice(0, 200)}`);
+export const repairJsonText = (text: string): string => {
+    let clean = String(text || '').trim();
+    if (!clean) return '{}';
+
+    // 1. Limpa blocos de markdown
+    clean = clean.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+    // 2. Extrai o bloco externo JSON { ... } ou [ ... ] se houver texto ao redor
+    const firstBrace = clean.indexOf('{');
+    const firstBracket = clean.indexOf('[');
+    let startIdx = -1;
+    let endIdx = -1;
+
+    if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+        startIdx = firstBrace;
+        endIdx = clean.lastIndexOf('}');
+    } else if (firstBracket !== -1) {
+        startIdx = firstBracket;
+        endIdx = clean.lastIndexOf(']');
     }
+
+    if (startIdx !== -1) {
+        if (endIdx > startIdx) {
+            clean = clean.slice(startIdx, endIdx + 1);
+        } else {
+            clean = clean.slice(startIdx);
+        }
+    }
+
+    // 3. Converte aspas simples em duplas se não houver aspas duplas estruturais
+    if (!clean.includes('"') && clean.includes("'")) {
+        clean = clean.replace(/'/g, '"');
+    }
+
+    let repaired = '';
+    let inString = false;
+    let isEscaped = false;
+
+    const isValidValueStarter = (str: string, idx: number) => {
+        if (idx >= str.length) return true;
+        const ch = str[idx];
+        if (ch === '"' || ch === '{' || ch === '[' || ch === ']' || ch === '}') return true;
+        if (ch === '-' || (ch >= '0' && ch <= '9')) {
+            return /^-?\d+(\.\d+)?/.test(str.slice(idx));
+        }
+        if (str.startsWith('true', idx) || str.startsWith('false', idx) || str.startsWith('null', idx)) {
+            return true;
+        }
+        return false;
+    };
+
+    for (let i = 0; i < clean.length; i++) {
+        const char = clean[i];
+
+        if (inString) {
+            if (isEscaped) {
+                isEscaped = false;
+                repaired += char;
+                continue;
+            }
+
+            if (char === '\\') {
+                isEscaped = true;
+                repaired += char;
+                continue;
+            }
+
+            if (char === '\n') {
+                repaired += '\\n';
+                continue;
+            }
+
+            if (char === '\r') {
+                continue;
+            }
+
+            if (char === '\t') {
+                repaired += '\\t';
+                continue;
+            }
+
+            if (char === '"') {
+                let nextIdx = i + 1;
+                while (nextIdx < clean.length && /\s/.test(clean[nextIdx])) {
+                    nextIdx++;
+                }
+
+                if (nextIdx >= clean.length) {
+                    inString = false;
+                    repaired += '"';
+                    continue;
+                }
+
+                const nextChar = clean[nextIdx];
+
+                if (nextChar === ':') {
+                    inString = false;
+                    repaired += '"';
+                } else if (nextChar === '}' || nextChar === ']') {
+                    inString = false;
+                    repaired += '"';
+                } else if (nextChar === ',') {
+                    let afterCommaIdx = nextIdx + 1;
+                    while (afterCommaIdx < clean.length && /\s/.test(clean[afterCommaIdx])) {
+                        afterCommaIdx++;
+                    }
+                    if (isValidValueStarter(clean, afterCommaIdx)) {
+                        inString = false;
+                        repaired += '"';
+                    } else {
+                        repaired += '\\"';
+                    }
+                } else {
+                    repaired += '\\"';
+                }
+                continue;
+            }
+
+            repaired += char;
+        } else {
+            if (char === '"') {
+                inString = true;
+                repaired += '"';
+            } else {
+                repaired += char;
+            }
+        }
+    }
+
+    if (inString) {
+        repaired += '"';
+    }
+
+    // Remove vírgulas sobressalentes antes de fechamentos
+    repaired = repaired.replace(/,\s*([\}\]])/g, '$1');
+
+    // Balanceia chaves e colchetes não fechados se truncado
+    let openBraces = 0;
+    let openBrackets = 0;
+    let inStr2 = false;
+    let isEsc2 = false;
+
+    for (let i = 0; i < repaired.length; i++) {
+        const c = repaired[i];
+        if (inStr2) {
+            if (isEsc2) { isEsc2 = false; continue; }
+            if (c === '\\') { isEsc2 = true; continue; }
+            if (c === '"') { inStr2 = false; }
+            continue;
+        }
+        if (c === '"') { inStr2 = true; continue; }
+        if (c === '{') openBraces++;
+        else if (c === '}') openBraces = Math.max(0, openBraces - 1);
+        else if (c === '[') openBrackets++;
+        else if (c === ']') openBrackets = Math.max(0, openBrackets - 1);
+    }
+
+    while (openBrackets > 0) {
+        repaired += ']';
+        openBrackets--;
+    }
+    while (openBraces > 0) {
+        repaired += '}';
+        openBraces--;
+    }
+
+    return repaired;
+};
+
+const fallbackExtractJson = <T,>(rawText: string): T => {
+    const messagesMatch = rawText.match(/"messages"\s*:\s*\[([\s\S]*?)\]/i);
+    const messages: string[] = [];
+    if (messagesMatch) {
+        const itemRegex = /"([^"\\]*(?:\\.[^"\\]*)*)"/g;
+        let match;
+        while ((match = itemRegex.exec(messagesMatch[1])) !== null) {
+            if (match[1]?.trim()) messages.push(match[1].replace(/\\"/g, '"').replace(/\\n/g, '\n'));
+        }
+    }
+
+    const extractStringProp = (prop: string) => {
+        const m = rawText.match(new RegExp(`"${prop}"\\s*:\\s*"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"`, 'i'));
+        return m ? m[1].replace(/\\"/g, '"') : null;
+    };
+
+    const extractNumberProp = (prop: string) => {
+        const m = rawText.match(new RegExp(`"${prop}"\\s*:\\s*(\\d+(?:\\.\\d+)?)`, 'i'));
+        return m ? Number(m[1]) : null;
+    };
+
+    const extractBooleanProp = (prop: string) => {
+        const m = rawText.match(new RegExp(`"${prop}"\\s*:\\s*(true|false)`, 'i'));
+        return m ? m[1].toLowerCase() === 'true' : null;
+    };
+
+    const result: Record<string, any> = {
+        messages: messages.length > 0 ? messages : undefined,
+        intent: extractStringProp('intent') || 'conversar',
+        lead_type: extractStringProp('lead_type') || 'desconhecido',
+        temperature: extractNumberProp('temperature') ?? 50,
+        emotional_context: extractStringProp('emotional_context') || '',
+        relationship_stage: extractStringProp('relationship_stage') || 'new',
+        connection_cue: extractStringProp('connection_cue') || '',
+        objective: extractStringProp('objective') || '',
+        action: extractStringProp('action') || 'none',
+        current_state: extractStringProp('current_state') || 'CONNECTION',
+        preview_id: extractStringProp('preview_id'),
+        approved: extractBooleanProp('approved') ?? true,
+        score: extractNumberProp('score') ?? 8,
+        issues: [],
+    };
+
+    Object.keys(result).forEach((k) => result[k] === undefined && delete result[k]);
+    return result as T;
+};
+
+export const parseJsonText = <T,>(text: string): T => {
+    const raw = String(text || '').trim();
+    if (!raw) return {} as T;
+
+    try {
+        const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+        return JSON.parse(cleaned) as T;
+    } catch {
+        // Fallthrough to repair
+    }
+
+    try {
+        const repaired = repairJsonText(raw);
+        return JSON.parse(repaired) as T;
+    } catch {
+        // Fallthrough to regex boundary match
+    }
+
+    try {
+        const jsonMatch = raw.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+        if (jsonMatch) {
+            const repairedMatch = repairJsonText(jsonMatch[0]);
+            return JSON.parse(repairedMatch) as T;
+        }
+    } catch {
+        // Fallthrough to emergency property recovery
+    }
+
+    try {
+        const extracted = fallbackExtractJson<T>(raw);
+        if (extracted && typeof extracted === 'object' && Object.keys(extracted).length > 0) {
+            console.warn('[AI Gateway] JSON recuperado via extrator de emergência regex');
+            return extracted;
+        }
+    } catch {
+        // Fail
+    }
+
+    throw new Error(`Falha ao extrair JSON da resposta: ${raw.slice(0, 200)}`);
 };
 
 const toOpenRouterJsonSchema = (value: any): any => {
@@ -395,6 +638,8 @@ const toOpenRouterJsonSchema = (value: any): any => {
     return output;
 };
 const GEMINI_GATEWAY_TIMEOUT_MS = 9000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, label: string) => new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} excedeu ${timeoutMs}ms`)), timeoutMs);
@@ -599,7 +844,7 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>): AiGatewayC
             evaluator: baiModel,
         },
         tiers: ['starter', 'buyer', 'premium', 'elite'],
-        weight: 40,
+        weight: 50,
     });
 
     const groqApiKey = configured('groq_api_key', 'GROQ_API_KEY');
@@ -975,13 +1220,23 @@ const toOpenRouterMessages = (systemInstruction: string, history: AiMessage[], u
     ];
 };
 
-const buildJsonReminder = (schemaName: string) => `
+const buildJsonReminder = (schemaName: string, schemaConfig?: any) => {
+    let schemaHint = '';
+    if (schemaConfig?.properties) {
+        const keys = Object.keys(schemaConfig.properties);
+        schemaHint = `\n- Campos esperados no JSON: ${keys.join(', ')}.`;
+    }
+    return `
 
 FORMATO OBRIGATORIO:
-- Responda SOMENTE JSON valido.
-- Nao use markdown.
-- Nao escreva texto fora do JSON.
+- Responda SOMENTE um objeto JSON valido (iniciando em { e terminando em }).
+- Nao use blocos markdown (sem \`\`\`json).
+- Nao escreva nenhuma palavra ou texto antes ou depois do JSON.
+- NUNCA use aspas duplas dentro de textos/mensagens. Se precisar citar algo, use aspas simples (') ou escape com (\\").
+- Nunca quebre linhas no meio de uma string JSON sem usar \\n.
+- Nao inclua virgula no ultimo item antes de } ou ].${schemaHint}
 - O JSON deve seguir o schema interno: ${schemaName}.`;
+};
 
 const appendAiGatewayEvent = async (event: {
     role: AiRole;
@@ -1071,7 +1326,7 @@ const callOpenRouterJson = async <T,>(
             : gateway.model,
         messages: toOpenRouterMessages(systemInstruction, history, userContent, mediaPart),
         temperature: role === "draft" ? 0.85 : 0.35,
-        max_tokens: 1200,
+        max_tokens: gateway.provider === 'bai' ? 2048 : 1400,
     };
     if (gateway.provider === 'openrouter') {
         body.provider = { allow_fallbacks: true, require_parameters: true };
@@ -1187,7 +1442,7 @@ const callAiGatewayJson = async <T,>(options: {
             provider: gateway.provider,
             model: gateway.model,
             priority,
-            weight: Math.max(1, Number(gateway.weight || (gateway.provider === 'bai' ? 40 : gateway.provider === 'gemini' ? 57 : gateway.provider === 'groq' ? 18 : 7))),
+            weight: Math.max(1, Number(gateway.weight || (gateway.provider === 'bai' ? 60 : gateway.provider === 'gemini' ? 30 : gateway.provider === 'groq' ? 18 : 7))),
             policy,
             value: { ...gateway, policy },
         };
@@ -1246,7 +1501,7 @@ const callAiGatewayJson = async <T,>(options: {
                         options.settings,
                         gateway,
                         options.role,
-                        `${options.systemInstruction}${buildJsonReminder(options.schemaName)}`,
+                        `${options.systemInstruction}${buildJsonReminder(options.schemaName, options.responseSchemaConfig)}`,
                         openRouterHistory,
                         options.text,
                         options.schemaName,
@@ -1262,7 +1517,7 @@ const callAiGatewayJson = async <T,>(options: {
                             options.settings,
                             gateway,
                             options.role,
-                            `${options.systemInstruction}${buildJsonReminder(options.schemaName)}`,
+                            `${options.systemInstruction}${buildJsonReminder(options.schemaName, options.responseSchemaConfig)}`,
                             openRouterHistory,
                             options.text,
                             options.schemaName,
