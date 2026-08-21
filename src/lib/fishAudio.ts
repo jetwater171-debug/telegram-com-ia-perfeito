@@ -103,8 +103,10 @@ export const cleanTextForSpeech = (input: string, maxChars = 320) => {
         .trim();
     text = expandChatWriting(text);
     text = text
-        .replace(/\bkk{2,}\b/giu, "haha")
-        .replace(/\brsrs+\b/giu, "hehe")
+        // Risada digitada é linguagem visual de chat, não uma fala. Quando a
+        // risada for importante, o roteiro S2 usa [giggle] ou [laughing].
+        .replace(/\bk{2,}\b/giu, "")
+        .replace(/\b(?:rs){1,}\b/giu, "")
         .replace(/\bvdd\b/giu, "verdade")
         .replace(/\bbjs\b/giu, "beijos")
         .replace(/\btd\b/giu, "tudo")
@@ -136,6 +138,7 @@ export const cleanTextForSpeech = (input: string, maxChars = 320) => {
     }
 
     text = text.replace(/[,:;\-–—]+$/u, '').trim();
+    text = text.replace(/^\p{L}/u, (letter) => letter.toLocaleUpperCase('pt-BR'));
     if (text && !/[.!?…]$/u.test(text)) text += '.';
     return text;
 };
@@ -154,21 +157,58 @@ export const buildExpressiveSpeech = ({
     const speech = cleanTextForSpeech(messageText, maxChars);
     const context = `${userText} ${emotionalContext} ${messageText}`.toLowerCase();
 
-    // S2.1 Pro funciona melhor com uma instrucao natural por trecho curto.
-    // Muitas tags simultaneas fazem a voz oscilar e terminar de forma artificial.
-    let cue = "[speaks warmly and naturally]";
+    if (!speech) return '';
+
+    // S2.1 usa instruções naturais em colchetes. Uma direção simples e bem
+    // posicionada é mais estável que várias tags concorrentes no mesmo trecho.
+    let cue = "[warm, natural, conversational Brazilian Portuguese, unhurried]";
 
     if (/(putaria|goz|tes[aã]o|fud|met|chup|safad|pelad|nude|molhad|calcinha|peit|bunda|delic|pau|gostos)/iu.test(context)) {
-        cue = "[whispers playfully]";
+        cue = "[soft voice, playful, intimate, unhurried]";
     } else if (/(triste|sozinh|carente|carinho|abraç|chamego|dengo|saudade)/iu.test(context)) {
-        cue = "[speaks softly and tenderly]";
+        cue = "[soft voice, tender, sincere, unhurried]";
     } else if (/(segredo|ningu[eé]m|escondid|só nosso|noite|cama)/iu.test(context)) {
-        cue = "[whispers softly]";
+        cue = "[whispering, playful, unhurried]";
     } else if (/(kkk|haha|engraç|rir|brinc)/iu.test(context)) {
-        cue = "[laughs softly, then speaks playfully]";
+        cue = "[giggle] [playful, natural, conversational]";
     }
 
     return `${cue} ${speech}`.trim();
+};
+
+export const stripFishS2Cues = (input: string) => String(input || '')
+    .replace(/\[[^\]\r\n]{1,160}\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+export const validateFishOpus = (audio: Buffer) => {
+    if (audio.length < 1_500) throw new Error("Fish Audio retornou áudio vazio ou incompleto");
+    if (audio.subarray(0, 4).toString('ascii') !== 'OggS') {
+        throw new Error("Fish Audio retornou um arquivo Opus inválido");
+    }
+
+    let offset = 0;
+    let pages = 0;
+    let hasOpusHead = false;
+    while (offset < audio.length) {
+        if (offset + 27 > audio.length || audio.subarray(offset, offset + 4).toString('ascii') !== 'OggS') {
+            throw new Error("Fish Audio retornou um contêiner Ogg truncado");
+        }
+        const segmentCount = audio[offset + 26];
+        const tableEnd = offset + 27 + segmentCount;
+        if (tableEnd > audio.length) throw new Error("Fish Audio retornou uma página Ogg incompleta");
+        let payloadLength = 0;
+        for (let index = offset + 27; index < tableEnd; index += 1) payloadLength += audio[index];
+        const pageEnd = tableEnd + payloadLength;
+        if (pageEnd > audio.length) throw new Error("Fish Audio retornou dados Opus incompletos");
+        if (audio.subarray(tableEnd, Math.min(pageEnd, tableEnd + 8)).toString('ascii').startsWith('OpusHead')) {
+            hasOpusHead = true;
+        }
+        pages += 1;
+        offset = pageEnd;
+    }
+    if (pages < 2 || !hasOpusHead) throw new Error("Fish Audio retornou um fluxo Opus incompleto");
+    return { pages, bytes: audio.length };
 };
 
 export const generateFishAudio = async ({
@@ -181,6 +221,10 @@ export const generateFishAudio = async ({
     const normalized = normalizeFishAudioSettings(settings);
     if (!normalized.apiKey) throw new Error("Fish Audio sem API key");
     if (!normalized.voiceId) throw new Error("Fish Audio sem voz configurada");
+    const spokenText = stripFishS2Cues(text);
+    if (!spokenText || /\b(?:k{2,}|(?:rs){1,})\b/iu.test(spokenText)) {
+        throw new Error("Roteiro Fish Audio sem fala válida");
+    }
 
     const response = await fetch(FISH_TTS_URL, {
         method: "POST",
@@ -196,8 +240,13 @@ export const generateFishAudio = async ({
             sample_rate: 48000,
             opus_bitrate: 64000,
             latency: "normal",
-            temperature: 0.70,
+            temperature: 0.62,
             top_p: 0.70,
+            prosody: {
+                speed: 0.98,
+                volume: 0,
+                normalize_loudness: true,
+            },
             repetition_penalty: 1.20,
             chunk_length: 300,
             min_chunk_length: 50,
@@ -205,6 +254,7 @@ export const generateFishAudio = async ({
             early_stop_threshold: 1,
             normalize: true,
             condition_on_previous_chunks: true,
+            features: ["quality-guard"],
         }),
         signal: AbortSignal.timeout(30_000),
     });
@@ -216,14 +266,12 @@ export const generateFishAudio = async ({
     }
 
     const audio = Buffer.from(await response.arrayBuffer());
-    if (audio.length < 1000) throw new Error("Fish Audio retornou áudio vazio ou incompleto");
-    if (audio.subarray(0, 4).toString('ascii') !== 'OggS') {
-        throw new Error("Fish Audio retornou um arquivo Opus inválido");
-    }
+    const opus = validateFishOpus(audio);
     console.log('[FISH AUDIO] Gerado com sucesso', {
         model: normalized.model,
         inputChars: text.length,
-        bytes: audio.length,
+        bytes: opus.bytes,
+        oggPages: opus.pages,
         format: 'opus',
     });
     return audio;

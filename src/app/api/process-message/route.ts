@@ -22,6 +22,7 @@ import {
 } from '@/lib/leadMemory';
 import {
     buildExpressiveSpeech,
+    cleanTextForSpeech,
     DEFAULT_FISH_AUDIO_SETTINGS,
     generateFishAudio,
     isUnsafeForVoice,
@@ -29,6 +30,7 @@ import {
     shouldUseFishAudio,
     userAskedForAudio,
 } from '@/lib/fishAudio';
+import { prepareFishAudioScript } from '@/lib/fishAudioScriptAgent';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
 import { buildDeliveredPreviewCaption, isPhotoTakenNow, rankPreviewCandidatesByMoment } from '@/lib/previewMoment';
@@ -804,6 +806,8 @@ export async function POST(req: NextRequest) {
                 'mem0_api_key',
                 'mem0_enabled',
                 'mem0_top_k',
+                'bai_api_key',
+                'bai_model',
             ]),
     ]);
     const session = sessionResult.data;
@@ -832,6 +836,12 @@ export async function POST(req: NextRequest) {
         topK: Number(botConfig.mem0_top_k || 8),
     });
     const mem0UserId = mem0LeadUserId(chatId);
+    const fishAudioScriptAgentSettings = {
+        apiKey: botConfig.bai_api_key || process.env.BAI_API_KEY || '',
+        model: botConfig.bai_model || process.env.BAI_MODEL || 'deepseek-v4-flash',
+        baseUrl: process.env.BAI_BASE_URL || 'https://api.b.ai/v1',
+        timeoutMs: 8_000,
+    };
 
     const waitWithChatAction = async (
         action: Parameters<typeof sendTelegramAction>[2],
@@ -2076,15 +2086,38 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
 
     const preparedAudioPromise = preferredAudioIndex >= 0 && audioSpokenText
         ? (() => {
-            const expressiveText = buildExpressiveSpeech({
+            const emotionalContext = String(session.lead_memory?.emotional_context || '');
+            const deterministicFallback = () => ({
+                spokenText: cleanTextForSpeech(audioSpokenText, fishAudioSettings.maxChars),
+                fishText: buildExpressiveSpeech({
+                    messageText: audioSpokenText,
+                    userText: userOnlyText,
+                    emotionalContext,
+                    maxChars: fishAudioSettings.maxChars,
+                }),
+                delivery: 'deterministic',
+                reaction: '',
+                source: 'deterministic' as const,
+            });
+            return prepareFishAudioScript({
+                settings: fishAudioScriptAgentSettings,
                 messageText: audioSpokenText,
                 userText: userOnlyText,
-                emotionalContext: String(session.lead_memory?.emotional_context || ''),
+                emotionalContext,
                 maxChars: fishAudioSettings.maxChars,
-            });
-            return generateFishAudio({ settings: fishAudioSettings, text: expressiveText })
-                .then((audio) => ({ audio, expressiveText, error: null as unknown }))
-                .catch((error: unknown) => ({ audio: null, expressiveText, error }));
+            }).catch((error: any) => {
+                console.warn('[FISH AUDIO] Diretor DeepSeek indisponível; usando roteiro local:', error?.message || error);
+                return deterministicFallback();
+            }).then(async (script) => {
+                console.log('[FISH AUDIO] Roteiro preparado', {
+                    source: script.source,
+                    delivery: script.delivery,
+                    reaction: script.reaction || 'none',
+                    spokenText: script.spokenText,
+                });
+                const audio = await generateFishAudio({ settings: fishAudioSettings, text: script.fishText });
+                return { audio, script, error: null as unknown };
+            }).catch((error: unknown) => ({ audio: null, script: deterministicFallback(), error }));
         })()
         : null;
 
@@ -2101,15 +2134,9 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         if (i === preferredAudioIndex) {
             try {
                 if (!preparedAudioPromise) throw new Error('audio nao preparado');
-                const expressiveText = buildExpressiveSpeech({
-                    messageText: msgText,
-                    userText: userOnlyText,
-                    emotionalContext: String(session.lead_memory?.emotional_context || ''),
-                    maxChars: fishAudioSettings.maxChars,
-                });
                 const [preparedAudio] = await Promise.all([
                     preparedAudioPromise,
-                    waitWithChatAction('record_voice', humanAudioRecordingDelayMs(expressiveText)),
+                    waitWithChatAction('record_voice', humanAudioRecordingDelayMs(cleanTextForSpeech(msgText, fishAudioSettings.maxChars))),
                 ]);
                 if (preparedAudio.error || !preparedAudio.audio) throw preparedAudio.error || new Error('audio vazio');
                 const interruptedDuringRecording = await findNewerUserMessage();
@@ -2121,7 +2148,9 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                 await insertGeneratedMessage({
                     session_id: session.id,
                     sender: 'bot',
-                    content: msgText,
+                    // O painel guarda a transcrição exata do que foi falado, não
+                    // a versão visual do chat com "kkk", "rs" ou abreviações.
+                    content: preparedAudio.script.spokenText,
                     media_type: 'audio',
                 });
                 continue;
