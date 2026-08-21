@@ -1103,6 +1103,10 @@ export async function POST(req: NextRequest) {
         console.log('[PROCESSADOR] Reação curta isolada; aguardando próximo turno do lead.');
         return NextResponse.json({ status: 'low_signal_ignored' });
     }
+    if (groupedUserMessages.length === 1 && isLikelyIncompleteLeadMessage(userOnlyText)) {
+        console.log('[PROCESSADOR] Frase interrompida sem complemento; aguardando continuação do lead.');
+        return NextResponse.json({ status: 'incomplete_turn_waiting' });
+    }
     const conversationStartAt = findLatestConversationStartAt(filteredGroupMessages);
     const receivedStartCommand = Boolean(conversationStartAt);
     // /start é só um comando técnico. Ele representa primeiro contato apenas
@@ -1229,6 +1233,8 @@ export async function POST(req: NextRequest) {
         recentMessages: recentSalesHistory,
         leadMemory,
         totalPaid: Number(session.total_paid || 0),
+        leadScore: session.lead_score,
+        deviceType: session.device_type,
     });
     const offerPlan = salesTiming.offerPlan;
     const adaptiveSalesDirective = [

@@ -1240,18 +1240,40 @@ const callAiGatewayJson = async <T,>(options: {
                         continue;
                     }
                 }
-                const result = await callOpenRouterJson<T>(
-                    options.settings,
-                    gateway,
-                    options.role,
-                    `${options.systemInstruction}${buildJsonReminder(options.schemaName)}`,
-                    openRouterHistory,
-                    options.text,
-                    options.schemaName,
-                    options.responseSchemaConfig,
-                    options.mediaPart,
-                    policy.timeoutMs,
-                );
+                let result: { data: T; resolvedModel: string; usageTotalTokens?: number };
+                try {
+                    result = await callOpenRouterJson<T>(
+                        options.settings,
+                        gateway,
+                        options.role,
+                        `${options.systemInstruction}${buildJsonReminder(options.schemaName)}`,
+                        openRouterHistory,
+                        options.text,
+                        options.schemaName,
+                        options.responseSchemaConfig,
+                        options.mediaPart,
+                        policy.timeoutMs,
+                    );
+                } catch (initialError: any) {
+                    if (gateway.provider === 'bai') {
+                        console.warn(`[AI Gateway] Falha inicial no B.AI (${gateway.model}); executando 1 retry imediato...`, initialError?.message || initialError);
+                        await sleep(400);
+                        result = await callOpenRouterJson<T>(
+                            options.settings,
+                            gateway,
+                            options.role,
+                            `${options.systemInstruction}${buildJsonReminder(options.schemaName)}`,
+                            openRouterHistory,
+                            options.text,
+                            options.schemaName,
+                            options.responseSchemaConfig,
+                            options.mediaPart,
+                            policy.timeoutMs,
+                        );
+                    } else {
+                        throw initialError;
+                    }
+                }
                 const resolvedGateway = {
                     ...gateway,
                     model: result.resolvedModel,

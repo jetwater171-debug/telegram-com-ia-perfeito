@@ -62,10 +62,10 @@ const isRecent = (value: unknown, maxAgeMs: number, now: Date) => {
 const isDirectCheckoutRequest = (text: string) => {
     const value = normalize(text);
     return /^(pix|chave pix|codigo pix)$/i.test(value)
-        || /\b(?:manda|mande|gera|gere|passa|envia)\b.{0,24}\b(?:pix|chave|codigo)\b/i.test(value)
-        || /\b(?:quero|vou|posso)\s+pagar\b/i.test(value)
+        || /\b(?:manda|mande|gera|gere|passa|envia|manda ai|manda aí|mande ai)\b.{0,24}\b(?:pix|chave|codigo|link)\b/i.test(value)
+        || /\b(?:quero|vou|posso|ja quero|já quero)\s+pagar\b/i.test(value)
         || /\bcomo\s+(?:eu\s+)?pago\b/i.test(value)
-        || /\b(?:pode|ja pode)\s+(?:gerar|cobrar|mandar o pix)\b/i.test(value)
+        || /\b(?:pode|ja pode|pode ja)\s+(?:gerar|cobrar|mandar o pix|passar o pix)\b/i.test(value)
         || /\bfecha\s+(?:pra|para)\s+mim\b/i.test(value)
         || /\b(?:quero te mandar|vou te mandar|te mando|posso te mandar|quero te dar|te dou)\s+(?:r\$\s*)?\d{1,4}(?:[.,]\d{1,2})?\b/i.test(value)
         || /\b(?:pagar|bancar|mandar)\b.{0,24}\b(?:ifood|lanche|janta|mimo)\b.{0,24}\b\d{1,4}(?:[.,]\d{1,2})?\b/i.test(value);
@@ -75,8 +75,8 @@ const isPriceQuestion = (text: string) => /\b(quanto custa|qual (?:e |é )?o?\s*
 
 const isOfferAcceptance = (text: string) => {
     const value = normalize(text).replace(/[.!?]+$/g, '').trim();
-    return /^(sim|quero|eu quero|pode ser|fechado|bora|vamos|aceito|combinado|ta bom|tá bom|beleza|manda|manda aí|manda ai|manda o link|manda o pix|passa o pix|gera|faz|pode mandar|quero sim|claro|com certeza|vitalicio|vitalício|mensal|quero o vip|quero o mensal|quero o vitalicio)$/i.test(value)
-        || /\b(fecha|fechado|aceito|pode ser esse|quero esse|quero essa|vamos fazer|manda o link|manda o pix|manda a chave|passa o pix|passa a chave|gera o pix|vou pagar|quero pagar|pode gerar)\b/i.test(value)
+    return /^(sim|quero|eu quero|pode ser|fechado|bora|vamos|aceito|combinado|ta bom|tá bom|beleza|manda|manda aí|manda ai|manda o link|manda o pix|passa o pix|gera|faz|pode mandar|quero sim|claro|com certeza|vitalicio|vitalício|mensal|quero o vip|quero o mensal|quero o vitalicio|topo|partiu|fechou)$/i.test(value)
+        || /\b(fecha|fechado|fechou|aceito|pode ser esse|quero esse|quero essa|vamos fazer|manda o link|manda o pix|manda a chave|passa o pix|passa a chave|gera o pix|vou pagar|quero pagar|pode gerar|pode mandar o pix|passa a chave pix)\b/i.test(value)
         || /\b(?:nao quero|sem)\s+(?:o )?(?:extra|avaliacao)\b/i.test(value)
         || /\bso\s+(?:o|a)\s+(?:vip|chamada|encontro|foto|video|numero|audio|avaliacao|chat)\b/i.test(value);
 };
@@ -185,6 +185,13 @@ const PRODUCT_OFFERS: Record<Exclude<SalesProduct, 'gift'>, {
     },
 };
 
+export type LeadScoreInput = {
+    tarado?: number;
+    financeiro?: number;
+    carente?: number;
+    sentimental?: number;
+};
+
 const createOfferPlan = ({
     product,
     explicitBudget,
@@ -192,6 +199,8 @@ const createOfferPlan = ({
     totalPaid,
     nurtureTurns,
     userText,
+    leadScore,
+    deviceType,
 }: {
     product: SalesProduct | null;
     explicitBudget: number | null;
@@ -199,6 +208,8 @@ const createOfferPlan = ({
     totalPaid: number;
     nurtureTurns: number;
     userText: string;
+    leadScore?: LeadScoreInput | null;
+    deviceType?: string | null;
 }): AdaptiveOfferPlan | null => {
     if (!product) return null;
     if (product === 'gift') {
@@ -245,6 +256,10 @@ const createOfferPlan = ({
     const normalizedRequest = normalize(userText);
     const wantsPremiumScope = /\b(premium|completo|completa|mais longo|mais longa|bem detalhado|bem detalhada|varias fotos|sequencia|quero tudo|caprichado|caprichada)\b/i.test(normalizedRequest);
     const wantsEntryScope = /\b(curto|curta|curtinho|curtinha|simples|basico|basica|baratinho|baratinha|so um|so uma)\b/i.test(normalizedRequest);
+    const priceSensitive = /\b(ta caro|muito caro|sem dinheiro|to liso|estou liso|desempregado|nao tenho dinheiro|desconto|mais barato|faz menos)\b/i.test(normalizedRequest);
+
+    const finScore = Number(leadScore?.financeiro ?? 25);
+    const isIPhone = /iphone|ios|ipad/i.test(String(deviceType || ''));
 
     if (acceptedOfferValue) {
         customValue = acceptedOfferValue;
@@ -253,13 +268,13 @@ const createOfferPlan = ({
         customValue = Math.min(explicitBudget, catalog.premium[0]);
         tier = customValue < catalog.core[0] ? 'entry' : customValue >= catalog.premium[0] ? 'premium' : 'core';
         valueSource = 'explicit_budget';
-    } else if (wantsPremiumScope) {
+    } else if (wantsPremiumScope || finScore >= 60 || totalPaid >= 50 || (isIPhone && finScore >= 45 && !priceSensitive)) {
         tier = 'premium';
-    } else if (wantsEntryScope) {
+        if (finScore >= 60 || totalPaid >= 50) valueSource = 'purchase_history';
+    } else if (wantsEntryScope || priceSensitive || finScore < 20) {
         tier = 'entry';
-    } else if (totalPaid >= 100 && nurtureTurns >= 3) {
-        tier = 'premium';
-        valueSource = 'purchase_history';
+    } else if (nurtureTurns >= 3 && totalPaid >= 20) {
+        tier = 'core';
     }
 
     const selected = catalog[tier];
@@ -282,12 +297,16 @@ export const evaluateSalesTiming = ({
     leadMemory = {},
     totalPaid = 0,
     now = new Date(),
+    leadScore,
+    deviceType,
 }: {
     userText: string;
     recentMessages?: SalesMessage[];
     leadMemory?: LeadMemoryLike;
     totalPaid?: number;
     now?: Date;
+    leadScore?: LeadScoreInput | null;
+    deviceType?: string | null;
 }) => {
     const detectedProduct = detectPaidProduct(userText);
     const rememberedProduct = isRecent(leadMemory?.metadata?.sales_nurture_updated_at, 12 * 60 * 60_000, now)
@@ -320,6 +339,8 @@ export const evaluateSalesTiming = ({
         totalPaid: Math.max(0, Number(totalPaid || 0)),
         nurtureTurns,
         userText,
+        leadScore,
+        deviceType,
     });
 
     return {

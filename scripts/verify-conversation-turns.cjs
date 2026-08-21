@@ -27,6 +27,7 @@ const route = fs.readFileSync(path.resolve(__dirname, '../src/app/api/process-me
 assert.match(route, /isLikelyIncompleteLeadMessage/);
 assert.match(route, /isLowSignalLeadReaction/);
 assert.match(route, /low_signal_ignored/);
+assert.match(route, /incomplete_turn_waiting/);
 assert.match(route, /filterMalformedConversationMessages/);
 
 console.log('CONVERSATION_TURNS_OK incomplete_wait=1 low_signal_skip=1 malformed_output_filter=1');

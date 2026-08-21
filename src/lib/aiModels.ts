@@ -7,9 +7,6 @@ export const DEFAULT_GROQ_QUALITY_MODEL = "openai/gpt-oss-120b";
 
 export const OPENROUTER_MODEL_FALLBACK_ORDER = [
     "deepseek/deepseek-chat",
-    "openai/gpt-4o-mini",
-    "meta-llama/llama-3.3-70b-instruct",
-    "qwen/qwen-2.5-72b-instruct",
 ] as const;
 
 export const DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat";
