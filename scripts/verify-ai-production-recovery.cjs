@@ -60,7 +60,7 @@ const loadPureTypeScriptModule = (relativePath) => {
             recentUserTexts: ['oi'],
             isFirstContact: true,
         }),
-        ['oiii, tudo bem?', 'como vc se chama?'],
+        ['oiii, tudo bem?', 'como é seu nome??'],
     );
     assert.deepEqual(
         buildProcessingFailureRecoveryMessages({
@@ -69,7 +69,7 @@ const loadPureTypeScriptModule = (relativePath) => {
             recentUserTexts: ['/start'],
             isFirstContact: true,
         }),
-        ['oiii, tudo bem?', 'como vc se chama?'],
+        ['oiii, tudo bem?', 'como é seu nome??'],
     );
     const returningGreeting = buildProcessingFailureRecoveryMessages({
         userText: 'oi',

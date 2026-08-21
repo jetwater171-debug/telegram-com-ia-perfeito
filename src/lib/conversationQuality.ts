@@ -54,7 +54,7 @@ export const refineNewRelationshipMessages = (messages: unknown[], options: {
     }
     if (userOnlyGreeting && !options.hasKnownName) {
         cleaned = cleaned.filter((message) => !isGenericDayQuestion(message));
-        if (!cleaned.some(asksName)) cleaned.push('como vc se chama?');
+        if (!cleaned.some(asksName)) cleaned.push('como é seu nome??');
     }
 
     const unique: string[] = [];
@@ -68,10 +68,10 @@ export const refineNewRelationshipMessages = (messages: unknown[], options: {
     if (options.isConversationStart && userOnlyGreeting) {
         return options.hasKnownName
             ? ['oiii, tudo bem?']
-            : ['oiii, tudo bem?', 'como vc se chama?'];
+            : ['oiii, tudo bem?', 'como é seu nome??'];
     }
     if (unique.length === 0) {
-        return options.hasKnownName ? ['eaii, tudo bem?'] : ['oiii, tudo bem?', 'como vc se chama?'];
+        return options.hasKnownName ? ['eaii, tudo bem?'] : ['oiii, tudo bem?', 'como é seu nome??'];
     }
     return unique.slice(0, 2);
 };
@@ -173,7 +173,7 @@ export const buildProcessingFailureRecoveryMessages = (options: {
     // A recuperação roda fora da IA. No primeiro contato ela precisa preservar a
     // abertura humana em vez de fingir que existe um assunto para o lead explicar.
     if ((startsConversation || greetingOnly) && options.isFirstContact !== false) {
-        return ['oiii, tudo bem?', 'como vc se chama?'];
+        return ['oiii, tudo bem?', 'como é seu nome??'];
     }
 
     if (startsConversation || greetingOnly) {

@@ -44,13 +44,13 @@ const repaired = refineNewRelationshipMessages(
     ['Oi, tudo bem?', 'Como tá o seu dia, amor?', 'kkk'],
     { userText: 'oi', lastBotContent: 'oiii, tudo bem?', hasKnownName: false },
 );
-assert.deepEqual(repaired, ['como vc se chama?']);
+assert.deepEqual(repaired, ['como é seu nome??']);
 
 const firstOpening = refineNewRelationshipMessages(
     ['Oi, tudo bem?', 'Como tá o seu dia, amor?', 'kkk'],
     { userText: '/start', lastBotContent: '', hasKnownName: false, isConversationStart: true },
 );
-assert.deepEqual(firstOpening, ['oiii, tudo bem?', 'como vc se chama?']);
+assert.deepEqual(firstOpening, ['oiii, tudo bem?', 'como é seu nome??']);
 
 const corePrompt = buildLariCorePrompt({
     localTime: '21:30', localPeriod: 'noite', city: 'São Paulo', deviceType: 'Android', totalPaid: 0,

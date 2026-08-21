@@ -57,6 +57,8 @@ export default function AdminDashboard() {
     const [lastSync, setLastSync] = useState<Date | null>(null);
     const [recalculating, setRecalculating] = useState(false);
     const [scoreMessage, setScoreMessage] = useState("");
+    const [reengaging, setReengaging] = useState(false);
+    const [reengageMessage, setReengageMessage] = useState("");
 
     useEffect(() => {
         fetchSessions();
@@ -167,6 +169,27 @@ export default function AdminDashboard() {
             setScoreMessage(error?.message || "Não foi possível atualizar os scores");
         } finally {
             setRecalculating(false);
+        }
+    };
+
+    const handleReengageLeads = async () => {
+        if (reengaging) return;
+        setReengaging(true);
+        setReengageMessage("");
+        try {
+            const response = await fetch("/api/admin/reengage-leads", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({}),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data?.error || "Falha ao chamar leads");
+            setReengageMessage(data.message || `${data.sentCount || 0} leads chamados!`);
+            await fetchSessions();
+        } catch (error: any) {
+            setReengageMessage(error?.message || "Não foi possível chamar os leads");
+        } finally {
+            setReengaging(false);
         }
     };
 
@@ -309,6 +332,16 @@ export default function AdminDashboard() {
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                             {scoreMessage && <span className="text-xs text-cyan-200">{scoreMessage}</span>}
+                            {reengageMessage && <span className="text-xs font-medium text-pink-200">{reengageMessage}</span>}
+                            <button
+                                onClick={handleReengageLeads}
+                                disabled={reengaging}
+                                title="Envia mensagem direta para todos os leads sem falar há mais de 1 hora"
+                                className="flex items-center gap-1.5 rounded-lg border border-pink-400/30 bg-pink-400/15 px-3 py-2 text-sm font-semibold text-pink-100 transition hover:border-pink-400/60 hover:bg-pink-400/25 disabled:opacity-50"
+                            >
+                                <span>💬</span>
+                                <span>{reengaging ? "Chamando leads..." : "Chamar Leads"}</span>
+                            </button>
                             <button onClick={recalculateScores} disabled={recalculating} className="rounded-lg border border-violet-300/30 bg-violet-300/10 px-3 py-2 text-sm font-semibold text-violet-100 transition hover:border-violet-300/60 disabled:opacity-50">
                                 {recalculating ? "Analisando histórico..." : "Atualizar barrinhas"}
                             </button>

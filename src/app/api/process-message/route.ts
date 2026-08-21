@@ -1477,15 +1477,36 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         hasMedia: Boolean(mediaData),
     });
     let aiResponse: Awaited<ReturnType<typeof sendMessageToGemini>>;
-    const typingHeartbeat = setInterval(() => {
-        void sendTelegramAction(botToken, chatId, 'typing').catch((error: any) => {
-            console.warn('[PROCESSADOR] Falha ao renovar digitando:', error?.message || error);
-        });
-    }, 4000);
-    try {
-        aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
-    } finally {
-        clearInterval(typingHeartbeat);
+    if (isConversationStart) {
+        console.log("[PROCESSADOR] Primeiro contato via /start: usando saudação inicial padrão sem IA");
+        aiResponse = {
+            internal_thought: "Primeiro contato via /start: saudação padrão inicial da Lari.",
+            lead_classification: "desconhecido",
+            lead_stats: { tarado: 5, carente: 5, sentimental: 5, financeiro: 5 },
+            extracted_user_name: null,
+            audio_transcription: null,
+            current_state: "WELCOME",
+            messages: ["oiii, tudo bem?", "como é seu nome??"],
+            action: "none",
+            preview_id: null,
+            preview_request: null,
+            payment_details: null,
+            lead_memory_patch: {
+                relationship_stage: "new",
+                dominant_type: "desconhecido",
+            },
+        };
+    } else {
+        const typingHeartbeat = setInterval(() => {
+            void sendTelegramAction(botToken, chatId, 'typing').catch((error: any) => {
+                console.warn('[PROCESSADOR] Falha ao renovar digitando:', error?.message || error);
+            });
+        }, 4000);
+        try {
+            aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
+        } finally {
+            clearInterval(typingHeartbeat);
+        }
     }
     console.log("[PROCESSADOR] Resposta gerada", {
         sessionId: session.id,

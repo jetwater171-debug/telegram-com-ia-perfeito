@@ -50,7 +50,7 @@ const start = quality.refineNewRelationshipMessages(
     ['oi amor, tudo bem?', 'to deitadinha no meu quarto', 'kkk'],
     { userText: '/start', hasKnownName: false, isConversationStart: true },
 );
-assert.deepEqual(start, ['oiii, tudo bem?', 'como vc se chama?']);
+assert.deepEqual(start, ['oiii, tudo bem?', 'como é seu nome??']);
 
 const alreadyGreeted = quality.refineNewRelationshipMessages(
     ['oii, tudo bem?', 'como ta seu dia amor?', 'como vc se chama?'],
