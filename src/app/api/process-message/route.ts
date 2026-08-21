@@ -10,6 +10,11 @@ import { calculateLeadScore, markLeadPaid, parseLeadScore, toStoredLeadScore } f
 import { shapeConversationBubbles } from '@/lib/conversationBubbles';
 import { findLatestConversationStartAt } from '@/lib/conversationEpisode';
 import {
+    filterMalformedConversationMessages,
+    isLikelyIncompleteLeadMessage,
+    isLowSignalLeadReaction,
+} from '@/lib/conversationTurn';
+import {
     buildConversationRecoveryMessages,
     buildProcessingFailureRecoveryMessages,
     filterConversationConsistencyMessages,
@@ -860,19 +865,22 @@ export async function POST(req: NextRequest) {
         }
     };
 
-    // Debounce inteligente de 1.8s: espera o lead terminar de enviar múltiplas mensagens seguidas.
+    // Mensagens normais recebem 1.8s; uma frase claramente interrompida ganha
+    // uma janela maior para o lead terminá-la antes de qualquer IA responder.
     // Se o lead mandar mais uma mensagem enquanto espera, este worker aborta e passa o bastão para a mais nova.
     const DEBOUNCE_WAIT_MS = 1800;
+    const INCOMPLETE_TURN_WAIT_MS = 4200;
     const pollIntervalMs = 300;
     let waited = 0;
+    let debounceWaitMs = DEBOUNCE_WAIT_MS;
 
-    while (waited < DEBOUNCE_WAIT_MS) {
+    while (waited < debounceWaitMs) {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
         waited += pollIntervalMs;
 
         const { data: latestMsgCheck } = await supabase
             .from('messages')
-            .select('id')
+            .select('id,content')
             .eq('session_id', sessionId)
             .eq('sender', 'user')
             .order('created_at', { ascending: false })
@@ -882,6 +890,10 @@ export async function POST(req: NextRequest) {
         if (latestMsgCheck && triggerMessageId) {
             const latestIdStr = String(latestMsgCheck.id);
             const triggerIdStr = String(triggerMessageId);
+
+            if (latestIdStr === triggerIdStr && isLikelyIncompleteLeadMessage(latestMsgCheck.content)) {
+                debounceWaitMs = INCOMPLETE_TURN_WAIT_MS;
+            }
 
             if (latestIdStr !== triggerIdStr) {
                 console.log(`[PROCESSADOR] Debounce: lead enviou mensagem mais nova (${latestIdStr}). Abortando worker ${triggerIdStr}.`);
@@ -1082,8 +1094,15 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ status: 'done' });
     }
 
+    const groupedUserMessages = filteredGroupMessages.filter((m: any) => m.sender === 'user');
     const combinedText = filteredGroupMessages.map((m: any) => m.content).join("\n");
-    const userOnlyText = filteredGroupMessages.filter((m: any) => m.sender === 'user').map((m: any) => m.content).join("\n");
+    const userOnlyText = groupedUserMessages.map((m: any) => m.content).join("\n");
+    // "kkkk" isolado é só reação à última fala. Não volta para a IA, pois ela
+    // pode ressuscitar uma pergunta antiga e produzir texto sem sentido.
+    if (groupedUserMessages.length === 1 && isLowSignalLeadReaction(userOnlyText)) {
+        console.log('[PROCESSADOR] Reação curta isolada; aguardando próximo turno do lead.');
+        return NextResponse.json({ status: 'low_signal_ignored' });
+    }
     const conversationStartAt = findLatestConversationStartAt(filteredGroupMessages);
     const receivedStartCommand = Boolean(conversationStartAt);
     // /start é só um comando técnico. Ele representa primeiro contato apenas
@@ -1985,6 +2004,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         recentUserTexts,
         recentBotTexts,
     });
+    safeMessages = filterMalformedConversationMessages(safeMessages);
     if (safeMessages.length === 0 && !MEDIA_ACTIONS.has(String(aiResponse.action || 'none'))) {
         safeMessages = buildRecoveryMessages();
     }
