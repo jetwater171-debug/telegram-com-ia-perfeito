@@ -2096,7 +2096,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
     const outgoingMessages = normalizeAiMessageList(aiResponse.messages);
 
     let safeMessages = filterConversationConsistencyMessages(
-        outgoingMessages.length > 0 ? outgoingMessages : ['oii?'],
+        outgoingMessages.length > 0 ? outgoingMessages : buildRecoveryMessages(),
         {
             currentUserText: userOnlyText,
             recentUserTexts,

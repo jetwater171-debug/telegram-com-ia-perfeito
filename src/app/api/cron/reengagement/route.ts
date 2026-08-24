@@ -8,18 +8,19 @@ export async function GET(req: NextRequest) {
     try {
         console.log("[CRON] Verificando inatividade para reengajamento...");
 
-        // 1. Configurar Tempo Limite (5 minutos atrás)
-        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        // Reengajamento automático é conservador: o painel não chama mais esta
+        // rota a cada 30s e o cron só considera silêncio real de pelo menos 12h.
+        const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
 
         // 2. Buscar sessões elegíveis
-        // - last_bot_activity_at < 5 min atrás
+        // - last_bot_activity_at < 12h atrás
         // - reengagement_sent = false
         // - status != 'closed' (opcional, dependendo da lógica)
 
         const { data: sessions, error } = await supabase
             .from('sessions')
             .select('*')
-            .lt('last_bot_activity_at', fiveMinutesAgo)
+            .lt('last_bot_activity_at', twelveHoursAgo)
             .eq('reengagement_sent', false)
             .eq('status', 'active') // Evitar mandar pra pausados/fechados
             .limit(5); // Processar em lotes menores para evitar timeout
@@ -52,12 +53,9 @@ export async function GET(req: NextRequest) {
         // 4. Processar Cada Sessão
         let processedCount = 0;
         const messagesToSent = [
-            "taa ai ainda??",
-            "amor?? sumiu?",
-            "ta ocupadinho vida?",
-            "me deixou no vácuo amor kkk",
-            "oii amor, ta por aí ainda?",
-            "sumiu pq anjo? kkk"
+            "lembrei do que a gente tava falando, quando voltar me chama",
+            "passei aqui pra continuar de onde a gente parou",
+            "quando vc aparecer quero continuar aquela conversa"
         ];
 
         for (const session of sessions) {

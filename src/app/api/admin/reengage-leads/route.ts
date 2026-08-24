@@ -5,9 +5,9 @@ import { sendTelegramMessage } from '@/lib/telegram';
 export const dynamic = 'force-dynamic';
 
 export const REENGAGEMENT_MESSAGES = [
-    "amorrr??",
-    "oi amor, ta ai ainda?",
-    "oiii"
+    "lembrei do que a gente tava falando, quando voltar me chama",
+    "passei aqui pra continuar de onde a gente parou",
+    "quando vc aparecer quero continuar aquela conversa"
 ] as const;
 
 export const pickRandomReengagementMessage = () => {

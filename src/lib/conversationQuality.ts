@@ -71,7 +71,7 @@ export const refineNewRelationshipMessages = (messages: unknown[], options: {
             : ['oiii, tudo bem?', 'como é seu nome??'];
     }
     if (unique.length === 0) {
-        return options.hasKnownName ? ['eaii, tudo bem?'] : ['oiii, tudo bem?', 'como é seu nome??'];
+        return options.hasKnownName ? ['quero entender direito o que vc quis dizer'] : ['como é seu nome??'];
     }
     return unique.slice(0, 2);
 };
@@ -178,15 +178,15 @@ export const buildProcessingFailureRecoveryMessages = (options: {
 
     if (startsConversation || greetingOnly) {
         const greetings = filterConversationConsistencyMessages([
-            'oiii, tudo bem?',
-            'oii, tudo certinho?',
-            'oiii, como vc tá?',
+            'tava por aqui sim, e vc?',
+            'to aqui, como vc tá?',
+            'fala comigo, como vc tá?',
         ], {
             currentUserText: userText,
             recentUserTexts,
             recentBotTexts,
         });
-        return greetings.length > 0 ? greetings.slice(0, 1) : ['oiii'];
+        return greetings.length > 0 ? greetings.slice(0, 1) : ['tava por aqui sim'];
     }
 
     const asksQuestion = /\?|\b(quem|qual|quais|quanto|quantos|quanta|quantas|como|quando|onde|por que|porque|pq|cad[eê]|o que|oq)\b/i.test(lower(userText));
