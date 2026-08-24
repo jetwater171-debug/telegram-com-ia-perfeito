@@ -1,4 +1,4 @@
-export type SalesProduct = 'video_call' | 'social_meetup' | 'vip' | 'custom_photo' | 'custom_video' | 'private_number' | 'private_chat' | 'erotic_audio' | 'evaluation' | 'gift';
+export type SalesProduct = 'video_call' | 'social_meetup' | 'vip' | 'custom_photo' | 'custom_video' | 'private_number' | 'private_chat' | 'erotic_audio' | 'evaluation' | 'gift' | 'custom_request';
 
 export const VIP_PRICE = 19.90;
 
@@ -10,6 +10,7 @@ export type AdaptiveOfferPlan = {
     format: string;
     explicitBudget: number | null;
     valueSource: 'explicit_budget' | 'accepted_offer' | 'purchase_history' | 'standard';
+    requestBrief: string | null;
 };
 
 type SalesMessage = {
@@ -44,12 +45,19 @@ export const detectPaidProduct = (text: string): SalesProduct | null => {
     if (/\b(chat privado|atencao exclusiva|companhia exclusiva|conversar no privado|namoradinha virtual)\b/i.test(value)) return 'private_chat';
     if (/\b(audio erotico|audio gemendo|gemido em audio)\b/i.test(value)) return 'erotic_audio';
     if (/\b(avaliacao|avaliar meu pau|avalia meu pau)\b/i.test(value)) return 'evaluation';
+    const mentionsCustomItem = /\b(calcinha|sutia|lingerie usada|roupa usada|presente personalizado|objeto pessoal)\b/i.test(value);
+    const explicitCustomCommerce = /\b(?:vendo|vende|vender|compro|comprar|te pago|pago pra|pagaria|quanto cobra|quanto vc quer|faz por|fecha por)\b/i.test(value);
+    const requestedPaidAction = /(?:se eu (?:te )?pagar|por dinheiro|em troca de|te mando um pix)/i.test(value)
+        && /\b(?:faz|faca|manda|envia|grava|usa|veste|interpreta|finge|realiza)\b/i.test(value);
+    const specificFantasy = /\b(?:corno|cuckold|humilhacao|dominacao|fetiche|roleplay|fantasia personalizada)\b/i.test(value)
+        && /\b(?:quero|queria|gostaria|faz|faca|topa|pagaria|pago)\b/i.test(value);
+    if ((mentionsCustomItem && (explicitCustomCommerce || /\bquero\b/i.test(value))) || explicitCustomCommerce || requestedPaidAction || specificFantasy) return 'custom_request';
     return null;
 };
 
 const productFromMemory = (memory: LeadMemoryLike): SalesProduct | null => {
     const value = String(memory?.metadata?.sales_nurture_product || '');
-    return ['video_call', 'social_meetup', 'vip', 'custom_photo', 'custom_video', 'private_number', 'private_chat', 'erotic_audio', 'evaluation', 'gift'].includes(value)
+    return ['video_call', 'social_meetup', 'vip', 'custom_photo', 'custom_video', 'private_number', 'private_chat', 'erotic_audio', 'evaluation', 'gift', 'custom_request'].includes(value)
         ? value as SalesProduct
         : null;
 };
@@ -183,7 +191,18 @@ const PRODUCT_OFFERS: Record<Exclude<SalesProduct, 'gift'>, {
         core: [14.90, 'Avaliacao com Audio', 'avaliacao detalhada com audio'],
         premium: [24.90, 'Avaliacao Premium', 'avaliacao completa e bem detalhada'],
     },
+    custom_request: {
+        entry: [29.90, 'Pedido Personalizado', 'um pedido personalizado conforme combinado'],
+        core: [59.90, 'Pedido Personalizado Exclusivo', 'um pedido exclusivo feito conforme o briefing'],
+        premium: [99.90, 'Pedido Personalizado Premium', 'um pedido premium com escopo mais completo'],
+    },
 };
+
+export const buildCustomRequestBrief = (text: string) => String(text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/^\s*\[.*?\]\s*/g, '')
+    .trim()
+    .slice(0, 500);
 
 export type LeadScoreInput = {
     tarado?: number;
@@ -201,6 +220,7 @@ const createOfferPlan = ({
     userText,
     leadScore,
     deviceType,
+    customRequestBrief,
 }: {
     product: SalesProduct | null;
     explicitBudget: number | null;
@@ -210,6 +230,7 @@ const createOfferPlan = ({
     userText: string;
     leadScore?: LeadScoreInput | null;
     deviceType?: string | null;
+    customRequestBrief?: string | null;
 }): AdaptiveOfferPlan | null => {
     if (!product) return null;
     if (product === 'gift') {
@@ -223,6 +244,7 @@ const createOfferPlan = ({
             format: 'um mimo espontaneo para a Lari',
             explicitBudget,
             valueSource: explicitBudget ? 'explicit_budget' : 'accepted_offer',
+            requestBrief: 'mimo espontaneo',
         };
     }
     if (product === 'social_meetup') {
@@ -234,6 +256,7 @@ const createOfferPlan = ({
             format: 'um encontro de ate duas horas, com transporte combinado separadamente',
             explicitBudget: null,
             valueSource: 'standard',
+            requestBrief: null,
         };
     }
     if (product === 'vip') {
@@ -245,6 +268,21 @@ const createOfferPlan = ({
             format: 'acesso ao VIP da Lari',
             explicitBudget,
             valueSource: 'standard',
+            requestBrief: null,
+        };
+    }
+
+    if (product === 'custom_request' && (explicitBudget || acceptedOfferValue)) {
+        const acceptedValue = Math.min(5_000, Math.max(5, Number(explicitBudget || acceptedOfferValue)));
+        return {
+            product,
+            tier: acceptedValue >= 99.90 ? 'premium' : acceptedValue >= 59.90 ? 'core' : 'entry',
+            value: Math.round(acceptedValue * 100) / 100,
+            description: 'Pedido Personalizado Lari',
+            format: customRequestBrief || 'um pedido personalizado conforme combinado',
+            explicitBudget,
+            valueSource: explicitBudget ? 'explicit_budget' : 'accepted_offer',
+            requestBrief: customRequestBrief || null,
         };
     }
 
@@ -259,8 +297,6 @@ const createOfferPlan = ({
     const priceSensitive = /\b(ta caro|muito caro|sem dinheiro|to liso|estou liso|desempregado|nao tenho dinheiro|desconto|mais barato|faz menos)\b/i.test(normalizedRequest);
 
     const finScore = Number(leadScore?.financeiro ?? 25);
-    const isIPhone = /iphone|ios|ipad/i.test(String(deviceType || ''));
-
     if (acceptedOfferValue) {
         customValue = acceptedOfferValue;
         valueSource = 'accepted_offer';
@@ -268,7 +304,7 @@ const createOfferPlan = ({
         customValue = Math.min(explicitBudget, catalog.premium[0]);
         tier = customValue < catalog.core[0] ? 'entry' : customValue >= catalog.premium[0] ? 'premium' : 'core';
         valueSource = 'explicit_budget';
-    } else if (wantsPremiumScope || finScore >= 60 || totalPaid >= 50 || (isIPhone && finScore >= 45 && !priceSensitive)) {
+    } else if (wantsPremiumScope || finScore >= 70 || totalPaid >= 50) {
         tier = 'premium';
         if (finScore >= 60 || totalPaid >= 50) valueSource = 'purchase_history';
     } else if (wantsEntryScope || priceSensitive || finScore < 20) {
@@ -286,6 +322,7 @@ const createOfferPlan = ({
         format: selected[2],
         explicitBudget,
         valueSource,
+        requestBrief: product === 'custom_request' ? customRequestBrief || null : null,
     };
 };
 
@@ -313,6 +350,10 @@ export const evaluateSalesTiming = ({
         ? productFromMemory(leadMemory)
         : null;
     const activeProduct = detectedProduct || rememberedProduct;
+    const rememberedCustomBrief = String(leadMemory?.metadata?.sales_custom_request_brief || '').trim();
+    const customRequestBrief = activeProduct === 'custom_request'
+        ? (detectedProduct === 'custom_request' ? buildCustomRequestBrief(userText) : rememberedCustomBrief)
+        : null;
     const sameProduct = Boolean(activeProduct && activeProduct === rememberedProduct);
     const previousTurns = sameProduct ? Math.max(0, Number(leadMemory?.metadata?.sales_nurture_turns || 0)) : 0;
     const engagedContinuation = Boolean(activeProduct && isEngagedContinuation(userText));
@@ -341,6 +382,7 @@ export const evaluateSalesTiming = ({
         userText,
         leadScore,
         deviceType,
+        customRequestBrief,
     });
 
     return {
@@ -357,6 +399,7 @@ export const evaluateSalesTiming = ({
         explicitBudget,
         recentOfferValue: recentOfferDetails?.value ?? null,
         offerPlan,
+        customRequestBrief,
         metadataPatch: activeProduct && salesContextActive ? {
             sales_nurture_product: activeProduct,
             sales_nurture_turns: nurtureTurns,
@@ -365,6 +408,7 @@ export const evaluateSalesTiming = ({
             sales_offer_seen: recentOffer,
             sales_offer_value: offerPlan?.value ?? leadMemory?.metadata?.sales_offer_value ?? null,
             sales_offer_tier: offerPlan?.tier ?? leadMemory?.metadata?.sales_offer_tier ?? null,
+            ...(customRequestBrief ? { sales_custom_request_brief: customRequestBrief } : {}),
         } : {},
     };
 };

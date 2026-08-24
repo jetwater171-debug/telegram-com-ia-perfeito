@@ -64,6 +64,7 @@ import {
 import { detectAdultDeclaration, validateMasterBrainResponse } from '@/lib/brain/hardValidator';
 import { applyPreviewBanditRanking, recordPreviewPurchaseSafe, recordPreviewReactionSafe, recordPreviewSentSafe } from '@/lib/brain/previewBandit';
 import { trackLeadResponseOutcomesSafe, trackPaymentOutcomeSafe } from '@/lib/brain/outcomeTracker';
+import { markCustomOrderPaidSafe, recordCustomOrderSafe } from '@/lib/customOrders';
 
 export const maxDuration = 120;
 
@@ -1292,6 +1293,9 @@ export async function POST(req: NextRequest) {
         offerPlan
             ? `- Oferta indicada: ${offerPlan.format}, R$ ${offerPlan.value.toFixed(2).replace('.', ',')} (${offerPlan.description}).`
             : '- Ainda nao existe oferta definida; mantenha a conversa natural e deixe desejo/contexto aparecerem sem pergunta de qualificacao.',
+        salesTiming.customRequestBrief
+            ? `- Briefing do pedido personalizado: ${salesTiming.customRequestBrief}. Preserve este pedido; nao troque por VIP ou outro produto.`
+            : '',
         offerPlan?.explicitBudget
             ? `- O lead declarou limite/disposicao de R$ ${offerPlan.explicitBudget.toFixed(2).replace('.', ',')}; nunca ultrapasse esse valor.`
             : '- Nao ha limite financeiro declarado. Nao presuma renda por aparelho, cidade ou localizacao.',
@@ -1300,7 +1304,7 @@ export async function POST(req: NextRequest) {
             : '',
         '- Se o desejo mudar, abandone a oferta anterior e aqueça o novo desejo antes de precificar.',
         '- Venda o resultado que ele pediu; para pouco dinheiro, reduza o escopo do mesmo desejo em vez de empurrar outro produto.',
-        '- Este plano pertence apenas ao cerebro. Se a relacao ainda for nova, nao deixe a intencao comercial aparecer na fala da Lari.',
+        '- Este plano pertence apenas ao cerebro. Mesmo em relacao nova, uma intencao comercial literal pode ser atendida imediatamente; sem intencao real, converse normalmente.',
     ].join('\n');
     extraScript = [extraScript, adaptiveSalesDirective].filter(Boolean).join('\n\n');
 
@@ -1531,35 +1535,18 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         hasMedia: Boolean(mediaData),
     });
     let aiResponse: Awaited<ReturnType<typeof sendMessageToGemini>>;
-    if (isConversationStart) {
-        console.log("[PROCESSADOR] Primeiro contato via /start: usando saudação inicial padrão sem IA");
-        aiResponse = {
-            internal_thought: "Primeiro contato via /start: saudação padrão inicial da Lari.",
-            lead_classification: "desconhecido",
-            lead_stats: { tarado: 5, carente: 5, sentimental: 5, financeiro: 5 },
-            extracted_user_name: null,
-            audio_transcription: null,
-            current_state: "WELCOME",
-            messages: ["oiii, tudo bem?", "como é seu nome??"],
-            action: "none",
-            preview_id: null,
-            preview_request: null,
-            payment_details: null,
-            lead_memory_patch: {
-                relationship_stage: "new",
-            },
-        };
-    } else {
-        const typingHeartbeat = setInterval(() => {
-            void sendTelegramAction(botToken, chatId, 'typing').catch((error: any) => {
-                console.warn('[PROCESSADOR] Falha ao renovar digitando:', error?.message || error);
-            });
-        }, 4000);
-        try {
-            aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
-        } finally {
-            clearInterval(typingHeartbeat);
-        }
+    // Inclusive o primeiro contato passa pelos tres cerebros. Isso evita uma
+    // personalidade fixa no /start e garante leitura, estrategia e revisao para
+    // todos os leads desde a primeira mensagem.
+    const typingHeartbeat = setInterval(() => {
+        void sendTelegramAction(botToken, chatId, 'typing').catch((error: any) => {
+            console.warn('[PROCESSADOR] Falha ao renovar digitando:', error?.message || error);
+        });
+    }, 4000);
+    try {
+        aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
+    } finally {
+        clearInterval(typingHeartbeat);
     }
     console.log("[PROCESSADOR] Resposta gerada", {
         sessionId: session.id,
@@ -1658,6 +1645,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             stateSnapshot: {
                 reality: brainRuntime.reality,
                 episode: brainRuntime.episode,
+                temporal: brainRuntime.temporal,
                 retrieved_memory_ids: brainRuntime.memories.map((memory) => memory.id),
             },
             validatorResult: {
@@ -2633,6 +2621,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                             // Forçar IA a saber que pagou na proxima iteração se necessário, 
                             // mas aqui ela já recebe o input de sistema acima.
                             if (lastPayMsg.id) {
+                                const confirmedAt = lastPayMsg.payment_data?.paid_at || new Date().toISOString();
                                 await supabase.from('messages').update({
                                     payment_data: {
                                         ...(lastPayMsg.payment_data || {}),
@@ -2642,11 +2631,14 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                                         fulfillment_status: isSocialMeetupPayment
                                             ? 'paid_awaiting_scheduling'
                                             : lastPayMsg.payment_data?.fulfillment_status || 'paid',
-                                        paid_at: lastPayMsg.payment_data?.paid_at || new Date().toISOString(),
+                                        paid_at: confirmedAt,
                                         last_checked_at: new Date().toISOString(),
                                         last_status_payload: statusData
                                     }
                                 }).eq('id', lastPayMsg.id);
+                                if (paymentProduct === 'custom_request') {
+                                    await markCustomOrderPaidSafe(String(paymentId), confirmedAt);
+                                }
                             }
                             const paymentOutcomeEventId = await appendLeadEventSafe({
                                 sessionId: String(session.id),
@@ -2771,6 +2763,9 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                     const description = isSocialMeetup
                         ? 'Encontro com Larissa Morais'
                         : (salesTiming.offerPlan?.description || aiResponse.payment_details?.description || "Pack Exclusivo");
+                    const customRequestBrief = paymentProduct === 'custom_request'
+                        ? String(salesTiming.customRequestBrief || salesTiming.offerPlan?.requestBrief || aiResponse.payment_details?.description || 'pedido personalizado').trim().slice(0, 2_000)
+                        : null;
                     const idempotencyKey = `${session.id}:${paymentProduct}:${value.toFixed(2)}`;
                     // Idempotencia por sessao + produto + valor: uma nova tentativa
                     // reenviara exatamente o mesmo PIX, mesmo se outro produto tiver
@@ -2843,6 +2838,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                             session_id: session.id,
                             product: paymentProduct,
                             idempotency_key: idempotencyKey,
+                            ...(customRequestBrief ? { custom_request_brief: customRequestBrief } : {}),
                         },
                     }, isSocialMeetup ? { onlyGateway: 'wiinpay' } : {});
 
@@ -2872,6 +2868,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                                 value,
                                 description,
                                 product: paymentProduct,
+                                custom_request_brief: customRequestBrief,
                                 idempotency_key: idempotencyKey,
                                 fulfillment_status: isSocialMeetup ? 'awaiting_payment' : 'pending',
                                 pixCopiaCola: payment.pixCopiaCola,
@@ -2880,6 +2877,20 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                                 status: payment.status || 'pending'
                             }
                         });
+                        if (customRequestBrief) {
+                            await recordCustomOrderSafe({
+                                sessionId: String(session.id),
+                                paymentId: String(payment.paymentId),
+                                gateway: payment.gateway,
+                                requestBrief: customRequestBrief,
+                                amount: value,
+                                paymentData: {
+                                    description,
+                                    product: paymentProduct,
+                                    idempotency_key: idempotencyKey,
+                                },
+                            });
+                        }
                         await appendLeadEventSafe({
                             sessionId: String(session.id),
                             eventType: 'payment_created',

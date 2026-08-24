@@ -49,6 +49,17 @@ export type EpisodeState = {
     momentum: number;
 };
 
+export type TemporalState = {
+    now: string;
+    timezone: string;
+    lastLeadAt: string | null;
+    lastBotAt: string | null;
+    previousActivityAt: string | null;
+    gapMinutes: number | null;
+    gapBucket: 'live' | 'same_day' | 'returning_day' | 'returning_days' | 'reactivation' | 'unknown';
+    crossedCalendarDay: boolean;
+};
+
 export type RetrievedMemory = {
     id: string;
     kind: MemoryKind;
@@ -65,6 +76,7 @@ export type BrainRuntimeState = {
     reality: RealityState;
     twin: LeadTwinState;
     episode: EpisodeState;
+    temporal: TemporalState;
     memories: RetrievedMemory[];
     migrationReady: boolean;
 };

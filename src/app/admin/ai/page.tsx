@@ -62,7 +62,7 @@ const emptySettings: AiSettings = {
     fishAudioApiKeyMasked: "", fishAudioApiKeySaved: false, fishAudioApiKeySource: "missing",
     mem0ApiKeyMasked: "", mem0ApiKeySaved: false, mem0ApiKeySource: "missing",
     aiModelOrder: PROVIDER_ORDER.join(","), aiStrategyModelOrder: PROVIDER_ORDER.join(","), aiDraftModelOrder: PROVIDER_ORDER.join(","), aiReviewModelOrder: PROVIDER_ORDER.join(","), aiEvaluatorModelOrder: PROVIDER_ORDER.join(","),
-    aiStrategyEnabled: true, aiReviewEnabled: true, aiEvaluatorEnabled: true,
+    aiStrategyEnabled: true, aiReviewEnabled: true, aiEvaluatorEnabled: false,
     aiSharedRateLimitEnabled: true, sharedRateLimitReady: false,
     openrouterBaseUrl: "https://openrouter.ai/api/v1", openrouterReferer: "", openrouterTitle: "Lari Telegram Bot",
     openrouterStrategyModel: DEFAULT_OPENROUTER_MODEL, openrouterDraftModel: DEFAULT_OPENROUTER_MODEL, openrouterReviewModel: DEFAULT_OPENROUTER_MODEL, openrouterEvaluatorModel: DEFAULT_OPENROUTER_MODEL,
@@ -241,7 +241,7 @@ export default function AdminAiPage() {
 
     const useRecommendedOrder = () => {
         setOrder(PROVIDER_ORDER);
-        setSettings((current) => ({ ...current, aiStrategyEnabled: true, aiReviewEnabled: true, aiEvaluatorEnabled: true, aiSharedRateLimitEnabled: true }));
+        setSettings((current) => ({ ...current, aiStrategyEnabled: true, aiReviewEnabled: true, aiEvaluatorEnabled: false, aiSharedRateLimitEnabled: true }));
     };
 
     const providerTotals = useCallback((provider: ProviderKey) => {
@@ -399,9 +399,9 @@ export default function AdminAiPage() {
 
                     <Panel title="Proteção para 30 leads/min">
                         <Toggle title="Limitador compartilhado" description={settings.sharedRateLimitReady ? "Pronto para coordenar todas as instâncias da Vercel." : "Falta SERVICE_ROLE e aplicar a migration do limitador."} checked={settings.aiSharedRateLimitEnabled} onChange={(value) => updateSetting("aiSharedRateLimitEnabled", value)} />
-                        <Toggle title="Cérebro progressivo" description="Ativa mais camadas somente depois da compra." checked={settings.aiStrategyEnabled} onChange={(value) => updateSetting("aiStrategyEnabled", value)} />
-                        <Toggle title="Revisora" description="Corrige respostas críticas e clientes compradores." checked={settings.aiReviewEnabled} onChange={(value) => updateSetting("aiReviewEnabled", value)} />
-                        <Toggle title="Avaliadora elite" description="Quarta camada para clientes acima de R$ 200." checked={settings.aiEvaluatorEnabled} onChange={(value) => updateSetting("aiEvaluatorEnabled", value)} />
+                        <Toggle title="1 · Estrategista DeepSeek" description="Sempre ativo para todos os leads; conduz desejo, oferta, prévia e PIX." checked={true} disabled onChange={() => undefined} />
+                        <Toggle title="2 · Lari redatora" description="Sempre ativa para transformar o plano em conversa humana e rápida." checked={true} disabled onChange={() => undefined} />
+                        <Toggle title="3 · Revisora DeepSeek" description="Sempre ativa antes do envio para corrigir venda, contexto e repetição." checked={true} disabled onChange={() => undefined} />
                     </Panel>
 
                     <Panel title="Memória humana · Mem0">
@@ -492,6 +492,6 @@ function Metric({ value, label }: { value: string; label: string }) {
     return <div className="rounded-xl border border-white/10 bg-black/20 p-3"><strong className="text-xl">{value}</strong><p className="mt-1 text-xs text-slate-500">{label}</p></div>;
 }
 
-function Toggle({ title, description, checked, onChange }: { title: string; description: string; checked: boolean; onChange: (value: boolean) => void }) {
-    return <label className="mb-3 flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 p-3 last:mb-0"><span><strong className="text-sm">{title}</strong><p className="mt-1 text-xs leading-5 text-slate-500">{description}</p></span><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-5 w-5 shrink-0 accent-cyan-300" /></label>;
+function Toggle({ title, description, checked, onChange, disabled = false }: { title: string; description: string; checked: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
+    return <label className={`mb-3 flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 p-3 last:mb-0 ${disabled ? "cursor-default" : "cursor-pointer"}`}><span><strong className="text-sm">{title}</strong><p className="mt-1 text-xs leading-5 text-slate-500">{description}</p></span><input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} className="h-5 w-5 shrink-0 accent-cyan-300 disabled:opacity-100" /></label>;
 }

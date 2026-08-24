@@ -1,6 +1,6 @@
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { formatRetrievedMemories, rankMemoryRows } from '@/lib/brain/memoryRetriever';
-import type { BrainRuntimeState, EpisodeState, LeadTwinState, RealityState } from '@/lib/brain/types';
+import type { BrainRuntimeState, EpisodeState, LeadTwinState, RealityState, TemporalState } from '@/lib/brain/types';
 
 const asObject = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, any>
@@ -71,6 +71,55 @@ const fallbackEpisode = (leadMemory: any, recentMessages: any[]): EpisodeState =
     };
 };
 
+const dateKeyInTimeZone = (value: string, timezone: string) => {
+    try {
+        return new Intl.DateTimeFormat('en-CA', {
+            timeZone: timezone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        }).format(new Date(value));
+    } catch {
+        return new Date(value).toISOString().slice(0, 10);
+    }
+};
+
+const buildTemporalState = (session: any, recentMessages: any[]): TemporalState => {
+    const now = new Date();
+    const timezone = String(asObject(session?.lead_memory).metadata?.redirect_timezone || 'America/Sao_Paulo');
+    const ordered = [...recentMessages]
+        .filter((message) => message?.created_at && ['user', 'bot'].includes(String(message?.sender || '')))
+        .sort((left, right) => Date.parse(String(left.created_at)) - Date.parse(String(right.created_at)));
+    const lastLeadAt = [...ordered].reverse().find((message) => message.sender === 'user')?.created_at || null;
+    const lastBotAt = [...ordered].reverse().find((message) => message.sender === 'bot')?.created_at || null;
+    // A última fala da Lari é a âncora estável do intervalo. Mensagens agrupadas
+    // do lead no mesmo turno não podem apagar uma retomada depois de dias.
+    const previousActivityAt = lastBotAt ? String(lastBotAt) : null;
+    const previousMs = Date.parse(String(previousActivityAt || ''));
+    const currentMs = Date.parse(String(lastLeadAt || now.toISOString()));
+    const gapMinutes = Number.isFinite(previousMs) && Number.isFinite(currentMs)
+        ? Math.max(0, Math.round((currentMs - previousMs) / 60_000))
+        : null;
+    const gapBucket: TemporalState['gapBucket'] = gapMinutes === null ? 'unknown'
+        : gapMinutes < 20 ? 'live'
+            : gapMinutes < 6 * 60 ? 'same_day'
+                : gapMinutes < 24 * 60 ? 'returning_day'
+                    : gapMinutes < 3 * 24 * 60 ? 'returning_days'
+                        : 'reactivation';
+    const crossedCalendarDay = Boolean(previousActivityAt && lastLeadAt
+        && dateKeyInTimeZone(String(previousActivityAt), timezone) !== dateKeyInTimeZone(String(lastLeadAt), timezone));
+    return {
+        now: now.toISOString(),
+        timezone,
+        lastLeadAt: lastLeadAt ? String(lastLeadAt) : null,
+        lastBotAt: lastBotAt ? String(lastBotAt) : null,
+        previousActivityAt,
+        gapMinutes,
+        gapBucket,
+        crossedCalendarDay,
+    };
+};
+
 export const loadBrainRuntimeState = async ({
     session,
     userText,
@@ -83,6 +132,7 @@ export const loadBrainRuntimeState = async ({
     const realityFallback = fallbackReality(session, recentMessages);
     const twinFallback = fallbackTwin(session?.lead_memory);
     const episodeFallback = fallbackEpisode(session?.lead_memory, recentMessages);
+    const temporal = buildTemporalState(session, recentMessages);
 
     try {
         const [realityResult, twinResult, episodeResult, memoryResult] = await Promise.all([
@@ -125,13 +175,13 @@ export const loadBrainRuntimeState = async ({
             openLoops: [...episode.openLoops, ...twin.openLoops],
             limit: 12,
         });
-        return { reality, twin, episode, memories, migrationReady: true };
+        return { reality, twin, episode, temporal, memories, migrationReady: true };
     } catch (error: any) {
         const message = String(error?.message || error);
         if (!/lead_(reality|twins|episode|memory)|relation|schema cache/i.test(message)) {
             console.warn('[MASTER BRAIN] estado V2 indisponível:', message);
         }
-        return { reality: realityFallback, twin: twinFallback, episode: episodeFallback, memories: [], migrationReady: false };
+        return { reality: realityFallback, twin: twinFallback, episode: episodeFallback, temporal, memories: [], migrationReady: false };
     }
 };
 
@@ -147,7 +197,10 @@ ${JSON.stringify(state.twin)}
 ## EPISODE_STATE (assunto e trajetória atual)
 ${JSON.stringify(state.episode)}
 
+## TEMPORAL_STATE (tempo determinístico do backend)
+${JSON.stringify(state.temporal)}
+
 ## MEMÓRIAS RECUPERADAS (máximo 12)
 ${formatRetrievedMemories(state.memories)}
 
-Regras epistêmicas: REALITY_STATE vence qualquer fala ou inferência. Fato vence hipótese. Informação atual vence memória antiga. Hipótese nunca pode ser afirmada ao lead como verdade.`.trim();
+Regras epistêmicas: REALITY_STATE vence qualquer fala ou inferência. Fato vence hipótese. Informação atual vence memória antiga. Hipótese nunca pode ser afirmada ao lead como verdade. Use TEMPORAL_STATE para retomar naturalmente depois de horas ou dias, sem fingir que tudo aconteceu no mesmo instante e sem mandar saudação genérica.`.trim();

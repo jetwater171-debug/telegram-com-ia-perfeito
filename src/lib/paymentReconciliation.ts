@@ -11,6 +11,7 @@ import {
 import { appendLeadEventSafe, patchRealityStateSafe } from '@/lib/brain/eventStore';
 import { trackPaymentOutcomeSafe } from '@/lib/brain/outcomeTracker';
 import { recordPreviewPurchaseSafe } from '@/lib/brain/previewBandit';
+import { markCustomOrderPaidSafe } from '@/lib/customOrders';
 
 type PaymentMessage = {
   id: string;
@@ -135,6 +136,9 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
     const product = String(paymentData.product || 'produto');
     const description = String(paymentData.description || product);
     const isSocialMeetup = product === 'social_meetup';
+    if (product === 'custom_request') {
+      await markCustomOrderPaidSafe(String(paymentData.paymentId || ''), nextPaymentData.paid_at || checkedAt);
+    }
     await supabase.from('messages').insert({
       session_id: freshMessage.session_id,
       sender: 'system',

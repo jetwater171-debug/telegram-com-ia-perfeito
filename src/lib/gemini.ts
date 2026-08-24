@@ -1013,9 +1013,12 @@ const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
         aiDraftModelOrder: settings.ai_draft_model_order || process.env.AI_DRAFT_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
         aiReviewModelOrder: settings.ai_review_model_order || process.env.AI_REVIEW_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
         aiEvaluatorModelOrder: settings.ai_evaluator_model_order || process.env.AI_EVALUATOR_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
-        aiStrategyEnabled: settings.ai_strategy_enabled !== "false",
-        aiReviewEnabled: settings.ai_review_enabled !== "false",
-        aiEvaluatorEnabled: settings.ai_evaluator_enabled !== "false",
+        // Constituicao operacional: os tres cerebros sao obrigatorios para
+        // todos os leads. Settings antigos nao podem rebaixar silenciosamente
+        // quem ainda nao comprou para uma chamada unica.
+        aiStrategyEnabled: true,
+        aiReviewEnabled: true,
+        aiEvaluatorEnabled: false,
         aiSharedRateLimitEnabled: settings.ai_shared_rate_limit_enabled !== "false" && process.env.AI_SHARED_RATE_LIMIT_ENABLED !== "false",
         openRouterStrategyModel: normalizeOpenRouterPrimaryModel(settings.openrouter_strategy_model || process.env.OPENROUTER_STRATEGY_MODEL || DEFAULT_OPENROUTER_MODELS.strategy),
         openRouterDraftModel: normalizeOpenRouterPrimaryModel(settings.openrouter_draft_model || process.env.OPENROUTER_DRAFT_MODEL || DEFAULT_OPENROUTER_MODELS.draft),
@@ -2018,12 +2021,13 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         context?.leadProfile || null,
     ) + `
 
-# INTELIGENCIA PROGRESSIVA DESTE LEAD — CONTEXTO INTERNO
+# PIPELINE DE TRES CEREBROS — CONTEXTO INTERNO
 - Nivel: ${orchestration.tier} (${orchestration.label}).
 - Total confirmado: R$ ${orchestration.totalPaid.toFixed(2).replace('.', ',')}.
 - Mensagens do lead neste episodio: ${episodeLeadMessageCount}.
 - Modo: ${orchestration.objective}.
-- O aumento de inteligencia melhora memoria, coerencia, personalizacao e qualidade. Ele nunca autoriza pressao, culpa, urgencia falsa, exploracao de solidao, dificuldade financeira ou dependencia emocional.
+- Estrategia, redacao e revisao sao obrigatorias neste turno, independentemente do total pago.
+- Mais inteligencia melhora memoria, coerencia, personalizacao e qualidade. Ela nunca autoriza pressao, culpa, urgencia falsa, exploracao de solidao, dificuldade financeira ou dependencia emocional.
 - Depois de uma compra, primeiro confirme entrega e satisfacao. Uma nova oferta so entra quando combinar com um pedido, preferencia ou abertura real do lead.
 
 # COMPRAS CONFIRMADAS — CONTEXTO INTERNO

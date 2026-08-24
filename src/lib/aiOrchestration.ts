@@ -24,9 +24,9 @@ export const AI_ORCHESTRATION_THRESHOLDS = {
 const normalizePaid = (value: unknown) => Math.max(0, Number(value) || 0);
 
 /**
- * A inteligencia cresce com a relacao comercial sem gastar varias chamadas em
- * leads que ainda estao no primeiro contato. O backend continua aplicando as
- * mesmas validacoes de midia, preco e pagamento em todos os niveis.
+ * Todo lead recebe o pipeline completo de tres cerebros. Os niveis continuam
+ * existindo apenas para ajustar a quantidade de memoria recuperada, nunca para
+ * reduzir estrategia ou revisao de quem ainda nao comprou.
  */
 export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestrationPlan => {
     const totalPaid = normalizePaid(totalPaidInput);
@@ -38,12 +38,12 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             totalPaid,
             separateStrategy: true,
             reviewMode: 'always',
-            evaluator: true,
-            historyMessageLimit: 120,
-            historyMaxEntries: 120,
-            historyMaxChars: 44_000,
-            promptBlockMaxChars: 20_000,
-            objective: 'maxima continuidade, personalizacao e controle de qualidade',
+            evaluator: false,
+            historyMessageLimit: 48,
+            historyMaxEntries: 36,
+            historyMaxChars: 18_000,
+            promptBlockMaxChars: 12_000,
+            objective: 'tres cerebros sempre ativos com maxima continuidade e personalizacao',
         };
     }
 
@@ -55,11 +55,11 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             separateStrategy: true,
             reviewMode: 'always',
             evaluator: false,
-            historyMessageLimit: 100,
-            historyMaxEntries: 100,
-            historyMaxChars: 34_000,
-            promptBlockMaxChars: 18_000,
-            objective: 'planejamento separado e revisao completa em todo turno',
+            historyMessageLimit: 44,
+            historyMaxEntries: 34,
+            historyMaxChars: 17_000,
+            promptBlockMaxChars: 12_000,
+            objective: 'tres cerebros sempre ativos com revisao completa',
         };
     }
 
@@ -69,13 +69,13 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             label: 'cliente ativo',
             totalPaid,
             separateStrategy: true,
-            reviewMode: 'critical',
+            reviewMode: 'always',
             evaluator: false,
-            historyMessageLimit: 80,
-            historyMaxEntries: 80,
-            historyMaxChars: 28_000,
-            promptBlockMaxChars: 16_000,
-            objective: 'cerebro separado para continuidade com revisao nos momentos criticos',
+            historyMessageLimit: 40,
+            historyMaxEntries: 32,
+            historyMaxChars: 16_000,
+            promptBlockMaxChars: 11_000,
+            objective: 'tres cerebros sempre ativos para conduzir, vender e revisar',
         };
     }
 
@@ -83,14 +83,14 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
         tier: 'starter',
         label: 'primeiro ciclo',
         totalPaid,
-        separateStrategy: false,
-        reviewMode: 'none',
+        separateStrategy: true,
+        reviewMode: 'always',
         evaluator: false,
-        historyMessageLimit: 80,
-        historyMaxEntries: 80,
-        historyMaxChars: 24_000,
-        promptBlockMaxChars: 16_000,
-        objective: 'uma chamada forte e integrada para conversar como Lari com o cerebro geral embutido',
+        historyMessageLimit: 36,
+        historyMaxEntries: 30,
+        historyMaxChars: 15_000,
+        promptBlockMaxChars: 10_000,
+        objective: 'tres cerebros sempre ativos desde o primeiro contato',
     };
 };
 
