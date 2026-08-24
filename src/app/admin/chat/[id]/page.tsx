@@ -25,6 +25,15 @@ interface MediaPreview {
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
+const mergeMessages = (current: Message[], incoming: Message[]) => {
+    const byId = new Map(current.map((message) => [message.id, message]));
+    for (const message of incoming) byId.set(message.id, { ...byId.get(message.id), ...message });
+    return [...byId.values()].sort((a, b) => {
+        const time = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        return time || a.id.localeCompare(b.id);
+    });
+};
+
 export default function AdminChatPage() {
     const params = useParams();
     const telegramChatId = Array.isArray(params.id) ? params.id[0] : params.id;
@@ -51,8 +60,17 @@ export default function AdminChatPage() {
     const [loading, setLoading] = useState(true);
     const [lastSync, setLastSync] = useState<Date | null>(null);
     const [mediaPreview, setMediaPreview] = useState<MediaPreview | null>(null);
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const messagesViewportRef = useRef<HTMLElement>(null);
     const didInitialScroll = useRef(false);
+    const autoFollowRef = useRef(true);
+
+    const visibleMessages = useMemo(() => {
+        return messages.filter((msg) => {
+            if (msg.sender === "thought" && !showThoughts && !showAdvancedView) return false;
+            if (msg.sender === "system" && !showSystem) return false;
+            return true;
+        });
+    }, [messages, showThoughts, showSystem, showAdvancedView]);
 
     useEffect(() => {
         let active = true;
@@ -61,6 +79,9 @@ export default function AdminChatPage() {
         (async () => {
             if (!telegramChatId) return;
             setLoading(true);
+            setMessages([]);
+            didInitialScroll.current = false;
+            autoFollowRef.current = true;
             const { data } = await supabase
                 .from("sessions")
                 .select("*")
@@ -73,10 +94,10 @@ export default function AdminChatPage() {
             }
 
             setSession(data);
+            cleanup = subscribe(data.id);
             await loadLeadOrigin(data);
             await loadLatestFunnel(data.id, data.funnel_step);
             await loadMessages(data.id);
-            cleanup = subscribe(data.id);
             setLoading(false);
         })();
 
@@ -88,7 +109,7 @@ export default function AdminChatPage() {
 
     useEffect(() => {
         if (!session?.id) return;
-        const timer = window.setInterval(() => loadMessages(session.id, false), 15000);
+        const timer = window.setInterval(() => loadMessages(session.id), 5000);
         return () => window.clearInterval(timer);
     }, [session?.id]);
 
@@ -98,14 +119,13 @@ export default function AdminChatPage() {
     }, []);
 
     useEffect(() => {
-        if (!messages.length) return;
+        if (!visibleMessages.length) return;
+        const behavior: ScrollBehavior = didInitialScroll.current ? "smooth" : "auto";
         if (!didInitialScroll.current) {
             didInitialScroll.current = true;
-            scrollToBottom("auto");
-            return;
         }
-        scrollToBottom("smooth");
-    }, [messages.length]);
+        if (autoFollowRef.current) window.requestAnimationFrame(() => scrollToBottom(behavior));
+    }, [visibleMessages.length, visibleMessages[visibleMessages.length - 1]?.id]);
 
     const loadLatestFunnel = async (sessionId: string, currentStep?: string) => {
         if (currentStep) {
@@ -121,16 +141,22 @@ export default function AdminChatPage() {
         setLatestFunnelStep(data?.[0]?.step || null);
     };
 
-    const loadMessages = async (sessionId: string, shouldScroll = true) => {
-        const { data } = await supabase
+    const loadMessages = async (sessionId: string) => {
+        const { data, error } = await supabase
             .from("messages")
             .select("*")
             .eq("session_id", sessionId)
-            .order("created_at", { ascending: true });
+            .order("created_at", { ascending: false })
+            .limit(600);
+        if (error) {
+            setActionMsg("Falha momentânea ao sincronizar. Tentando novamente...");
+            return;
+        }
         if (data) {
-            setMessages(data as Message[]);
+            const latest = (data as Message[]).reverse();
+            setMessages((current) => mergeMessages(current, latest));
             setLastSync(new Date());
-            if (shouldScroll) window.setTimeout(() => scrollToBottom("auto"), 0);
+            setActionMsg((current) => current.startsWith("Falha momentânea") ? "" : current);
         }
     };
 
@@ -167,25 +193,18 @@ export default function AdminChatPage() {
         const channel = supabase
             .channel(`admin_chat_${sessionId}_${Date.now()}`)
             .on("postgres_changes", {
-                event: "INSERT",
+                event: "*",
                 schema: "public",
                 table: "messages",
                 filter: `session_id=eq.${sessionId}`,
             }, (payload) => {
+                if (payload.eventType === "DELETE") {
+                    setMessages((prev) => prev.filter((message) => message.id !== payload.old.id));
+                    return;
+                }
                 setMessages((prev) => {
-                    const exists = prev.some((m) => m.id === payload.new.id);
-                    if (exists) return prev;
-                    return [...prev, payload.new as Message].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                    return mergeMessages(prev, [payload.new as Message]);
                 });
-                setLastSync(new Date());
-            })
-            .on("postgres_changes", {
-                event: "UPDATE",
-                schema: "public",
-                table: "messages",
-                filter: `session_id=eq.${sessionId}`,
-            }, (payload) => {
-                setMessages((prev) => prev.map((m) => (m.id === payload.new.id ? payload.new as Message : m)));
                 setLastSync(new Date());
             })
             .on("postgres_changes", {
@@ -216,7 +235,10 @@ export default function AdminChatPage() {
     };
 
     const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
-        messagesEndRef.current?.scrollIntoView({ behavior });
+        const viewport = messagesViewportRef.current;
+        if (!viewport) return;
+        autoFollowRef.current = true;
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior });
     };
 
     const sendManualMessage = async () => {
@@ -314,14 +336,6 @@ export default function AdminChatPage() {
         }
     };
 
-    const visibleMessages = useMemo(() => {
-        return messages.filter((msg) => {
-            if (msg.sender === "thought" && !showThoughts && !showAdvancedView) return false;
-            if (msg.sender === "system" && !showSystem) return false;
-            return true;
-        });
-    }, [messages, showThoughts, showSystem, showAdvancedView]);
-
     const leadTyping = useMemo(() => {
         const lastMsg = messages[messages.length - 1];
         return Boolean(lastMsg && lastMsg.sender === "user" && typingClock - new Date(lastMsg.created_at).getTime() <= 20000);
@@ -403,7 +417,14 @@ export default function AdminChatPage() {
                     </div>
                 </header>
 
-                <main className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
+                <main
+                    ref={messagesViewportRef}
+                    onScroll={(event) => {
+                        const viewport = event.currentTarget;
+                        autoFollowRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 140;
+                    }}
+                    className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5"
+                >
                     <div className="mx-auto flex w-full max-w-4xl flex-col gap-3">
                         {loading && <div className="p-10 text-center text-slate-500">Carregando conversa...</div>}
 
@@ -448,7 +469,7 @@ export default function AdminChatPage() {
                             </div>
                         )}
 
-                        <div ref={messagesEndRef} />
+                        <div aria-hidden="true" />
                     </div>
                 </main>
 
