@@ -9,6 +9,8 @@ import {
   paymentReferenceSetsIntersect,
 } from '@/lib/paymentStatus';
 import { appendLeadEventSafe, patchRealityStateSafe } from '@/lib/brain/eventStore';
+import { trackPaymentOutcomeSafe } from '@/lib/brain/outcomeTracker';
+import { recordPreviewPurchaseSafe } from '@/lib/brain/previewBandit';
 
 type PaymentMessage = {
   id: string;
@@ -143,7 +145,7 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
       step: 'PAYMENT_CONFIRMED',
       source: options.source || `${gateway}_reconciliation`,
     });
-    await appendLeadEventSafe({
+    const paymentOutcomeEventId = await appendLeadEventSafe({
       sessionId: String(freshMessage.session_id),
       eventType: 'payment_confirmed',
       source: options.source || `${gateway}_reconciliation`,
@@ -158,6 +160,13 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
       },
       occurredAt: nextPaymentData.paid_at || checkedAt,
     });
+    const paymentOutcome = await trackPaymentOutcomeSafe({
+      sessionId: String(freshMessage.session_id),
+      eventId: paymentOutcomeEventId,
+      amount: value,
+      product,
+    });
+    if (paymentOutcome.previewId) await recordPreviewPurchaseSafe(paymentOutcome.previewId);
     await patchRealityStateSafe(String(freshMessage.session_id), {
       payment: {
         totalConfirmed: totalPaid,

@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { adminFetchJson } from "@/lib/adminApiClient";
 
 export default function AdminSettingsPage() {
     const [token, setToken] = useState("");
@@ -7,55 +8,60 @@ export default function AdminSettingsPage() {
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState("");
     const [showToken, setShowToken] = useState(false);
+    const [loadingInitial, setLoadingInitial] = useState(true);
 
     useEffect(() => {
         loadToken();
     }, []);
 
     const loadToken = async () => {
-        const res = await fetch("/api/admin/bot-settings");
-        const data = await res.json();
-        if (data?.token !== undefined) setToken(data.token);
-        if (data?.username !== undefined) setUsername(data.username);
+        try {
+            const data = await adminFetchJson<{ token?: string; username?: string }>("/api/admin/bot-settings");
+            if (data?.token !== undefined) setToken(data.token);
+            if (data?.username !== undefined) setUsername(data.username);
+        } catch (error: any) {
+            setMsg(`Erro ao carregar: ${error?.message || error}`);
+        } finally {
+            setLoadingInitial(false);
+        }
     };
 
     const saveToken = async () => {
         setLoading(true);
         setMsg("");
 
-        const res = await fetch("/api/admin/bot-settings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token }),
-        });
-        const data = await res.json();
-        if (data?.error) {
-            setMsg("Erro ao salvar: " + data.error);
-        } else {
+        try {
+            const data = await adminFetchJson<{ username?: string }>("/api/admin/bot-settings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token }),
+            });
             if (data?.username) {
                 setUsername(data.username);
-                setMsg(`Token salvo com sucesso! Bot conectado: @${data.username}`);
+                setMsg(`Salvo e validado. Bot conectado: @${data.username}`);
             } else {
-                setMsg("Token salvo com sucesso!");
+                setMsg("Token salvo e validado.");
             }
+        } catch (error: any) {
+            setMsg(`Erro ao salvar: ${error?.message || error}`);
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     const connectWebhook = async () => {
         setLoading(true);
         setMsg("Conectando webhook...");
         try {
-            const res = await fetch("/api/admin/set-webhook", {
+            const data = await adminFetchJson<{ ok?: boolean; description?: string }>("/api/admin/set-webhook", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ appUrl: window.location.origin }),
             });
-            const data = await res.json();
             if (data.ok) {
-                setMsg("Webhook conectado com sucesso! O bot deve responder agora.");
+                setMsg("Webhook conectado e confirmado pelo Telegram.");
             } else {
-                setMsg("Erro no Telegram: " + (data.description || JSON.stringify(data)));
+                throw new Error(data.description || "Telegram não confirmou o webhook");
             }
         } catch (e: any) {
             setMsg("Falha na requisicao: " + e.message);
@@ -72,15 +78,13 @@ export default function AdminSettingsPage() {
             </div>
 
             <div className="relative mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-10">
-                <header className="flex flex-col gap-2">
-                    <p className="text-xs uppercase tracking-[0.3em] text-cyan-300/80">Admin</p>
-                    <h1 className="text-3xl font-semibold text-white">Configuracoes do Bot</h1>
-                    <p className="text-sm text-slate-300">
-                        Ajuste o token do Telegram e reconecte o webhook quando precisar.
-                    </p>
+                <header className="admin-page-header">
+                    <p className="admin-eyebrow">Infraestrutura</p>
+                    <h1 className="admin-page-title">Ajustes do bot</h1>
+                    <p className="admin-page-subtitle">Conecte o Telegram e repare o webhook com validação real, sem expor credenciais.</p>
                 </header>
 
-                <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 via-white/3 to-white/5 p-6 shadow-[0_20px_50px_-30px_rgba(15,23,42,0.9)]">
+                <section className="admin-card p-6">
                     <div className="flex items-start justify-between gap-4">
                         <div>
                             <h2 className="text-lg font-semibold text-white">Token do Telegram</h2>
@@ -89,7 +93,7 @@ export default function AdminSettingsPage() {
                             </p>
                         </div>
                         <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200">
-                            Seguro
+                            {loadingInitial ? "Verificando" : username ? "Conectado" : "Configurar"}
                         </span>
                     </div>
 
@@ -147,14 +151,14 @@ export default function AdminSettingsPage() {
                             disabled={loading}
                             className="w-full rounded-xl border border-cyan-400/40 bg-cyan-500/10 px-4 py-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/20"
                         >
-                            Conectar Webhook (Reparar Bot)
+                            Validar e reconectar webhook
                         </button>
                     </div>
 
                     {msg && (
                         <div
                             className={`mt-5 rounded-xl border px-4 py-3 text-sm ${
-                                msg.includes("Erro")
+                                msg.toLowerCase().includes("erro") || msg.toLowerCase().includes("falha")
                                     ? "border-red-500/30 bg-red-500/10 text-red-200"
                                     : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
                             }`}

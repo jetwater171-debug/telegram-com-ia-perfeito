@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-import Link from 'next/link';
+import { adminFetchJson } from '@/lib/adminApiClient';
 
 type PromptBlock = {
     id: string;
@@ -24,18 +23,21 @@ export default function AdminScriptsPage() {
     const [draft, setDraft] = useState(EMPTY_BLOCK);
     const [msg, setMsg] = useState('');
     const [saving, setSaving] = useState(false);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         loadBlocks();
     }, []);
 
     const loadBlocks = async () => {
-        const { data } = await supabase
-            .from('prompt_blocks')
-            .select('*')
-            .neq('key', 'auto_optimizer')
-            .order('updated_at', { ascending: false });
-        setBlocks((data as PromptBlock[]) || []);
+        try {
+            const data = await adminFetchJson<{ items: PromptBlock[] }>('/api/admin/prompt-content?type=blocks');
+            setBlocks(data.items || []);
+        } catch (error: any) {
+            setMsg(`Erro ao carregar: ${error?.message || error}`);
+        } finally {
+            setLoading(false);
+        }
     };
 
     const createBlock = async () => {
@@ -45,51 +47,45 @@ export default function AdminScriptsPage() {
         }
         setSaving(true);
         setMsg('');
-        const { error } = await supabase.from('prompt_blocks').upsert({
-            key: draft.key.trim(),
-            label: draft.label?.trim() || null,
-            content: draft.content.trim(),
-            enabled: draft.enabled
-        });
-        if (error) {
-            setMsg("Erro ao salvar: " + error.message);
-        } else {
-            setMsg("Bloco criado/atualizado.");
+        try {
+            await adminFetchJson('/api/admin/prompt-content', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'blocks', ...draft }) });
+            setMsg("Instrução criada e ativada.");
             setDraft(EMPTY_BLOCK);
             await loadBlocks();
+        } catch (error: any) {
+            setMsg(`Erro ao salvar: ${error?.message || error}`);
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     };
 
     const updateBlock = async (block: PromptBlock) => {
         setSaving(true);
         setMsg('');
-        const { error } = await supabase.from('prompt_blocks').update({
-            label: block.label,
-            content: block.content,
-            enabled: block.enabled,
-            updated_at: new Date().toISOString()
-        }).eq('id', block.id);
-        if (error) {
-            setMsg("Erro ao atualizar: " + error.message);
-        } else {
-            setMsg("Bloco atualizado.");
+        try {
+            await adminFetchJson('/api/admin/prompt-content', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'blocks', ...block }) });
+            setMsg("Instrução atualizada.");
             await loadBlocks();
+        } catch (error: any) {
+            setMsg(`Erro ao atualizar: ${error?.message || error}`);
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     };
 
     const deleteBlock = async (id: string) => {
         if (!confirm("Apagar esse bloco?")) return;
         setSaving(true);
         setMsg('');
-        const { error } = await supabase.from('prompt_blocks').delete().eq('id', id);
-        if (error) setMsg("Erro ao apagar: " + error.message);
-        else {
-            setMsg("Bloco apagado.");
+        try {
+            await adminFetchJson(`/api/admin/prompt-content?type=blocks&id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+            setMsg("Instrução apagada.");
             await loadBlocks();
+        } catch (error: any) {
+            setMsg(`Erro ao apagar: ${error?.message || error}`);
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     };
 
     return (
@@ -100,25 +96,11 @@ export default function AdminScriptsPage() {
                 <div className="absolute bottom-[-160px] left-1/2 h-[480px] w-[480px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle_at_center,_rgba(255,122,24,0.10),_transparent_70%)]" />
             </div>
 
-            <header className="sticky top-0 z-30 border-b border-white/10 bg-black/30 backdrop-blur">
-                <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
-                    <div className="flex items-center gap-4">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400/40 to-emerald-400/30 text-cyan-100 font-bold">LM</div>
-                        <div>
-                            <h1 className="text-xl font-semibold">Scripts da Lari</h1>
-                            <p className="text-sm text-gray-400">Edite instrucoes sem deploy</p>
-                        </div>
-                    </div>
-                    <Link href="/admin" className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold text-gray-100 transition hover:border-white/20">
-                        Voltar
-                    </Link>
-                </div>
-            </header>
-
             <main className="mx-auto w-full max-w-6xl px-6 py-10">
-                <div className="mb-6 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-                    <h2 className="text-lg font-semibold">Novo bloco</h2>
-                    <p className="mt-2 text-sm text-gray-400">Blocos ativos entram no prompt com prioridade sobre o texto fixo.</p>
+                <header className="admin-page-header mb-5"><p className="admin-eyebrow">Comportamento</p><h1 className="admin-page-title">Instruções dinâmicas</h1><p className="admin-page-subtitle">Ajustes operacionais entram no contexto sem precisar de novo deploy. Use regras curtas, objetivas e testáveis.</p></header>
+                <div className="admin-card mb-6 p-6">
+                    <h2 className="text-lg font-semibold">Nova instrução</h2>
+                    <p className="mt-2 text-sm text-gray-400">Evite repetir regras do contrato central; adicione somente conhecimento específico da operação.</p>
 
                     <div className="mt-4 grid gap-4 md:grid-cols-2">
                         <input
@@ -219,11 +201,12 @@ export default function AdminScriptsPage() {
                         </div>
                     ))}
 
-                    {blocks.length === 0 && (
+                    {!loading && blocks.length === 0 && (
                         <div className="rounded-3xl border border-white/10 bg-white/5 p-8 text-center text-sm text-gray-400">
                             Nenhum bloco criado ainda.
                         </div>
                     )}
+                    {loading && <div className="admin-card p-8 text-center text-sm text-slate-400">Carregando instruções...</div>}
                 </div>
 
                 {msg && (

@@ -7,10 +7,10 @@ export default function AdminLayout({
     children: React.ReactNode
 }) {
     return (
-        <>
+        <div className="admin-shell">
             <ReengagementWatcher />
             <AdminTopbar />
-            {children}
-        </>
+            <div className="admin-workspace">{children}</div>
+        </div>
     );
 }

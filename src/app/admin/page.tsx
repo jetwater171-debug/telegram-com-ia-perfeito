@@ -266,10 +266,15 @@ export default function AdminDashboard() {
 
     return (
         <div className="min-h-screen bg-[#080b10] text-slate-100">
-            <main className="mx-auto grid w-full max-w-[1500px] gap-5 px-4 py-5 lg:grid-cols-[280px_1fr] lg:px-6">
+            <main className="mx-auto w-full max-w-[1500px] px-4 py-6 lg:px-6">
+                <header className="admin-page-header mb-5 sm:flex-row sm:items-end sm:justify-between">
+                    <div><p className="admin-eyebrow">Caixa de entrada</p><h1 className="admin-page-title">Conversas</h1><p className="admin-page-subtitle">Priorize quem está aguardando, acompanhe a trajetória e intervenha somente quando necessário.</p></div>
+                    <p className="text-xs text-slate-500">{lastSync ? `Sincronizado ${formatTimeAgo(lastSync.toISOString())}` : 'Sincronizando dados...'}</p>
+                </header>
+                <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
                 <aside className="space-y-4 lg:sticky lg:top-[88px] lg:h-[calc(100vh-108px)]">
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Operacao</p>
+                    <div className="admin-card p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Operação</p>
                         <div className="mt-4 grid grid-cols-2 gap-3">
                             <Metric label="Conversas" value={stats.total} />
                             <Metric label="Ativas" value={stats.active} accent="text-emerald-200" />
@@ -283,7 +288,7 @@ export default function AdminDashboard() {
                         </div>
                     </div>
 
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
+                    <div className="admin-card p-4">
                         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Filtros</p>
                         <div className="mt-4 grid grid-cols-2 gap-2">
                             {[
@@ -340,10 +345,10 @@ export default function AdminDashboard() {
                                 className="flex items-center gap-1.5 rounded-lg border border-pink-400/30 bg-pink-400/15 px-3 py-2 text-sm font-semibold text-pink-100 transition hover:border-pink-400/60 hover:bg-pink-400/25 disabled:opacity-50"
                             >
                                 <span>💬</span>
-                                <span>{reengaging ? "Chamando leads..." : "Chamar Leads"}</span>
+                                <span>{reengaging ? "Chamando leads..." : "Reativar elegíveis"}</span>
                             </button>
                             <button onClick={recalculateScores} disabled={recalculating} className="rounded-lg border border-violet-300/30 bg-violet-300/10 px-3 py-2 text-sm font-semibold text-violet-100 transition hover:border-violet-300/60 disabled:opacity-50">
-                                {recalculating ? "Analisando histórico..." : "Atualizar barrinhas"}
+                                {recalculating ? "Analisando histórico..." : "Recalcular sinais"}
                             </button>
                             <button onClick={fetchSessions} className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-200 transition hover:border-cyan-300/40">
                                 Sincronizar
@@ -403,9 +408,9 @@ export default function AdminDashboard() {
                                     </div>
 
                                     <div className="grid grid-cols-3 gap-x-2 gap-y-2">
-                                        <MiniScoreBar label="🔥 Tarado" value={safeStats.tarado} color="bg-rose-400" />
-                                        <MiniScoreBar label="💔 Carente" value={safeStats.carente} color="bg-cyan-400" />
-                                        <MiniScoreBar label="💰 Financeiro" value={safeStats.financeiro} color="bg-emerald-400" />
+                                        <MiniScoreBar label="🔥 Abertura" value={safeStats.tarado} color="bg-rose-400" />
+                                        <MiniScoreBar label="💬 Conexão" value={safeStats.carente} color="bg-cyan-400" />
+                                        <MiniScoreBar label="💰 Intenção" value={safeStats.financeiro} color="bg-emerald-400" />
                                         {scoreMeta && <p className="col-span-3 text-[10px] text-slate-600">Confiança {scoreMeta.confidence}% · {scoreMeta.message_count} mensagens</p>}
                                     </div>
 
@@ -422,6 +427,7 @@ export default function AdminDashboard() {
                         )}
                     </div>
                 </section>
+                </div>
             </main>
         </div>
     );

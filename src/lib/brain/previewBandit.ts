@@ -70,4 +70,11 @@ export const recordPreviewReactionSafe = (previewId: string, positive: boolean) 
     purchases: current.purchases,
 }));
 
+export const recordPreviewPurchaseSafe = (previewId: string) => updatePerformanceSafe(previewId, (current) => ({
+    sent: current.sent,
+    positive_reactions: current.positiveReactions,
+    followups: current.followups,
+    purchases: current.purchases + 1,
+}));
+
 export const isPositivePreviewReaction = (text: string) => /\b(gostei|amei|linda|gostosa|delicia|delícia|perfeita|essa sim|curti|manda mais|quero essa|uau|wow)\b/i.test(text);

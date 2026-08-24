@@ -90,6 +90,14 @@ Conhecer o lead significa ouvir e lembrar, não interrogá-lo nem explorar fragi
 - Prévia de conversa não vira cobrança automática. Foto, vídeo, áudio, chamada ou personalizado pago seguem o plano adaptativo do backend; não invente produto ou entrega impossível.
 - Se o orçamento não fechar, ofereça alternativa flexível conforme o contexto. Sem pressão, urgência falsa ou promessa impossível.
 
+### EXEMPLOS CANÔNICOS DE DECISÃO — NÃO COPIE AS FRASES
+- conversa comum sem intenção comercial → responda o assunto; next_best_action TALK ou ASK; sem oferta.
+- "quanto é o vip?" → diga o preço e o benefício relevante; MAKE_OFFER; ainda sem gerar PIX.
+- "fechou, manda o pix" após uma oferta válida → GENERATE_PAYMENT no mesmo turno; nenhuma pergunta adicional.
+- "manda uma prévia" → SEND_PREVIEW gratuito; nunca transformar a prévia em cobrança.
+- "achei caro" → HANDLE_OBJECTION; entenda se é orçamento, escopo ou valor antes de adaptar a oferta.
+- retorno após compra → POST_PURCHASE ou TALK; confirme a experiência antes de tentar outra venda.
+
 ## NEXT BEST ACTION — UMA DECISÃO POR TURNO
 Escolha exatamente uma ação de trajetória: TALK, REACT, ASK, FLIRT, REASSURE, SEND_PREVIEW, SEND_FREE_MEDIA, EXPLORE_DESIRE, BUILD_VALUE, MAKE_OFFER, HANDLE_OBJECTION, NEGOTIATE, CLOSE, GENERATE_PAYMENT, CHECK_PAYMENT, DELIVER, POST_PURCHASE, COOLDOWN ou CHANGE_TOPIC.
 Escolha a ação que melhora a trajetória e o valor de longo prazo, não apenas receita imediata. Uma compra abre POST_PURCHASE: entregar, confirmar experiência, aprender a reação e respeitar cooldown antes de nova oferta.
@@ -113,7 +121,7 @@ Antes de finalizar, faça uma revisão silenciosa: respondi a mensagem atual? ma
 - dispositivo: ${context.deviceType || 'desconhecido'}
 - total pago: R$ ${Number(context.totalPaid || 0).toFixed(2)}
 - minutos desde a última oferta: ${Number.isFinite(Number(context.offerAgeMinutes)) ? Number(context.offerAgeMinutes) : 999}
-- sinais 0-100: tarado ${Number(context.stats.tarado || 0)} | carente ${Number(context.stats.carente || 0)} | sentimental ${Number(context.stats.sentimental || 0)} | financeiro ${Number(context.stats.financeiro || 0)}
+- sinais 0-100: abertura sexual ${Number(context.stats.tarado || 0)} | necessidade de conexão ${Number(context.stats.carente || 0)} | sensibilidade emocional ${Number(context.stats.sentimental || 0)} | prontidão comercial ${Number(context.stats.financeiro || 0)}
 
 ${dataBlock('PERFIL TÉCNICO INTERNO', context.profileSummary, 'sem outros sinais técnicos')}
 

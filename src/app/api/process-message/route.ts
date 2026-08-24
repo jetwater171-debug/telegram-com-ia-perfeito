@@ -62,7 +62,8 @@ import {
     recordAiDecisionSafe,
 } from '@/lib/brain/eventStore';
 import { detectAdultDeclaration, validateMasterBrainResponse } from '@/lib/brain/hardValidator';
-import { applyPreviewBanditRanking, recordPreviewSentSafe } from '@/lib/brain/previewBandit';
+import { applyPreviewBanditRanking, recordPreviewPurchaseSafe, recordPreviewReactionSafe, recordPreviewSentSafe } from '@/lib/brain/previewBandit';
+import { trackLeadResponseOutcomesSafe, trackPaymentOutcomeSafe } from '@/lib/brain/outcomeTracker';
 
 export const maxDuration = 120;
 
@@ -1149,6 +1150,14 @@ export async function POST(req: NextRequest) {
         console.log('[PROCESSADOR] Frase interrompida sem complemento; aguardando continuação do lead.');
         return NextResponse.json({ status: 'incomplete_turn_waiting' });
     }
+    // O aprendizado do turno anterior roda em paralelo com a chamada principal.
+    // Assim ele melhora a política sem acrescentar latência perceptível ao lead.
+    const responseOutcomePromise = trackLeadResponseOutcomesSafe({
+        sessionId: String(session.id),
+        eventId: leadMessageEventId,
+        userText: userOnlyText,
+        occurredAt: lastGroupedUserAt,
+    });
     const conversationStartAt = findLatestConversationStartAt(filteredGroupMessages);
     const receivedStartCommand = Boolean(conversationStartAt);
     // /start é só um comando técnico. Ele representa primeiro contato apenas
@@ -1620,6 +1629,10 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
     }
 
     const brainPersistencePromise = (async () => {
+        const responseOutcome = await responseOutcomePromise;
+        if (responseOutcome.previewId) {
+            await recordPreviewReactionSafe(responseOutcome.previewId, responseOutcome.positive);
+        }
         await persistMemoryUpdatesSafe({
             sessionId: String(session.id),
             updates: aiResponse.memory_updates,
@@ -2635,7 +2648,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                                     }
                                 }).eq('id', lastPayMsg.id);
                             }
-                            await appendLeadEventSafe({
+                            const paymentOutcomeEventId = await appendLeadEventSafe({
                                 sessionId: String(session.id),
                                 eventType: 'payment_confirmed',
                                 source: 'backend',
@@ -2648,6 +2661,13 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                                     gateway: lastPayMsg.payment_data?.gateway || null,
                                 },
                             });
+                            const paymentOutcome = await trackPaymentOutcomeSafe({
+                                sessionId: String(session.id),
+                                eventId: paymentOutcomeEventId,
+                                amount: Number(value || 0),
+                                product: String(paymentProduct || lastPayMsg.payment_data?.description || 'produto'),
+                            });
+                            if (paymentOutcome.previewId) await recordPreviewPurchaseSafe(paymentOutcome.previewId);
                             await patchRealityStateSafe(String(session.id), {
                                 payment: {
                                     totalConfirmed: newTotal,

@@ -296,12 +296,12 @@ export default function AdminAiPage() {
 
     return (
         <div className="min-h-screen bg-[#070a0f] text-slate-100">
-            <header className="sticky top-0 z-20 border-b border-white/10 bg-[#070a0f]/95 backdrop-blur-xl">
-                <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
+            <header className="border-b border-white/5 bg-transparent">
+                <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-7 md:flex-row md:items-end md:justify-between">
                     <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">Central de inteligência</p>
-                        <h1 className="mt-1 text-2xl font-semibold">APIs e roteamento da Lari</h1>
-                        <p className="mt-1 text-sm text-slate-400">Cole as chaves, teste e pronto. O restante salva automaticamente.</p>
+                        <p className="admin-eyebrow">Master Brain</p>
+                        <h1 className="admin-page-title">Inteligência da Lari</h1>
+                        <p className="admin-page-subtitle mt-2">DeepSeek V4 primeiro no texto, visão dedicada e camadas extras somente quando melhoram a decisão.</p>
                     </div>
                     <SaveBadge state={saveState} message={message} />
                 </div>
@@ -310,17 +310,17 @@ export default function AdminAiPage() {
             <main className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 xl:grid-cols-[minmax(0,1fr)_360px]">
                 <section className="space-y-6">
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <TierCard title="Primeiro contato" value="1 IA" detail="Uma chamada econômica" color="cyan" />
-                        <TierCard title="R$ 19,90+" value="2 IAs" detail="Cérebro + Lari" color="blue" />
-                        <TierCard title="R$ 100+" value="3 IAs" detail="Revisão em todo turno" color="violet" />
-                        <TierCard title="R$ 200+" value="4 IAs" detail="Avaliadora final" color="emerald" />
+                        <TierCard title="Rota rápida" value="1 chamada" detail="Decisão e resposta estruturadas" color="cyan" />
+                        <TierCard title="Turno crítico" value="2 camadas" detail="Resposta + revisão adaptativa" color="blue" />
+                        <TierCard title="Comprador" value="3 camadas" detail="Planejamento quando necessário" color="violet" />
+                        <TierCard title="Elite" value="até 4" detail="Avaliadora final seletiva" color="emerald" />
                     </div>
 
-                    <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] p-5">
+                    <div className="admin-card border-cyan-300/20 bg-cyan-300/[0.055] p-5">
                         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
-                                <h2 className="text-lg font-semibold">Ordem recomendada para volume</h2>
-                                <p className="mt-1 text-sm text-slate-400">B.AI para texto → Gemini para visão/fallback → Groq → NVIDIA → Cloudflare → demais reservas.</p>
+                                <h2 className="text-lg font-semibold">Rota recomendada e segura</h2>
+                                <p className="mt-1 text-sm text-slate-400">B.AI/DeepSeek V4 no texto → Gemini para visão → reservas rápidas e independentes.</p>
                             </div>
                             <button type="button" onClick={useRecommendedOrder} className="rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-200">Usar ordem recomendada</button>
                         </div>
@@ -471,7 +471,8 @@ function SaveBadge({ state, message }: { state: SaveState; message: string }) {
 }
 
 function TierCard({ title, value, detail, color }: { title: string; value: string; detail: string; color: string }) {
-    return <div className={`rounded-2xl border border-${color}-300/20 bg-white/[0.035] p-4`}><p className="text-xs uppercase tracking-[0.15em] text-slate-500">{title}</p><strong className="mt-2 block text-xl">{value}</strong><p className="mt-1 text-xs text-slate-400">{detail}</p></div>;
+    const colors: Record<string, string> = { cyan: 'border-cyan-300/20', blue: 'border-blue-300/20', violet: 'border-violet-300/20', emerald: 'border-emerald-300/20' };
+    return <div className={`admin-card p-4 ${colors[color] || colors.cyan}`}><p className="text-xs uppercase tracking-[0.15em] text-slate-500">{title}</p><strong className="mt-2 block text-xl">{value}</strong><p className="mt-1 text-xs text-slate-400">{detail}</p></div>;
 }
 
 function StatusPill({ source }: { source: string }) {
@@ -484,7 +485,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-    return <section className="rounded-2xl border border-white/10 bg-white/[0.035] p-5"><h2 className="mb-4 text-base font-semibold">{title}</h2>{children}</section>;
+    return <section className="admin-card p-5"><h2 className="mb-4 text-base font-semibold">{title}</h2>{children}</section>;
 }
 
 function Metric({ value, label }: { value: string; label: string }) {

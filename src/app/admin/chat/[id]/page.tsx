@@ -512,7 +512,7 @@ export default function AdminChatPage() {
 
                     <Panel title="Score">
                         <ScoreBar label="🔥 Tarado" hint="Interesse sexual, libido e fetiche" value={safeLeadScore.tarado} color="bg-rose-400" />
-                        <ScoreBar label="💔 Carência" hint="Busca de afeto, solidão e atenção" value={safeLeadScore.carente} color="bg-cyan-400" />
+                        <ScoreBar label="💬 Necessidade de conexão" hint="Quanto valoriza continuidade, atenção e conversa" value={safeLeadScore.carente} color="bg-cyan-400" />
                         <ScoreBar label="💰 Financeiro" hint="Poder aquisitivo, aparelho e propensão" value={safeLeadScore.financeiro} color="bg-emerald-400" />
                         {scoreMeta && (
                             <div className="mt-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-[11px] text-slate-500">

@@ -1,182 +1,94 @@
 "use client";
-import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-import Link from 'next/link';
 
-type FunnelEvent = {
-    session_id: string;
-    step: string;
-    created_at: string;
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { adminFetchJson } from '@/lib/adminApiClient';
+
+type InsightData = {
+    overview: { totalSessions: number; activeSessions: number; paidSessions: number; revenue: number };
+    funnel: Array<{ step: string; reached: number; progressed: number; progressRate: number; paidAfter: number; paidRate: number }>;
+    brain: { decisions: number; corrected: number; correctionRate: number; providerUsage: Record<string, number>; actions: Record<string, number>; lastDecisionAt: string | null };
+    outcomes: { total: number; reward: number; counts: Record<string, number> };
+    generatedAt: string;
 };
 
-type SessionRow = {
-    id: string;
-    total_paid: number | null;
-};
-
-const FUNNEL_STEPS = [
-    'WELCOME',
-    'CONNECTION',
-    'TRIGGER_PHASE',
-    'HOT_TALK',
-    'PREVIEW',
-    'SALES_PITCH',
-    'NEGOTIATION',
-    'CLOSING',
-    'PAYMENT_CHECK',
-    'PAYMENT_CONFIRMED'
-];
+const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const nice = (value: string) => value.replace(/_/g, ' ').toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
 
 export default function AdminInsightsPage() {
-    const [events, setEvents] = useState<FunnelEvent[]>([]);
-    const [sessions, setSessions] = useState<SessionRow[]>([]);
+    const [data, setData] = useState<InsightData | null>(null);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
 
-    useEffect(() => {
-        fetchAll();
-
-        const channel = supabase
-            .channel('insights_dashboard')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'funnel_events' }, fetchAll)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, fetchAll)
-            .subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
-        };
+    const load = useCallback(async () => {
+        setError('');
+        try {
+            setData(await adminFetchJson<InsightData>('/api/admin/insights'));
+        } catch (caught: any) {
+            setError(caught?.message || 'Não foi possível carregar os resultados');
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
-    const fetchAll = async () => {
-        setLoading(true);
-        const [{ data: ev }, { data: ses }] = await Promise.all([
-            supabase.from('funnel_events').select('session_id, step, created_at'),
-            supabase.from('sessions').select('id, total_paid')
-        ]);
-        setEvents((ev as FunnelEvent[]) || []);
-        setSessions((ses as SessionRow[]) || []);
-        setLoading(false);
-    };
+    useEffect(() => {
+        const kickoff = window.setTimeout(() => void load(), 0);
+        const timer = window.setInterval(load, 30_000);
+        return () => { window.clearTimeout(kickoff); window.clearInterval(timer); };
+    }, [load]);
 
-    const metrics = useMemo(() => {
-        const stepToSessions = new Map<string, Set<string>>();
-        const stepToSessionsNext = new Map<string, Set<string>>();
-        FUNNEL_STEPS.forEach(step => stepToSessions.set(step, new Set()));
-
-        for (const event of events) {
-            const step = event.step?.toUpperCase();
-            if (!stepToSessions.has(step)) continue;
-            stepToSessions.get(step)!.add(event.session_id);
-        }
-
-        const paidSessions = new Set(
-            sessions.filter(s => Number(s.total_paid || 0) > 0).map(s => s.id)
-        );
-
-        for (let i = 0; i < FUNNEL_STEPS.length - 1; i++) {
-            const current = FUNNEL_STEPS[i];
-            const next = FUNNEL_STEPS[i + 1];
-            const currentSet = stepToSessions.get(current) || new Set();
-            const nextSet = stepToSessions.get(next) || new Set();
-            const progressed = new Set<string>();
-            currentSet.forEach(id => {
-                if (nextSet.has(id)) progressed.add(id);
-            });
-            stepToSessionsNext.set(current, progressed);
-        }
-
-        const rows = FUNNEL_STEPS.map((step, idx) => {
-            const reachedSet = stepToSessions.get(step) || new Set();
-            const reached = reachedSet.size;
-            const paidAfter = [...reachedSet].filter(id => paidSessions.has(id)).length;
-            const paidRate = reached ? Math.round((paidAfter / reached) * 100) : 0;
-            const nextSet = stepToSessionsNext.get(step);
-            const progressed = nextSet ? nextSet.size : 0;
-            const progressRate = reached && idx < FUNNEL_STEPS.length - 1 ? Math.round((progressed / reached) * 100) : 0;
-            return { step, reached, paidAfter, paidRate, progressed, progressRate };
-        });
-
-        return {
-            totalSessions: sessions.length,
-            totalPaid: sessions.filter(s => Number(s.total_paid || 0) > 0).length,
-            rows
-        };
-    }, [events, sessions]);
+    const topActions = useMemo(() => Object.entries(data?.brain.actions || {}).sort((a, b) => b[1] - a[1]).slice(0, 6), [data]);
+    const topProvider = useMemo(() => Object.entries(data?.brain.providerUsage || {}).sort((a, b) => b[1] - a[1])[0], [data]);
+    const maxReached = Math.max(1, ...(data?.funnel || []).map((row) => row.reached));
 
     return (
-        <div className="min-h-screen bg-[#0b0f17] text-gray-100 font-sans">
-            <div className="pointer-events-none fixed inset-0">
-                <div className="absolute left-[-140px] top-[-160px] h-[420px] w-[420px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(0,184,148,0.28),_transparent_70%)]" />
-                <div className="absolute right-[-160px] top-[120px] h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(56,189,248,0.20),_transparent_70%)]" />
-                <div className="absolute bottom-[-160px] left-1/2 h-[480px] w-[480px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle_at_center,_rgba(255,122,24,0.10),_transparent_70%)]" />
-            </div>
+        <div className="min-h-screen text-slate-100">
+            <main className="mx-auto w-full max-w-[1450px] px-4 py-7 lg:px-6 lg:py-9">
+                <header className="admin-page-header mb-5 sm:flex-row sm:items-end sm:justify-between">
+                    <div><p className="admin-eyebrow">Decisões & receita</p><h1 className="admin-page-title">Resultados da operação</h1><p className="admin-page-subtitle">Funil, comportamento do Master Brain e feedback real em uma visão única.</p></div>
+                    <button onClick={() => void load()} disabled={loading} className="rounded-xl border border-white/10 bg-white/[.04] px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-cyan-300/30 hover:text-white disabled:opacity-50">{loading ? 'Atualizando...' : 'Atualizar agora'}</button>
+                </header>
 
-            <header className="sticky top-0 z-30 border-b border-white/10 bg-black/30 backdrop-blur">
-                <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-6">
-                    <div className="flex items-center gap-4">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400/40 to-emerald-400/30 text-cyan-100 font-bold">LM</div>
-                        <div>
-                            <h1 className="text-xl font-semibold">Insights do Funil</h1>
-                            <p className="text-sm text-gray-400">Taxa de sucesso por etapa</p>
+                {error && <div className="mb-5 rounded-xl border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm text-rose-100">{error}</div>}
+
+                <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    <Metric label="Leads" value={data?.overview.totalSessions ?? '—'} note={`${data?.overview.activeSessions || 0} ativos`} />
+                    <Metric label="Compradores" value={data?.overview.paidSessions ?? '—'} note="pagamento confirmado" accent="emerald" />
+                    <Metric label="Receita" value={data ? money.format(data.overview.revenue) : '—'} note="total conciliado" accent="emerald" />
+                    <Metric label="Decisões IA" value={data?.brain.decisions ?? '—'} note={`${data?.brain.correctionRate || 0}% corrigidas pelo validator`} accent="cyan" />
+                    <Metric label="Outcomes" value={data?.outcomes.total ?? '—'} note={`reward ${Number(data?.outcomes.reward || 0).toFixed(1)}`} accent="violet" />
+                </section>
+
+                <section className="mt-5 grid gap-5 xl:grid-cols-[1.55fr_.85fr]">
+                    <div className="admin-card overflow-hidden">
+                        <div className="flex items-center justify-between border-b border-white/8 px-5 py-4"><div><h2 className="font-semibold text-white">Trajetória do funil</h2><p className="mt-1 text-xs text-slate-500">alcance, avanço e conversão acumulada</p></div><span className="rounded-lg border border-white/8 bg-black/20 px-2.5 py-1 text-xs text-slate-400">tempo real</span></div>
+                        <div className="divide-y divide-white/[.06]">
+                            {(data?.funnel || []).map((row) => (
+                                <div key={row.step} className="grid gap-3 px-5 py-3.5 lg:grid-cols-[170px_1fr_80px_80px] lg:items-center">
+                                    <div><p className="text-sm font-semibold text-slate-200">{nice(row.step)}</p><p className="text-[11px] text-slate-600">{row.reached} chegaram</p></div>
+                                    <div className="h-2 overflow-hidden rounded-full bg-black/35"><div className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-300" style={{ width: `${Math.max(row.reached ? 4 : 0, row.reached / maxReached * 100)}%` }} /></div>
+                                    <div><p className="text-xs text-slate-500">avanço</p><p className="text-sm font-semibold text-cyan-100">{row.step === 'PAYMENT_CONFIRMED' ? '—' : `${row.progressRate}%`}</p></div>
+                                    <div><p className="text-xs text-slate-500">pagaram</p><p className="text-sm font-semibold text-emerald-200">{row.paidRate}%</p></div>
+                                </div>
+                            ))}
+                            {!data && <div className="p-10 text-center text-sm text-slate-500">Carregando trajetória...</div>}
                         </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                        <Link href="/admin" className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold text-gray-100 transition hover:border-white/20">
-                            Voltar
-                        </Link>
-                    </div>
-                </div>
-            </header>
 
-            <main className="mx-auto w-full max-w-7xl px-6 py-10">
-                <div className="grid gap-6 lg:grid-cols-3">
-                    <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-                        <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Total de leads</p>
-                        <p className="mt-3 text-3xl font-semibold">{metrics.totalSessions}</p>
+                    <div className="space-y-5">
+                        <div className="admin-card p-5"><p className="admin-eyebrow">Cérebro ativo</p><h2 className="mt-2 text-lg font-semibold text-white">{topProvider?.[0] || 'Aguardando decisões'}</h2><p className="mt-1 text-sm text-slate-400">{topProvider ? `${topProvider[1]} decisões registradas` : 'O provider aparecerá assim que houver tráfego.'}</p><div className="mt-4 grid grid-cols-2 gap-3"><SmallMetric label="Validadas" value={Math.max(0, Number(data?.brain.decisions || 0) - Number(data?.brain.corrected || 0))} /><SmallMetric label="Corrigidas" value={data?.brain.corrected || 0} /></div></div>
+                        <div className="admin-card p-5"><p className="admin-eyebrow">Próximas ações</p><div className="mt-4 space-y-3">{topActions.map(([action, count]) => <div key={action} className="flex items-center justify-between gap-3"><span className="text-sm text-slate-300">{nice(action)}</span><span className="rounded-lg bg-white/[.05] px-2 py-1 text-xs font-semibold text-cyan-100">{count}</span></div>)}{topActions.length === 0 && <p className="text-sm text-slate-500">Sem decisões no período.</p>}</div></div>
                     </div>
-                    <div className="rounded-3xl border border-emerald-400/20 bg-emerald-500/10 p-6 backdrop-blur">
-                        <p className="text-xs uppercase tracking-[0.2em] text-emerald-200">Leads que pagaram</p>
-                        <p className="mt-3 text-3xl font-semibold text-emerald-100">{metrics.totalPaid}</p>
-                    </div>
-                    <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-                        <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Atualizacao</p>
-                        <p className="mt-3 text-sm text-gray-300">{loading ? 'carregando...' : 'tempo real'}</p>
-                    </div>
-                </div>
-
-                <div className="mt-8 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-                    <div className="mb-4 flex items-center justify-between">
-                        <h2 className="text-lg font-semibold">Conversao por etapa</h2>
-                        <span className="text-xs text-gray-400">taxa de progresso e taxa de pagamento</span>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm">
-                            <thead className="text-xs uppercase text-gray-500">
-                                <tr>
-                                    <th className="py-2">Etapa</th>
-                                    <th className="py-2">Chegaram</th>
-                                    <th className="py-2">Progrediram</th>
-                                    <th className="py-2">Taxa prox etapa</th>
-                                    <th className="py-2">Pagaram</th>
-                                    <th className="py-2">Taxa pagto</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {metrics.rows.map((row) => (
-                                    <tr key={row.step} className="border-t border-white/10">
-                                        <td className="py-3 font-semibold text-gray-100">{row.step.replace(/_/g, ' ')}</td>
-                                        <td className="py-3 text-gray-300">{row.reached}</td>
-                                        <td className="py-3 text-gray-300">{row.progressed}</td>
-                                        <td className="py-3 text-gray-300">{row.step === 'PAYMENT_CONFIRMED' ? '-' : `${row.progressRate}%`}</td>
-                                        <td className="py-3 text-emerald-200">{row.paidAfter}</td>
-                                        <td className="py-3 text-emerald-200">{row.paidRate}%</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                </section>
             </main>
         </div>
     );
+}
+
+function Metric({ label, value, note, accent = 'slate' }: { label: string; value: string | number; note: string; accent?: 'slate' | 'emerald' | 'cyan' | 'violet' }) {
+    const colors = { slate: 'text-white', emerald: 'text-emerald-200', cyan: 'text-cyan-200', violet: 'text-violet-200' };
+    return <div className="admin-card p-4"><p className="text-[11px] font-semibold uppercase tracking-[.14em] text-slate-500">{label}</p><p className={`mt-2 text-2xl font-semibold tracking-tight ${colors[accent]}`}>{value}</p><p className="mt-1 text-xs text-slate-600">{note}</p></div>;
+}
+
+function SmallMetric({ label, value }: { label: string; value: number }) {
+    return <div className="rounded-xl border border-white/8 bg-black/20 p-3"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-xl font-semibold text-white">{value}</p></div>;
 }

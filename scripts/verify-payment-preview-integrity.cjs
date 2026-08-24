@@ -30,6 +30,8 @@ try {
     '@/lib/telegram': { sendTelegramMessage() {} },
     '@/lib/paymentStatus': payment,
     '@/lib/brain/eventStore': { appendLeadEventSafe: async () => null, patchRealityStateSafe: async () => true },
+    '@/lib/brain/outcomeTracker': { trackPaymentOutcomeSafe: async () => ({}) },
+    '@/lib/brain/previewBandit': { recordPreviewPurchaseSafe: async () => undefined },
   });
 
   assert.equal(payment.findPaymentStatus({ data: { payment: { status: 'APPROVED' } } }), 'approved');
@@ -66,6 +68,7 @@ try {
   const dashboard = read('src/app/admin/page.tsx');
   const syncRoute = read('src/app/api/admin/payment-sync/route.ts');
   const reconciliationSource = read('src/lib/paymentReconciliation.ts');
+  const outcomeSource = read('src/lib/brain/outcomeTracker.ts');
 
   assert.match(route, /shouldDeliverRequestedMedia/);
   assert.match(route, /reconcilePendingPayments/);
@@ -75,8 +78,12 @@ try {
   assert.match(dashboard, /\/api\/admin\/payment-sync/);
   assert.match(syncRoute, /reconcilePendingPayments/);
   assert.match(reconciliationSource, /counted: true/);
+  assert.match(reconciliationSource, /trackPaymentOutcomeSafe/);
+  assert.match(outcomeSource, /conversation_continued/);
+  assert.match(outcomeSource, /repeat_purchase/);
+  assert.match(route, /responseOutcomePromise/);
 
-  console.log('PAYMENT_PREVIEW_CHECK_OK payment=1 webhook=1 panel=1 explicit_media=1 unique_media=1');
+  console.log('PAYMENT_PREVIEW_CHECK_OK payment=1 webhook=1 panel=1 explicit_media=1 unique_media=1 outcomes=1');
 } catch (error) {
   console.error(`PAYMENT_PREVIEW_CHECK_FAIL ${error.message}`);
   process.exitCode = 1;

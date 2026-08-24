@@ -1,0 +1,83 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { supabaseServer as supabase } from '@/lib/supabaseServer';
+
+export const dynamic = 'force-dynamic';
+
+type ContentType = 'blocks' | 'variants';
+const validType = (value: string | null): value is ContentType => value === 'blocks' || value === 'variants';
+const clean = (value: unknown, max: number) => String(value || '').replace(/\r\n/g, '\n').trim().slice(0, max);
+const uuid = (value: unknown) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(String(value || '')) ? String(value) : '';
+
+const payloadFor = (type: ContentType, body: Record<string, unknown>) => {
+    const content = clean(body.content, 30_000);
+    if (!content) throw new Error('conteudo_obrigatorio');
+    if (type === 'blocks') {
+        const key = clean(body.key, 120).toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+        if (!key) throw new Error('key_obrigatoria');
+        return { key, label: clean(body.label, 160) || null, content, enabled: body.enabled !== false, updated_at: new Date().toISOString() };
+    }
+    const allowedStages = new Set(['WELCOME', 'CONNECTION', 'TRIGGER_PHASE', 'HOT_TALK', 'PREVIEW', 'SALES_PITCH', 'NEGOTIATION', 'CLOSING', 'PAYMENT_CHECK']);
+    const stage = clean(body.stage, 80).toUpperCase();
+    if (!allowedStages.has(stage)) throw new Error('etapa_invalida');
+    return {
+        stage,
+        label: clean(body.label, 160) || null,
+        content,
+        enabled: body.enabled !== false,
+        weight: Math.max(0.1, Math.min(100, Number(body.weight) || 1)),
+        updated_at: new Date().toISOString(),
+    };
+};
+
+export async function GET(request: NextRequest) {
+    const type = request.nextUrl.searchParams.get('type');
+    if (!validType(type)) return NextResponse.json({ error: 'tipo_invalido' }, { status: 400 });
+    const table = type === 'blocks' ? 'prompt_blocks' : 'prompt_variants';
+    let query = supabase.from(table).select('*').order('updated_at', { ascending: false });
+    if (type === 'blocks') query = query.neq('key', 'auto_optimizer');
+    const { data, error } = await query;
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ items: data || [] }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+export async function POST(request: NextRequest) {
+    try {
+        const body = await request.json();
+        const type = String(body.type || '');
+        if (!validType(type)) return NextResponse.json({ error: 'tipo_invalido' }, { status: 400 });
+        const payload = payloadFor(type, body);
+        const result = type === 'blocks'
+            ? await supabase.from('prompt_blocks').upsert(payload as Extract<typeof payload, { key: string }>, { onConflict: 'key' }).select('*').single()
+            : await supabase.from('prompt_variants').insert(payload as Extract<typeof payload, { stage: string }>).select('*').single();
+        if (result.error) return NextResponse.json({ error: result.error.message }, { status: 500 });
+        return NextResponse.json({ ok: true, item: result.data });
+    } catch (error: any) {
+        return NextResponse.json({ error: String(error?.message || error) }, { status: 400 });
+    }
+}
+
+export async function PATCH(request: NextRequest) {
+    try {
+        const body = await request.json();
+        const type = String(body.type || '');
+        const id = uuid(body.id);
+        if (!validType(type) || !id) return NextResponse.json({ error: 'requisicao_invalida' }, { status: 400 });
+        const table = type === 'blocks' ? 'prompt_blocks' : 'prompt_variants';
+        const payload = payloadFor(type, body);
+        const { data, error } = await supabase.from(table).update(payload).eq('id', id).select('*').single();
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ ok: true, item: data });
+    } catch (error: any) {
+        return NextResponse.json({ error: String(error?.message || error) }, { status: 400 });
+    }
+}
+
+export async function DELETE(request: NextRequest) {
+    const type = request.nextUrl.searchParams.get('type');
+    const id = uuid(request.nextUrl.searchParams.get('id'));
+    if (!validType(type) || !id) return NextResponse.json({ error: 'requisicao_invalida' }, { status: 400 });
+    const table = type === 'blocks' ? 'prompt_blocks' : 'prompt_variants';
+    const { error } = await supabase.from(table).delete().eq('id', id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+}

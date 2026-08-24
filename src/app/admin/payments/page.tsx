@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { adminFetchJson } from "@/lib/adminApiClient";
 
 type GatewayKey = "wiinpay" | "pushinpay";
 
@@ -58,17 +59,23 @@ export default function AdminPaymentsPage() {
     const [webhookToken, setWebhookToken] = useState("");
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState("");
+    const [loadingInitial, setLoadingInitial] = useState(true);
 
     useEffect(() => {
         load();
     }, []);
 
     const load = async () => {
-        const res = await fetch("/api/admin/payment-gateways", { cache: "no-store" });
-        const data = await res.json();
-        const next = data?.settings ? { ...emptySettings, ...data.settings } : emptySettings;
-        setSettings(next);
-        setOrder(parseOrder(next.order));
+        try {
+            const data = await adminFetchJson<{ settings?: PaymentSettings }>("/api/admin/payment-gateways");
+            const next = data?.settings ? { ...emptySettings, ...data.settings } : emptySettings;
+            setSettings(next);
+            setOrder(parseOrder(next.order));
+        } catch (error: any) {
+            setMsg(`Erro ao carregar: ${error?.message || error}`);
+        } finally {
+            setLoadingInitial(false);
+        }
     };
 
     const moveGateway = (gateway: GatewayKey, direction: -1 | 1) => {
@@ -85,35 +92,28 @@ export default function AdminPaymentsPage() {
     const save = async () => {
         setLoading(true);
         setMsg("");
-        const res = await fetch("/api/admin/payment-gateways", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                order: order.join(","),
-                webhookBaseUrl: settings.webhookBaseUrl,
-                webhookToken: webhookToken.trim(),
-                wiinpay: {
-                    enabled: settings.wiinpay.enabled,
-                    apiKey: wiinpayApiKey.trim(),
-                },
-                pushinpay: {
-                    enabled: settings.pushinpay.enabled,
-                    apiKey: pushinpayApiKey.trim(),
-                    environment: settings.pushinpay.environment,
-                },
-            }),
-        });
-        const data = await res.json();
-        if (data?.error) {
-            setMsg(`Erro: ${data.error}`);
-        } else {
-            setMsg("Gateways salvos. O proximo PIX ja usa essa ordem.");
+        try {
+            await adminFetchJson("/api/admin/payment-gateways", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    order: order.join(","),
+                    webhookBaseUrl: settings.webhookBaseUrl,
+                    webhookToken: webhookToken.trim(),
+                    wiinpay: { enabled: settings.wiinpay.enabled, apiKey: wiinpayApiKey.trim() },
+                    pushinpay: { enabled: settings.pushinpay.enabled, apiKey: pushinpayApiKey.trim(), environment: settings.pushinpay.environment },
+                }),
+            });
+            setMsg("Configuração salva. O próximo PIX usará essa prioridade.");
             setWiinpayApiKey("");
             setPushinpayApiKey("");
             setWebhookToken("");
             await load();
+        } catch (error: any) {
+            setMsg(`Erro ao salvar: ${error?.message || error}`);
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     const webhookUrl = settings.webhookBaseUrl
@@ -125,26 +125,26 @@ export default function AdminPaymentsPage() {
 
     return (
         <div className="min-h-screen bg-[#080b10] text-slate-100">
-            <header className="border-b border-white/10 bg-[#080b10]">
+            <header className="border-b border-white/5 bg-transparent">
                 <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-4 py-5 md:flex-row md:items-center md:justify-between">
                     <div>
-                        <p className="text-xs uppercase tracking-[0.22em] text-emerald-300">Admin</p>
-                        <h1 className="text-xl font-semibold">Gateways PIX</h1>
-                        <p className="text-sm text-slate-400">Ordem, fallback e credenciais de pagamento da Lari.</p>
+                        <p className="admin-eyebrow">Receita & entrega</p>
+                        <h1 className="admin-page-title">Pagamentos PIX</h1>
+                        <p className="admin-page-subtitle">Prioridade, fallback, ambiente e webhook em uma única visão.</p>
                     </div>
                 </div>
             </header>
 
             <main className="mx-auto grid w-full max-w-5xl gap-5 px-4 py-6 lg:grid-cols-[1fr_0.95fr]">
                 <section className="space-y-5">
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
+                    <div className="admin-card p-5">
                         <div className="flex items-center justify-between gap-3">
                             <div>
                                 <h2 className="text-lg font-semibold">Prioridade</h2>
-                                <p className="text-sm text-slate-400">Se o primeiro falhar, a Lari tenta o proximo automaticamente.</p>
+                                <p className="text-sm text-slate-400">O primeiro gateway habilitado e configurado é o principal; os demais são fallback.</p>
                             </div>
                             <button onClick={save} disabled={loading} className="rounded-lg bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60">
-                                {loading ? "Salvando..." : "Salvar"}
+                                {loading ? "Salvando..." : loadingInitial ? "Verificando..." : "Salvar alterações"}
                             </button>
                         </div>
 
@@ -168,7 +168,7 @@ export default function AdminPaymentsPage() {
                         {msg && <div className="mt-4 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-200">{msg}</div>}
                     </div>
 
-                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
+                    <div className="admin-card p-5">
                         <h2 className="text-lg font-semibold">Webhook</h2>
                         <p className="mt-1 text-sm text-slate-400">Use uma URL publica do app para a PushinPay confirmar pagamento sem depender do lead avisar.</p>
                         <label className="mt-4 grid gap-2 text-sm">
@@ -250,7 +250,7 @@ function GatewayCard({
     children?: ReactNode;
 }) {
     return (
-        <div className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
+        <div className="admin-card p-5">
             <div className="flex items-center justify-between gap-3">
                 <div>
                     <h2 className="text-lg font-semibold">{title}</h2>

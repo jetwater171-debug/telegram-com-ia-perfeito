@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-import Link from 'next/link';
+import { adminFetchJson } from '@/lib/adminApiClient';
 
 type Variant = {
     id: string;
@@ -40,17 +39,21 @@ export default function AdminVariantsPage() {
     const [draft, setDraft] = useState(EMPTY_VARIANT);
     const [msg, setMsg] = useState('');
     const [saving, setSaving] = useState(false);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         loadVariants();
     }, []);
 
     const loadVariants = async () => {
-        const { data } = await supabase
-            .from('prompt_variants')
-            .select('*')
-            .order('updated_at', { ascending: false });
-        setVariants((data as Variant[]) || []);
+        try {
+            const data = await adminFetchJson<{ items: Variant[] }>('/api/admin/prompt-content?type=variants');
+            setVariants(data.items || []);
+        } catch (error: any) {
+            setMsg(`Erro ao carregar: ${error?.message || error}`);
+        } finally {
+            setLoading(false);
+        }
     };
 
     const createVariant = async () => {
@@ -60,54 +63,45 @@ export default function AdminVariantsPage() {
         }
         setSaving(true);
         setMsg('');
-        const { error } = await supabase.from('prompt_variants').insert({
-            stage: draft.stage,
-            label: draft.label?.trim() || null,
-            content: draft.content.trim(),
-            enabled: draft.enabled,
-            weight: Number(draft.weight || 1)
-        });
-        if (error) {
-            setMsg("Erro ao salvar: " + error.message);
-        } else {
-            setMsg("Variacao criada.");
+        try {
+            await adminFetchJson('/api/admin/prompt-content', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'variants', ...draft }) });
+            setMsg("Variação criada.");
             setDraft(EMPTY_VARIANT);
             await loadVariants();
+        } catch (error: any) {
+            setMsg(`Erro ao salvar: ${error?.message || error}`);
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     };
 
     const updateVariant = async (variant: Variant) => {
         setSaving(true);
         setMsg('');
-        const { error } = await supabase.from('prompt_variants').update({
-            stage: variant.stage,
-            label: variant.label,
-            content: variant.content,
-            enabled: variant.enabled,
-            weight: Number(variant.weight || 1),
-            updated_at: new Date().toISOString()
-        }).eq('id', variant.id);
-        if (error) {
-            setMsg("Erro ao atualizar: " + error.message);
-        } else {
-            setMsg("Variacao atualizada.");
+        try {
+            await adminFetchJson('/api/admin/prompt-content', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'variants', ...variant }) });
+            setMsg("Variação atualizada.");
             await loadVariants();
+        } catch (error: any) {
+            setMsg(`Erro ao atualizar: ${error?.message || error}`);
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     };
 
     const deleteVariant = async (id: string) => {
         if (!confirm("Apagar essa variacao?")) return;
         setSaving(true);
         setMsg('');
-        const { error } = await supabase.from('prompt_variants').delete().eq('id', id);
-        if (error) setMsg("Erro ao apagar: " + error.message);
-        else {
-            setMsg("Variacao apagada.");
+        try {
+            await adminFetchJson(`/api/admin/prompt-content?type=variants&id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+            setMsg("Variação apagada.");
             await loadVariants();
+        } catch (error: any) {
+            setMsg(`Erro ao apagar: ${error?.message || error}`);
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     };
 
     return (
@@ -118,25 +112,11 @@ export default function AdminVariantsPage() {
                 <div className="absolute bottom-[-160px] left-1/2 h-[480px] w-[480px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle_at_center,_rgba(255,122,24,0.10),_transparent_70%)]" />
             </div>
 
-            <header className="sticky top-0 z-30 border-b border-white/10 bg-black/30 backdrop-blur">
-                <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
-                    <div className="flex items-center gap-4">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400/40 to-emerald-400/30 text-cyan-100 font-bold">LM</div>
-                        <div>
-                            <h1 className="text-xl font-semibold">Variacoes do Funil</h1>
-                            <p className="text-sm text-gray-400">Aprendizado automatico por etapa</p>
-                        </div>
-                    </div>
-                    <Link href="/admin" className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold text-gray-100 transition hover:border-white/20">
-                        Voltar
-                    </Link>
-                </div>
-            </header>
-
             <main className="mx-auto w-full max-w-6xl px-6 py-10">
-                <div className="mb-6 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-                    <h2 className="text-lg font-semibold">Nova variacao</h2>
-                    <p className="mt-2 text-sm text-gray-400">Crie versoes alternativas para cada etapa do funil.</p>
+                <header className="admin-page-header mb-5"><p className="admin-eyebrow">Experimentação</p><h1 className="admin-page-title">Testes de abordagem</h1><p className="admin-page-subtitle">Compare variações por etapa sem perder controle sobre peso, resultados e ativação.</p></header>
+                <div className="admin-card mb-6 p-6">
+                    <h2 className="text-lg font-semibold">Nova variação</h2>
+                    <p className="mt-2 text-sm text-gray-400">Crie uma hipótese clara para uma etapa e acompanhe sucesso e falha.</p>
 
                     <div className="mt-4 grid gap-4 md:grid-cols-3">
                         <select
@@ -269,11 +249,12 @@ export default function AdminVariantsPage() {
                         </div>
                     ))}
 
-                    {variants.length === 0 && (
+                    {!loading && variants.length === 0 && (
                         <div className="rounded-3xl border border-white/10 bg-white/5 p-8 text-center text-sm text-gray-400">
                             Nenhuma variacao criada ainda.
                         </div>
                     )}
+                    {loading && <div className="admin-card p-8 text-center text-sm text-slate-400">Carregando testes...</div>}
                 </div>
 
                 {msg && (
