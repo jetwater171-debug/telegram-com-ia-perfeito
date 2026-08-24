@@ -8,6 +8,7 @@ import {
   isPaymentPaidPayload,
   paymentReferenceSetsIntersect,
 } from '@/lib/paymentStatus';
+import { appendLeadEventSafe, patchRealityStateSafe } from '@/lib/brain/eventStore';
 
 type PaymentMessage = {
   id: string;
@@ -141,6 +142,33 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
       session_id: freshMessage.session_id,
       step: 'PAYMENT_CONFIRMED',
       source: options.source || `${gateway}_reconciliation`,
+    });
+    await appendLeadEventSafe({
+      sessionId: String(freshMessage.session_id),
+      eventType: 'payment_confirmed',
+      source: options.source || `${gateway}_reconciliation`,
+      sourceId: String(paymentData.paymentId || freshMessage.id),
+      payload: {
+        payment_id: paymentData.paymentId || null,
+        gateway,
+        product,
+        description,
+        amount: value,
+        total_confirmed: totalPaid,
+      },
+      occurredAt: nextPaymentData.paid_at || checkedAt,
+    });
+    await patchRealityStateSafe(String(freshMessage.session_id), {
+      payment: {
+        totalConfirmed: totalPaid,
+        lastConfirmedValue: value,
+        pendingPaymentId: null,
+      },
+      commercial: {
+        lastProductBought: product,
+        lastPurchaseAt: nextPaymentData.paid_at || checkedAt,
+        postPurchaseCooldownUntil: new Date(Date.parse(nextPaymentData.paid_at || checkedAt) + 24 * 60 * 60_000).toISOString(),
+      },
     });
 
     if (options.notify !== false && session.telegram_chat_id) {

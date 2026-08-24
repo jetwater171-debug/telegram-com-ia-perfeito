@@ -52,6 +52,17 @@ import {
     normalizeMem0LeadMemorySettings,
     searchMem0LeadMemories,
 } from '@/lib/mem0LeadMemory';
+import { formatBrainRuntimeContext, loadBrainRuntimeState } from '@/lib/brain/stateBuilder';
+import {
+    appendLeadEventSafe,
+    markAdultDeclarationSafe,
+    patchRealityStateSafe,
+    persistBrainProjectionsSafe,
+    persistMemoryUpdatesSafe,
+    recordAiDecisionSafe,
+} from '@/lib/brain/eventStore';
+import { detectAdultDeclaration, validateMasterBrainResponse } from '@/lib/brain/hardValidator';
+import { applyPreviewBanditRanking, recordPreviewSentSafe } from '@/lib/brain/previewBandit';
 
 export const maxDuration = 120;
 
@@ -1097,6 +1108,37 @@ export async function POST(req: NextRequest) {
     const groupedUserMessages = filteredGroupMessages.filter((m: any) => m.sender === 'user');
     const combinedText = filteredGroupMessages.map((m: any) => m.content).join("\n");
     const userOnlyText = groupedUserMessages.map((m: any) => m.content).join("\n");
+    const lastGroupedUserAt = filteredGroupMessages
+        .filter((m: any) => m.sender === 'user' && m.created_at)
+        .map((m: any) => String(m.created_at))
+        .sort()
+        .at(-1) || new Date().toISOString();
+    const adultDeclaredNow = detectAdultDeclaration(userOnlyText);
+    const leadMessageEventId = await appendLeadEventSafe({
+        sessionId: String(session.id),
+        eventType: 'lead_message',
+        source: 'telegram',
+        sourceId: triggerMessageId ? String(triggerMessageId) : String(lastGroupedUserAt || crypto.randomUUID()),
+        payload: {
+            content: userOnlyText.slice(0, 4_000),
+            grouped_message_count: groupedUserMessages.length,
+            adult_declaration: adultDeclaredNow,
+        },
+        occurredAt: lastGroupedUserAt,
+    });
+    if (adultDeclaredNow) {
+        await Promise.all([
+            markAdultDeclarationSafe(String(session.id), lastGroupedUserAt),
+            appendLeadEventSafe({
+                sessionId: String(session.id),
+                eventType: 'adult_declared',
+                source: 'lead',
+                sourceId: triggerMessageId ? `adult:${triggerMessageId}` : `adult:${lastGroupedUserAt}`,
+                payload: { method: 'self_declared_telegram' },
+                occurredAt: lastGroupedUserAt,
+            }),
+        ]);
+    }
     // "kkkk" isolado é só reação à última fala. Não volta para a IA, pois ela
     // pode ressuscitar uma pergunta antiga e produzir texto sem sentido.
     if (groupedUserMessages.length === 1 && isLowSignalLeadReaction(userOnlyText)) {
@@ -1112,11 +1154,6 @@ export async function POST(req: NextRequest) {
     // /start é só um comando técnico. Ele representa primeiro contato apenas
     // quando a sessão nunca recebeu uma resposta anterior da Lari.
     const isConversationStart = receivedStartCommand && !lastBotMsg;
-    const lastGroupedUserAt = filteredGroupMessages
-        .filter((m: any) => m.sender === 'user' && m.created_at)
-        .map((m: any) => String(m.created_at))
-        .sort()
-        .at(-1) || new Date().toISOString();
     const repetition = detectRepetition(filteredGroupMessages);
     console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
 
@@ -1257,6 +1294,14 @@ export async function POST(req: NextRequest) {
         '- Este plano pertence apenas ao cerebro. Se a relacao ainda for nova, nao deixe a intencao comercial aparecer na fala da Lari.',
     ].join('\n');
     extraScript = [extraScript, adaptiveSalesDirective].filter(Boolean).join('\n\n');
+
+    const brainRuntime = await loadBrainRuntimeState({
+        session: { ...session, lead_memory: leadMemory },
+        userText: userOnlyText,
+        recentMessages: recentSalesHistory,
+    });
+    if (adultDeclaredNow) brainRuntime.reality.adultVerified = true;
+    extraScript = [extraScript, formatBrainRuntimeContext(brainRuntime)].filter(Boolean).join('\n\n');
 
     if (mem0Settings.enabled && mem0Settings.apiKey && userOnlyText.trim()) {
         try {
@@ -1555,6 +1600,74 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
     const isInitialGreeting = /^\s*(\/start(?:\s+.*)?|oi|oii|oiii|ola|olá|boa tarde|bom dia|boa noite|eai|fala|opa)\s*$/i.test(userOnlyText.trim())
         && recentSalesHistory.filter((m: any) => m.sender === 'user').length <= 1;
 
+    const cooldownUntil = Date.parse(String(brainRuntime.reality.commercial.postPurchaseCooldownUntil || ''));
+    const hardValidation = validateMasterBrainResponse({
+        response: aiResponse,
+        userText: userOnlyText,
+        canGeneratePayment: salesTiming.canGeneratePayment,
+        canPitchPrice: salesTiming.canPitchPrice,
+        adultVerified: brainRuntime.reality.adultVerified,
+        offer: offerPlan ? {
+            id: `${salesTiming.activeProduct || 'offer'}:${Number(offerPlan.value).toFixed(2)}`,
+            value: offerPlan.value,
+            description: offerPlan.description,
+        } : null,
+        postPurchaseCooldownActive: Number.isFinite(cooldownUntil) && cooldownUntil > Date.now(),
+    });
+    aiResponse = hardValidation.response;
+    if (hardValidation.corrections.length > 0) {
+        console.log('[HARD VALIDATOR] decisão corrigida:', hardValidation.corrections);
+    }
+
+    const brainPersistencePromise = (async () => {
+        await persistMemoryUpdatesSafe({
+            sessionId: String(session.id),
+            updates: aiResponse.memory_updates,
+            sourceEventId: leadMessageEventId,
+        });
+        await persistBrainProjectionsSafe({
+            sessionId: String(session.id),
+            state: brainRuntime,
+            relationshipStage: aiResponse.lead_memory_patch?.relationship_stage || leadMemory.relationship_stage,
+            userText: userOnlyText,
+            updates: aiResponse.memory_updates,
+        });
+        const decisionId = await recordAiDecisionSafe({
+            sessionId: String(session.id),
+            sourceEventId: leadMessageEventId,
+            model: String(aiResponse.ai_debug?.model || ''),
+            provider: String(aiResponse.ai_debug?.provider || ''),
+            nextBestAction: String(aiResponse.next_best_action || 'TALK'),
+            legacyAction: String(aiResponse.action || 'none'),
+            confidence: Number(aiResponse.decision_confidence || 0.5),
+            previewId: aiResponse.preview_id || null,
+            offerId: aiResponse.offer_id || null,
+            stateSnapshot: {
+                reality: brainRuntime.reality,
+                episode: brainRuntime.episode,
+                retrieved_memory_ids: brainRuntime.memories.map((memory) => memory.id),
+            },
+            validatorResult: {
+                allowed: hardValidation.allowed,
+                corrections: hardValidation.corrections,
+            },
+        });
+        await appendLeadEventSafe({
+            sessionId: String(session.id),
+            eventType: 'ai_decision',
+            source: 'master_brain',
+            sourceId: decisionId || (triggerMessageId ? `decision:${triggerMessageId}` : null),
+            payload: {
+                decision_id: decisionId,
+                next_best_action: aiResponse.next_best_action || 'TALK',
+                action: aiResponse.action || 'none',
+                preview_id: aiResponse.preview_id || null,
+                offer_id: aiResponse.offer_id || null,
+                validator_corrections: hardValidation.corrections,
+            },
+        });
+    })();
+
     const modelAttemptedMedia = botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || ''));
     let shouldDeliverMedia = shouldDeliverRequestedMedia({
         userAskedMedia,
@@ -1564,7 +1677,8 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
 
     let generatedMessageIndex = 0;
     const insertGeneratedMessage = async (row: Record<string, unknown>) => {
-        const indexedDebug = withAiDebugMessageIndex(aiResponse.ai_debug, generatedMessageIndex++);
+        const messageIndex = generatedMessageIndex++;
+        const indexedDebug = withAiDebugMessageIndex(aiResponse.ai_debug, messageIndex);
         const result = await insertMessageWithAiDebug(supabase, row, indexedDebug);
         if (result.debugError) {
             console.warn("[AI DEBUG] O envio ao lead continuou, mas o ai_debug nao foi persistido:", errorMessage(result.debugError));
@@ -1572,6 +1686,18 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         if (result.error) {
             console.warn("[PROCESSADOR] Falha ao persistir mensagem gerada:", errorMessage(result.error));
         }
+        await appendLeadEventSafe({
+            sessionId: String(session.id),
+            eventType: 'assistant_message',
+            source: 'master_brain',
+            sourceId: `${triggerMessageId || lastGroupedUserAt}:assistant:${messageIndex}`,
+            payload: {
+                content: String(row.content || '').slice(0, 4_000),
+                media_type: row.media_type || null,
+                action: aiResponse.action || 'none',
+                next_best_action: aiResponse.next_best_action || 'TALK',
+            },
+        });
         return result;
     };
     let mediaSuppressedForPolicy = modelAttemptedMedia && !shouldDeliverMedia;
@@ -1666,7 +1792,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                 .limit(1000),
             supabase
                 .from('preview_assets')
-                .select('id,name,description,triggers,tags,media_url,media_type,priority,min_tarado,max_tarado,stage,ai_analysis')
+                .select('id,name,description,triggers,tags,media_url,media_type,priority,min_tarado,max_tarado,stage,ai_analysis,performance,exploration_weight')
                 .eq('enabled', true)
                 .not('media_url', 'is', null)
                 .limit(1000),
@@ -1699,7 +1825,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             const requestedSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
             const tarado = Number(aiResponse.lead_stats?.tarado || 0);
             const candidatePool = unusedCatalog;
-            const rankedPreviews = rankPreviewCandidatesByMoment({
+            const momentRankedPreviews = rankPreviewCandidatesByMoment({
                 assets: candidatePool,
                 context: {
                     userText: userOnlyText,
@@ -1714,6 +1840,10 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                     return scorePreviewForContext(asset, userOnlyText, requestedSpec.tags) + (inRange ? 3 : -3);
                 },
             });
+            const rankedPreviews = applyPreviewBanditRanking(
+                momentRankedPreviews,
+                `${session.id}:${triggerMessageId || lastGroupedUserAt}:${requestedSpec.tags.join(',')}`,
+            );
             console.log('[PREVIAS] Ranking contextual do momento:', JSON.stringify(rankedPreviews.slice(0, 3).map((entry) => ({
                 id: entry.asset.id,
                 score: entry.score,
@@ -2338,7 +2468,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             if (available.length === 0) return null;
             const pool = available;
 
-            const ranked = rankPreviewCandidatesByMoment({
+            const momentRanked = rankPreviewCandidatesByMoment({
                 assets: pool,
                 context: {
                     userText: userOnlyText,
@@ -2349,6 +2479,10 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                 },
                 baseScore: (item: any) => scorePreviewForContext(item, userOnlyText, preferredTags),
             });
+            const ranked = applyPreviewBanditRanking(
+                momentRanked,
+                `${session.id}:${triggerMessageId || lastGroupedUserAt}:${preferredTags.join(',')}`,
+            );
             return ranked[0]?.asset || pool[0];
         };
 
@@ -2501,6 +2635,31 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                                     }
                                 }).eq('id', lastPayMsg.id);
                             }
+                            await appendLeadEventSafe({
+                                sessionId: String(session.id),
+                                eventType: 'payment_confirmed',
+                                source: 'backend',
+                                sourceId: String(paymentId),
+                                payload: {
+                                    payment_id: paymentId,
+                                    product: paymentProduct || lastPayMsg.payment_data?.description || null,
+                                    amount: Number(value || 0),
+                                    total_confirmed: newTotal,
+                                    gateway: lastPayMsg.payment_data?.gateway || null,
+                                },
+                            });
+                            await patchRealityStateSafe(String(session.id), {
+                                payment: {
+                                    totalConfirmed: newTotal,
+                                    lastConfirmedValue: Number(value || 0),
+                                    pendingPaymentId: null,
+                                },
+                                commercial: {
+                                    lastProductBought: paymentProduct || lastPayMsg.payment_data?.description || null,
+                                    lastPurchaseAt: new Date().toISOString(),
+                                    postPurchaseCooldownUntil: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
+                                },
+                            });
                             try {
                                 await supabase.from('funnel_events').insert({
                                     session_id: session.id,
@@ -2634,6 +2793,22 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                                 resent_at: new Date().toISOString()
                             }
                         });
+                        await appendLeadEventSafe({
+                            sessionId: String(session.id),
+                            eventType: 'payment_resent',
+                            source: 'backend',
+                            sourceId: `${lastPaymentId || 'unknown'}:${triggerMessageId || lastGroupedUserAt}`,
+                            payload: {
+                                payment_id: lastPaymentId || null,
+                                gateway: lastPaymentData.gateway || null,
+                                product: paymentProduct,
+                                amount: value,
+                                description,
+                            },
+                        });
+                        await patchRealityStateSafe(String(session.id), {
+                            payment: { pendingPaymentId: String(lastPaymentId || '') || null },
+                        });
                         break;
                     }
                     // Gerar Pagamento
@@ -2684,6 +2859,22 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                                 paid: false,
                                 status: payment.status || 'pending'
                             }
+                        });
+                        await appendLeadEventSafe({
+                            sessionId: String(session.id),
+                            eventType: 'payment_created',
+                            source: 'backend',
+                            sourceId: String(payment.paymentId),
+                            payload: {
+                                payment_id: payment.paymentId,
+                                gateway: payment.gateway,
+                                product: paymentProduct,
+                                amount: value,
+                                description,
+                            },
+                        });
+                        await patchRealityStateSafe(String(session.id), {
+                            payment: { pendingPaymentId: String(payment.paymentId) },
                         });
                     } else {
                         await sendTelegramMessage(botToken, chatId, "amor o sistema caiu aqui rapidinho... tenta daqui a pouco?");
@@ -2877,6 +3068,32 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                 mediaUrl: deliveredUrl,
                 protected: mediaProtection.protectContent === true,
             });
+            await appendLeadEventSafe({
+                sessionId: String(session.id),
+                eventType: 'preview_sent',
+                source: 'backend',
+                sourceId: `${triggerMessageId || lastGroupedUserAt}:preview:${selectedPreviewAsset?.id || normalizeMediaUrlKey(deliveredUrl)}`,
+                payload: {
+                    preview_id: selectedPreviewAsset?.id || null,
+                    media_type: deliveredType,
+                    media_url: deliveredUrl,
+                    protected: mediaProtection.protectContent === true,
+                    recovered: deliveryRecovered,
+                    requested_by_lead: userAskedMedia || userAffirmedMedia,
+                },
+            });
+            const previousSentPreviewIds = brainRuntime.reality.media.sentPreviewIds || [];
+            const deliveredPreviewId = String(selectedPreviewAsset?.id || '').trim();
+            await patchRealityStateSafe(String(session.id), {
+                media: {
+                    lastPreviewId: deliveredPreviewId || null,
+                    lastMediaUrl: deliveredUrl,
+                    sentPreviewIds: deliveredPreviewId
+                        ? Array.from(new Set([...previousSentPreviewIds, deliveredPreviewId])).slice(-100)
+                        : previousSentPreviewIds,
+                },
+            });
+            if (deliveredPreviewId) await recordPreviewSentSafe(deliveredPreviewId);
             await sendDeferredMediaReaction();
         } else if (isMediaDeliveryTurn && userAskedMedia) {
             await persistMediaDeliveryStatus('failed');
@@ -2897,6 +3114,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
     // A análise pode usar outra IA, mas nunca segura os balões: só aguardamos a
     // persistência depois que a resposta ao lead já foi entregue.
     if (pendingPhotoRequestAnalysis) await pendingPhotoRequestAnalysis;
+    await brainPersistencePromise;
 
     return NextResponse.json({
         success: true,

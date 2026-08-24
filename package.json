@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:brain-v2": "node scripts/verify-master-brain-v2.cjs",
+    "eval:brain-v2": "node scripts/eval-master-brain-v2.cjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

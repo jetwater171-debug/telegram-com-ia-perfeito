@@ -86,6 +86,22 @@ export interface AIResponse {
     lead_memory_patch?: LeadMemoryPatch | null;
     recommended_message_count?: number;
     max_chars_per_message?: number;
+    next_best_action?:
+    | "TALK" | "REACT" | "ASK" | "FLIRT" | "REASSURE"
+    | "SEND_PREVIEW" | "SEND_FREE_MEDIA" | "EXPLORE_DESIRE" | "BUILD_VALUE"
+    | "MAKE_OFFER" | "HANDLE_OBJECTION" | "NEGOTIATE" | "CLOSE"
+    | "GENERATE_PAYMENT" | "CHECK_PAYMENT" | "DELIVER" | "POST_PURCHASE"
+    | "COOLDOWN" | "CHANGE_TOPIC";
+    decision_confidence?: number;
+    offer_id?: string | null;
+    memory_updates?: Array<{
+        kind: "fact" | "hypothesis" | "preference" | "episode" | "outcome";
+        key: string;
+        content: string;
+        confidence: number;
+        importance: number;
+        status: "active" | "superseded" | "uncertain" | "expired";
+    }>;
     ai_debug?: AiDebugData | null;
 }
 

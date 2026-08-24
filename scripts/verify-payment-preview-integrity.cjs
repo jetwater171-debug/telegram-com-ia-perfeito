@@ -29,6 +29,7 @@ try {
     '@/lib/leadScoring': { markLeadPaid: (value) => value },
     '@/lib/telegram': { sendTelegramMessage() {} },
     '@/lib/paymentStatus': payment,
+    '@/lib/brain/eventStore': { appendLeadEventSafe: async () => null, patchRealityStateSafe: async () => true },
   });
 
   assert.equal(payment.findPaymentStatus({ data: { payment: { status: 'APPROVED' } } }), 'approved');

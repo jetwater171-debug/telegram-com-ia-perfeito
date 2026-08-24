@@ -296,10 +296,35 @@ export async function PUT(req: NextRequest) {
                 response = await fetchWithTimeout(`${config.base}/chat/completions`, {
                     method: "POST",
                     headers: { Authorization: `Bearer ${config.key}`, "Content-Type": "application/json" },
-                    body: JSON.stringify({
+                    body: JSON.stringify(provider === "bai" ? {
+                        model,
+                        messages: [
+                            { role: "system", content: "Retorne somente JSON válido no schema solicitado." },
+                            { role: "user", content: "Teste de conexão do Master Brain. Confirme ok=true e repita o model id." },
+                        ],
+                        max_tokens: 96,
+                        thinking: { type: "enabled" },
+                        reasoning_effort: "low",
+                        response_format: {
+                            type: "json_schema",
+                            json_schema: {
+                                name: "master_brain_connection_test",
+                                strict: true,
+                                schema: {
+                                    type: "object",
+                                    properties: {
+                                        ok: { type: "boolean" },
+                                        model: { type: "string" },
+                                    },
+                                    required: ["ok", "model"],
+                                    additionalProperties: false,
+                                },
+                            },
+                        },
+                    } : {
                         model,
                         messages: [{ role: "user", content: "Responda apenas OK" }],
-                        max_tokens: provider === "bai" ? 8 : 2,
+                        max_tokens: 2,
                         temperature: 0,
                     }),
                 });

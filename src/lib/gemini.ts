@@ -128,9 +128,35 @@ const responseSchema = {
                 conversation_hooks: { type: "ARRAY", items: { type: "STRING" } },
                 notes: { type: "ARRAY", items: { type: "STRING" } }
             }
+        },
+        next_best_action: {
+            type: "STRING",
+            enum: [
+                "TALK", "REACT", "ASK", "FLIRT", "REASSURE", "SEND_PREVIEW", "SEND_FREE_MEDIA",
+                "EXPLORE_DESIRE", "BUILD_VALUE", "MAKE_OFFER", "HANDLE_OBJECTION", "NEGOTIATE",
+                "CLOSE", "GENERATE_PAYMENT", "CHECK_PAYMENT", "DELIVER", "POST_PURCHASE",
+                "COOLDOWN", "CHANGE_TOPIC"
+            ]
+        },
+        decision_confidence: { type: "NUMBER" },
+        offer_id: { type: "STRING", nullable: true },
+        memory_updates: {
+            type: "ARRAY",
+            items: {
+                type: "OBJECT",
+                properties: {
+                    kind: { type: "STRING", enum: ["fact", "hypothesis", "preference", "episode", "outcome"] },
+                    key: { type: "STRING" },
+                    content: { type: "STRING" },
+                    confidence: { type: "NUMBER" },
+                    importance: { type: "NUMBER" },
+                    status: { type: "STRING", enum: ["active", "superseded", "uncertain", "expired"] }
+                },
+                required: ["kind", "key", "content", "confidence", "importance", "status"]
+            }
         }
     },
-    required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action", "lead_memory_patch"],
+    required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action", "lead_memory_patch", "next_best_action", "decision_confidence", "memory_updates"],
 };
 
 const centralBrainSchema = {
@@ -148,6 +174,15 @@ const centralBrainSchema = {
         response_angle: { type: "STRING" },
         must_answer: { type: "STRING" },
         next_step: { type: "STRING" },
+        next_best_action: {
+            type: "STRING",
+            enum: [
+                "TALK", "REACT", "ASK", "FLIRT", "REASSURE", "SEND_PREVIEW", "SEND_FREE_MEDIA",
+                "EXPLORE_DESIRE", "BUILD_VALUE", "MAKE_OFFER", "HANDLE_OBJECTION", "NEGOTIATE",
+                "CLOSE", "GENERATE_PAYMENT", "CHECK_PAYMENT", "DELIVER", "POST_PURCHASE",
+                "COOLDOWN", "CHANGE_TOPIC"
+            ]
+        },
         message_plan: {
             type: "ARRAY",
             items: { type: "STRING" }
@@ -186,7 +221,7 @@ const centralBrainSchema = {
             required: ["best_tone", "emotional_context", "relationship_stage", "next_personal_step", "wanted_products", "rejected_products", "desires", "objections", "known_facts", "conversation_hooks", "notes"]
         }
     },
-    required: ["intent", "lead_type", "temperature", "emotional_context", "relationship_stage", "connection_cue", "objective", "should_sell_now", "response_angle", "must_answer", "next_step", "message_plan", "recommended_message_count", "max_chars_per_message", "avoid", "action_hint", "confidence", "memory_patch"],
+    required: ["intent", "lead_type", "temperature", "emotional_context", "relationship_stage", "connection_cue", "objective", "should_sell_now", "response_angle", "must_answer", "next_step", "next_best_action", "message_plan", "recommended_message_count", "max_chars_per_message", "avoid", "action_hint", "confidence", "memory_patch"],
 };
 
 const reviewSchema = {
@@ -622,18 +657,22 @@ export const parseJsonText = <T,>(text: string): T => {
     throw new Error(`Falha ao extrair JSON da resposta: ${raw.slice(0, 200)}`);
 };
 
-const toOpenRouterJsonSchema = (value: any): any => {
-    if (Array.isArray(value)) return value.map(toOpenRouterJsonSchema);
+const toOpenRouterJsonSchema = (value: any, strict = false): any => {
+    if (Array.isArray(value)) return value.map((item) => toOpenRouterJsonSchema(item, strict));
     if (!value || typeof value !== 'object') return value;
     const output: Record<string, any> = {};
     for (const [key, nested] of Object.entries(value)) {
         if (key === 'nullable') continue;
         output[key] = key === 'type' && typeof nested === 'string'
             ? nested.toLowerCase()
-            : toOpenRouterJsonSchema(nested);
+            : toOpenRouterJsonSchema(nested, strict);
     }
     if (value.nullable === true && typeof output.type === 'string') {
         output.type = [output.type, 'null'];
+    }
+    if (strict && output.properties && typeof output.properties === 'object') {
+        output.additionalProperties = false;
+        output.required = Object.keys(output.properties);
     }
     return output;
 };
@@ -1088,7 +1127,11 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings, tier?: AiI
         .filter((gateway) => gateway.role === role)
         .filter((gateway) => !tier || !gateway.tiers || gateway.tiers.includes(tier));
 
-    const providerPreference = parseProviderPreference(roleSettingMap[role] || settings.aiModelOrder || DEFAULT_PROVIDER_ORDER);
+    const configuredPreference = parseProviderPreference(roleSettingMap[role] || settings.aiModelOrder || DEFAULT_PROVIDER_ORDER);
+    // DeepSeek V4 pela B.AI é a linha principal textual. O painel continua
+    // ordenando todos os fallbacks, mas não pode acidentalmente deslocar o
+    // Master Brain; mídia incompatível é roteada ao Gemini acima desta camada.
+    const providerPreference = ['bai', ...configuredPreference.filter((provider) => provider !== 'bai')];
     const providerRank = new Map(providerPreference.map((provider, index) => [provider, index]));
     const order = [...roleSpecific, ...globalOrder, ...directGateways, ...defaults, ...extraOpenRouterModels, ...extraGeminiModels]
         .map((gateway, index) => ({ gateway, index }))
@@ -1328,6 +1371,13 @@ const callOpenRouterJson = async <T,>(
         temperature: role === "draft" ? 0.85 : 0.35,
         max_tokens: gateway.provider === 'bai' ? 2048 : 1400,
     };
+    const deepSeekV4 = /deepseek-v4/i.test(String(gateway.model || ''));
+    if (deepSeekV4) {
+        const criticalTurn = role !== 'draft'
+            || /\b(pix|pagar|pagamento|pre[cç]o|valor|caro|desconto|comprar|comprovante|contradi|reclam|n[aã]o quero)\b/i.test(userContent);
+        body.reasoning_effort = role === 'evaluator' ? 'max' : criticalTurn ? 'high' : 'low';
+        body.thinking = { type: 'enabled' };
+    }
     if (gateway.provider === 'openrouter') {
         body.provider = { allow_fallbacks: true, require_parameters: true };
         body.response_format = {
@@ -1339,17 +1389,39 @@ const callOpenRouterJson = async <T,>(
             },
         };
     } else if (gateway.provider === 'bai') {
-        body.response_format = { type: 'json_object' };
+        body.response_format = {
+            type: 'json_schema',
+            json_schema: {
+                name: schemaName.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64) || 'response',
+                strict: true,
+                schema: toOpenRouterJsonSchema(responseSchemaConfig, true),
+            },
+        };
     }
 
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    let response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         signal: AbortSignal.timeout(timeoutMs),
         headers,
         body: JSON.stringify(body),
     });
 
-    const responseBody = await response.text();
+    let responseBody = await response.text();
+    if (gateway.provider === 'bai'
+        && response.status === 400
+        && /json_schema|response_format|schema|additionalproperties|required/i.test(responseBody)) {
+        // Compatibilidade temporária para contas/rotas B.AI que ainda não
+        // propagam JSON Schema ao modelo selecionado. O reminder JSON e o hard
+        // validator continuam obrigatórios; a telemetria registra o modelo real.
+        body.response_format = { type: 'json_object' };
+        response = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            signal: AbortSignal.timeout(timeoutMs),
+            headers,
+            body: JSON.stringify(body),
+        });
+        responseBody = await response.text();
+    }
     if (!response.ok) {
         throw new AiGatewayHttpError(
             `${gateway.provider} ${response.status}: ${responseBody.slice(0, 500)}`,
@@ -1647,6 +1719,11 @@ const makeFallbackStrategy = (message: string, leadMemory?: any) => {
         next_step: isStart ? 'perguntar como ele se chama'
             : shouldSellNow ? 'responder a intencao comercial sem pressao'
                 : 'reagir ao assunto e deixar um gancho natural',
+        next_best_action: wantsPayment ? 'GENERATE_PAYMENT'
+            : asksPrice || asksProduct ? 'MAKE_OFFER'
+                : wantsMedia ? 'SEND_PREVIEW'
+                    : isSexual ? 'FLIRT'
+                        : isStart ? 'ASK' : 'TALK',
         message_plan: isStart ? ['cumprimentar', 'perguntar o nome'] : ['responder ao ponto principal', 'adicionar no maximo um gancho'],
         recommended_message_count: isStart ? 2 : 1,
         max_chars_per_message: 100,
@@ -1717,6 +1794,9 @@ const makeLocalFallbackResponse = (
         extracted_user_name: null,
         audio_transcription: null,
         payment_details: null,
+        lead_memory_patch: null,
+        decision_confidence: 0.35,
+        memory_updates: [],
     };
 
     if (context?.isConversationStart || /^\s*\/start(?:\s+\S+)?\s*$/i.test(literalText)) {
@@ -2101,6 +2181,10 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
             }
             jsonResponse.messages = normalizeAiMessageList(jsonResponse.messages);
             jsonResponse.lead_memory_patch = mergeBrainAndDraftMemory(strategy?.memory_patch, jsonResponse.lead_memory_patch);
+            jsonResponse.next_best_action = jsonResponse.next_best_action || strategy?.next_best_action || 'TALK';
+            jsonResponse.decision_confidence = Math.max(0, Math.min(1, Number(jsonResponse.decision_confidence ?? strategy?.confidence ?? 0.5)));
+            jsonResponse.memory_updates = Array.isArray(jsonResponse.memory_updates) ? jsonResponse.memory_updates.slice(0, 12) : [];
+            jsonResponse.offer_id = jsonResponse.offer_id ?? null;
             jsonResponse.recommended_message_count = Math.max(1, Math.min(6, Number(jsonResponse.messages?.length || strategy?.recommended_message_count || 3)));
             jsonResponse.max_chars_per_message = Math.max(55, Math.min(110, Number(Math.max(0, ...(jsonResponse.messages || []).map((message) => String(message || '').length)) || strategy?.max_chars_per_message || 90)));
 
@@ -2305,10 +2389,14 @@ Faca a avaliacao final.`
                     current_state: jsonResponse.current_state,
                     messages: jsonResponse.messages,
                     action: jsonResponse.action,
+                    next_best_action: jsonResponse.next_best_action,
+                    decision_confidence: jsonResponse.decision_confidence,
                     payment_details: jsonResponse.payment_details,
                     preview_id: jsonResponse.preview_id,
+                    offer_id: jsonResponse.offer_id,
                     preview_request: jsonResponse.preview_request,
                     lead_memory_patch: jsonResponse.lead_memory_patch,
+                    memory_updates: jsonResponse.memory_updates,
                     recommended_message_count: jsonResponse.recommended_message_count,
                     max_chars_per_message: jsonResponse.max_chars_per_message,
                 },
