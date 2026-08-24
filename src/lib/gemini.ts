@@ -2264,10 +2264,19 @@ Revise e corrija se necessario.`
                 ? normalizeAiMessageList(review.messages)
                 : [];
 
-            if (review && review.approved === false && reviewedMessages.length > 0) {
+            // A revisora e a ultima autoridade textual do pipeline. Ela sempre
+            // devolve a resposta completa, inclusive quando aprova o rascunho.
+            // Antes, mensagens aprovadas eram descartadas; se o draft viesse
+            // vazio, o turno acabava caindo num fallback generico no backend.
+            if (reviewedMessages.length > 0) {
                 jsonResponse.messages = reviewedMessages;
+            }
+
+            if (review && review.approved === false) {
                 jsonResponse.action = review.action || jsonResponse.action;
-                jsonResponse.current_state = review.current_state || jsonResponse.current_state;
+                if (typeof review.current_state === 'string') {
+                    jsonResponse.current_state = review.current_state || jsonResponse.current_state;
+                }
                 jsonResponse.preview_id = review.preview_id ?? jsonResponse.preview_id;
                 jsonResponse.payment_details = review.payment_details ?? jsonResponse.payment_details;
             }
@@ -2323,10 +2332,14 @@ Faca a avaliacao final.`
                     const evaluatedMessages = Array.isArray(evaluator?.messages)
                         ? normalizeAiMessageList(evaluator.messages)
                         : [];
-                    if (evaluator?.approved === false && evaluatedMessages.length > 0) {
+                    if (evaluatedMessages.length > 0) {
                         jsonResponse.messages = evaluatedMessages;
+                    }
+                    if (evaluator?.approved === false) {
                         jsonResponse.action = evaluator.action || jsonResponse.action;
-                        jsonResponse.current_state = evaluator.current_state || jsonResponse.current_state;
+                        if (typeof evaluator.current_state === 'string') {
+                            jsonResponse.current_state = evaluator.current_state || jsonResponse.current_state;
+                        }
                         jsonResponse.preview_id = evaluator.preview_id ?? jsonResponse.preview_id;
                         jsonResponse.payment_details = evaluator.payment_details ?? jsonResponse.payment_details;
                     }

@@ -187,6 +187,7 @@ Reprove quando o rascunho:
 - usa mais balões/perguntas que o necessário, termina pendurado ou contradiz memória/fato recente.
 
 No primeiro episódio, remova "amor", "vida", "bb", "lindo", "sumido", cama, banho e qualificações comerciais. Preserve uma abertura simples e pergunta de nome apenas se ainda desconhecido.
+Em TODOS os casos, inclusive quando approved=true, "messages" deve conter os balões finais completos que podem ser enviados ao lead. O backend trata suas mensagens como a decisão textual final; nunca devolva a lista vazia quando houver uma resposta verbal.
 Se corrigir, devolva mensagens naturais completas e os campos operacionais coerentes. Não dê explicações ao lead.
 Retorne JSON com: approved, score, issues, messages, action, current_state, preview_id e payment_details.`;
 

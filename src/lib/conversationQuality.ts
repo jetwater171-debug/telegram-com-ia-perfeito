@@ -119,8 +119,22 @@ export const buildConversationRecoveryMessages = (options: {
     const asksPaymentOrAccess = /\b(pix|pagar|pagamento|vip|acesso|link|chamada)\b/i.test(userText)
         || action.includes('payment');
     const affirmed = /^(sim|quero|pode|manda|bora|vamos|claro|com certeza|ok|beleza)\b/i.test(userText);
+    const affectionateGreeting = /^(?:oi+e*|ola+|e\s*ai|eai|bom dia|boa tarde|boa noite)[,!?.\s]*(?:amor|vida|bb|bebe|lindo)[!?.\s]*$/i.test(userText);
+    const greetingOnly = isGreetingOnly(userText);
 
-    const candidates = complaint
+    const candidates = affectionateGreeting
+        ? [
+            'fala comigo amor, tava por aqui',
+            'tava por aqui sim amor, e vc?',
+            'fala comigo amor, como vc ta?',
+        ]
+        : greetingOnly
+            ? [
+                'fala comigo, tava por aqui',
+                'tava por aqui sim, e vc?',
+                'fala comigo, como vc ta?',
+            ]
+        : complaint
         ? [
             'vc tem razão, vc já explicou e eu que repeti',
             'eu me perdi na resposta e não vou te fazer repetir de novo',
@@ -145,9 +159,9 @@ export const buildConversationRecoveryMessages = (options: {
                         'ta bom, peguei a ideia',
                     ]
                     : [
-                        'agora eu entendi o que vc quis dizer',
-                        'peguei seu ponto agora',
-                        'sim, entendi direito agora',
+                        'fala comigo, quero te responder direito',
+                        'me diz o que passou na sua cabeça',
+                        'quero entender essa parte do seu jeito',
                     ];
 
     const filtered = filterConversationConsistencyMessages(candidates, {

@@ -49,11 +49,21 @@ assert.equal(checkout.offerPlan.value, 99.9);
 assert.match(checkout.customRequestBrief, /calcinha/i);
 
 const route = fs.readFileSync(path.join(root, 'src/app/api/process-message/route.ts'), 'utf8');
+const gateway = fs.readFileSync(path.join(root, 'src/lib/gemini.ts'), 'utf8');
 const migration = fs.readFileSync(path.join(root, 'custom_orders_migration.sql'), 'utf8');
 assert.match(route, /recordCustomOrderSafe/);
 assert.match(route, /sendMessageToGemini\(session\.id, finalUserMessage/);
 assert.doesNotMatch(route, /Primeiro contato via \/start: usando saudação inicial padrão sem IA/);
+assert.match(route, /const isActualFirstRelationshipTurn = !lastBotMsg/);
+assert.match(gateway, /if \(reviewedMessages\.length > 0\)/);
+assert.doesNotMatch(gateway, /review\.approved === false && reviewedMessages\.length/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS custom_orders/i);
 assert.ok(fs.existsSync(path.join(root, 'src/app/admin/orders/page.tsx')));
+
+const quality = load('src/lib/conversationQuality.ts');
+assert.doesNotMatch(
+  quality.buildConversationRecoveryMessages({ userText: 'oi amor' })[0],
+  /agora eu entendi|peguei seu ponto/i,
+);
 
 console.log('THREE_BRAIN_COMMERCE_OK layers=3 all_leads=1 custom_requests=1 multigateway_queue=1 temporal_state=1');

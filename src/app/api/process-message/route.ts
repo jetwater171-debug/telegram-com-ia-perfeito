@@ -2110,12 +2110,14 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             && Date.parse(String(message.created_at || '')) >= episodeStartedAtMs).length
         : Number.POSITIVE_INFINITY;
     const isEarlyConversationEpisode = isConversationStart || episodeLeadTurns <= 3;
-    const isReturningGreeting = Boolean(lastBotMsg)
-        && /^\s*(?:\/start(?:\s+\S+)?|oi+e*|ola+|olá+|e\s*ai|eai|bom dia|boa tarde|boa noite)[!?.\s]*$/i.test(userOnlyText);
-    if (!isReturningGreeting && (!relationshipStageBeforeTurn
+    // O estado probabilistico pode estar atrasado, mas uma mensagem anterior da
+    // Lari e um fato objetivo. Nunca rebaixe um retorno para primeiro contato.
+    const isActualFirstRelationshipTurn = !lastBotMsg && (isConversationStart
+        || !relationshipStageBeforeTurn
         || relationshipStageBeforeTurn === 'new'
         || relationshipStageBeforeTurn === 'unknown'
-        || isEarlyConversationEpisode)) {
+        || isEarlyConversationEpisode);
+    if (isActualFirstRelationshipTurn) {
         safeMessages = refineNewRelationshipMessages(safeMessages, {
             userText: userOnlyText,
             lastBotContent,
