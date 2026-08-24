@@ -89,7 +89,7 @@ const responseSchema = {
             enum: [
                 "none", "send_video_preview", "send_hot_video_preview", "send_ass_photo_preview", "send_custom_preview",
                 "generate_pix_payment", "check_payment_status", "send_shower_photo", "send_lingerie_photo",
-                "send_wet_finger_photo", "request_app_install"
+                "send_wet_finger_photo", "send_voice_reply"
             ]
         },
         preview_id: { type: "STRING", nullable: true },
@@ -198,7 +198,7 @@ const centralBrainSchema = {
             enum: [
                 "none", "send_video_preview", "send_hot_video_preview", "send_ass_photo_preview", "send_custom_preview",
                 "generate_pix_payment", "check_payment_status", "send_shower_photo", "send_lingerie_photo",
-                "send_wet_finger_photo", "request_app_install"
+                "send_wet_finger_photo", "send_voice_reply"
             ]
         },
         payment_value_hint: { type: "NUMBER", nullable: true },
@@ -242,7 +242,7 @@ const reviewSchema = {
             enum: [
                 "none", "send_video_preview", "send_hot_video_preview", "send_ass_photo_preview", "send_custom_preview",
                 "generate_pix_payment", "check_payment_status", "send_shower_photo", "send_lingerie_photo",
-                "send_wet_finger_photo", "request_app_install"
+                "send_wet_finger_photo", "send_voice_reply"
             ]
         },
         current_state: {
@@ -263,6 +263,16 @@ const reviewSchema = {
     },
     required: ["approved", "score", "issues", "messages", "action", "current_state"],
 };
+
+const REVIEW_ACTIONS = new Set([
+    'none', 'send_video_preview', 'send_hot_video_preview', 'send_ass_photo_preview', 'send_custom_preview',
+    'generate_pix_payment', 'check_payment_status', 'send_shower_photo', 'send_lingerie_photo',
+    'send_wet_finger_photo', 'send_voice_reply',
+]);
+const REVIEW_STATES = new Set([
+    'WELCOME', 'CONNECTION', 'TRIGGER_PHASE', 'HOT_TALK', 'PREVIEW',
+    'SALES_PITCH', 'NEGOTIATION', 'CLOSING', 'PAYMENT_CHECK',
+]);
 
 export const getSystemInstruction = (
     userCity: string = "",
@@ -1372,14 +1382,26 @@ const callOpenRouterJson = async <T,>(
             : gateway.model,
         messages: toOpenRouterMessages(systemInstruction, history, userContent, mediaPart),
         temperature: role === "draft" ? 0.85 : 0.35,
-        max_tokens: gateway.provider === 'bai' ? 2048 : 1400,
+        max_tokens: gateway.provider === 'bai'
+            ? role === 'review' ? 900 : role === 'strategy' ? 1_200 : 1_400
+            : 1_400,
     };
     const deepSeekV4 = /deepseek-v4/i.test(String(gateway.model || ''));
     if (deepSeekV4) {
-        const criticalTurn = role !== 'draft'
-            || /\b(pix|pagar|pagamento|pre[cç]o|valor|caro|desconto|comprar|comprovante|contradi|reclam|n[aã]o quero)\b/i.test(userContent);
-        body.reasoning_effort = role === 'evaluator' ? 'max' : criticalTurn ? 'high' : 'low';
-        body.thinking = { type: 'enabled' };
+        const criticalTurn = /\b(pix|pagar|pagamento|pre[cç]o|valor|caro|desconto|comprar|comprovante|contradi|reclam|n[aã]o quero|generate_pix_payment|check_payment_status|send_(?:custom_)?preview|send_voice_reply|payment_details|preview_id)\b/i.test(userContent);
+        if (role === 'evaluator') {
+            body.reasoning_effort = 'max';
+            body.thinking = { type: 'enabled' };
+        } else if (role === 'strategy' || criticalTurn) {
+            // Low e raciocinio real do V4. Medium/high mapeiam ambos para high
+            // e estavam levando conversas simples a 20-40 segundos.
+            body.reasoning_effort = 'low';
+            body.thinking = { type: 'enabled' };
+        } else {
+            // Redacao e revisao cotidiana precisam de naturalidade e velocidade,
+            // nao de uma cadeia longa de raciocinio invisivel.
+            body.thinking = { type: 'disabled' };
+        }
     }
     if (gateway.provider === 'openrouter') {
         body.provider = { allow_fallbacks: true, require_parameters: true };
@@ -1585,27 +1607,10 @@ const callAiGatewayJson = async <T,>(options: {
                         policy.timeoutMs,
                     );
                 } catch (initialError: any) {
-                    const isTimeout = /timeout|timed out|abort|excedeu/i.test(initialError?.message || String(initialError));
-                    const isRetryable = gateway.provider === 'bai' || isTimeout;
-                    if (isRetryable) {
-                        const retryTimeoutMs = isTimeout ? Math.min(25_000, policy.timeoutMs + 4_000) : policy.timeoutMs;
-                        console.warn(`[AI Gateway] ${gateway.label} sofreu ${isTimeout ? 'timeout' : 'falha inicial'} (${initialError?.message || initialError}); executando 1 retry com timeout ${retryTimeoutMs}ms...`);
-                        await sleep(500);
-                        result = await callOpenRouterJson<T>(
-                            options.settings,
-                            gateway,
-                            options.role,
-                            `${options.systemInstruction}${buildJsonReminder(options.schemaName, options.responseSchemaConfig)}`,
-                            openRouterHistory,
-                            options.text,
-                            options.schemaName,
-                            options.responseSchemaConfig,
-                            options.mediaPart,
-                            retryTimeoutMs,
-                        );
-                    } else {
-                        throw initialError;
-                    }
+                    // O gateway externo ja tem fallback, circuit breaker e
+                    // idempotencia. Repetir o mesmo provider dobrava a latencia
+                    // (20s + 24s) antes de tentar a proxima rota.
+                    throw initialError;
                 }
                 const resolvedGateway = {
                     ...gateway,
@@ -2067,56 +2072,54 @@ ${purchaseHistoryText}
             let reviewResultInfo: any = null;
             let evaluatorResultInfo: any = null;
             const useSeparateStrategyCall = aiSettings.aiStrategyEnabled && orchestration.separateStrategy;
-
-            if (!useSeparateStrategyCall) {
-                strategyStatus = 'integrado na chamada unica';
-            } else {
-            try {
-                const strategyStartTime = Date.now();
-                const strategyPrompt = buildLariStrategyPrompt(baseInstruction);
-
-                const strategyResult = await callAiGatewayJson<any>({
-                    settings: aiSettings,
-                    role: "strategy",
-                    orchestrationTier: orchestration.tier,
-                    routingKey: sessionId,
-                    schemaName: "centralBrainSchema",
-                    systemInstruction: strategyPrompt,
-                    responseSchemaConfig: centralBrainSchema as any,
-                    history: cleanHistory,
-                    text: `Analise este lead e gere o plano completo do proximo turno.\n\nMENSAGEM ATUAL:\n${userMessage}`,
-                    mediaPart: media ? currentMessageParts[1] : undefined,
-                });
-                strategy = strategyResult.data;
-                strategyStatus = `cerebro via ${strategyResult.gateway.label}`;
-                strategyResultInfo = {
-                    name: "Cérebro Estratégico",
-                    role: "strategy",
-                    model: strategyResult.gateway.model,
-                    provider: strategyResult.gateway.provider,
-                    duration_ms: Date.now() - strategyStartTime,
-                    prompt: strategyPrompt,
-                    user_prompt: `Analise este lead e gere o plano completo do proximo turno.\n\nMENSAGEM ATUAL:\n${userMessage}`,
-                    gateway_attempts: strategyResult.attempts,
-                    output: strategyResult.data,
-                };
-            } catch (strategyError: any) {
-                console.warn("Cérebro central falhou, usando fallback local:", strategyError?.message || strategyError);
-            }
-
-            console.log("🧠 Cérebro Central Lari:", JSON.stringify(strategy));
-
-            }
+            const strategyPrompt = buildLariStrategyPrompt(baseInstruction);
+            const strategyUserPrompt = `Analise este lead e gere um plano curto e executavel do proximo turno.\n\nMENSAGEM ATUAL:\n${userMessage}`;
+            const strategyStartTime = Date.now();
+            const strategyCallPromise: Promise<any> = useSeparateStrategyCall
+                ? (async () => {
+                    try {
+                        const strategyResult = await callAiGatewayJson<any>({
+                            settings: aiSettings,
+                            role: "strategy",
+                            orchestrationTier: orchestration.tier,
+                            routingKey: sessionId,
+                            schemaName: "centralBrainSchema",
+                            systemInstruction: strategyPrompt,
+                            responseSchemaConfig: centralBrainSchema as any,
+                            history: cleanHistory,
+                            text: strategyUserPrompt,
+                            mediaPart: media ? currentMessageParts[1] : undefined,
+                        });
+                        return {
+                            strategy: strategyResult.data,
+                            status: `cerebro paralelo via ${strategyResult.gateway.label}`,
+                            info: {
+                                name: "Cérebro Estratégico",
+                                role: "strategy",
+                                model: strategyResult.gateway.model,
+                                provider: strategyResult.gateway.provider,
+                                duration_ms: Date.now() - strategyStartTime,
+                                prompt: strategyPrompt,
+                                user_prompt: strategyUserPrompt,
+                                gateway_attempts: strategyResult.attempts,
+                                output: strategyResult.data,
+                            },
+                        };
+                    } catch (strategyError: any) {
+                        console.warn("Cérebro central falhou, usando fallback local:", strategyError?.message || strategyError);
+                        return null;
+                    }
+                })()
+                : Promise.resolve(null);
 
             const draftPrompt = buildLariDraftPrompt(baseInstruction);
 
             const draftParts: any[] = [{
                 text: `${userMessage}
 
-[PLANO DO CEREBRO CENTRAL]
-${JSON.stringify(strategy)}
-
-Use essa estrategia para responder.`
+[MODO REDATORA INDEPENDENTE]
+Crie agora a melhor resposta candidata usando a mensagem, o historico, a memoria e as ferramentas reais do backend.
+O cerebro estrategico esta trabalhando em paralelo e a revisora reconciliara as duas leituras. Nao espere nem invente o plano dele.`
             }];
             if (media) draftParts.push(currentMessageParts[1]);
             let mediaRecoveryUsed = false;
@@ -2163,6 +2166,14 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                     text: textOnlyRecoveryPrompt,
                 });
             }
+            const strategyOutcome = await strategyCallPromise;
+            if (strategyOutcome?.strategy && typeof strategyOutcome.strategy === 'object') {
+                strategy = strategyOutcome.strategy;
+                strategyStatus = strategyOutcome.status;
+                strategyResultInfo = strategyOutcome.info;
+            }
+            console.log("🧠 Cérebro Central Lari:", JSON.stringify(strategy));
+
             const responseText = JSON.stringify(draftResult.data);
 
             draftResultInfo = {
@@ -2270,15 +2281,18 @@ Revise e corrija se necessario.`
             // vazio, o turno acabava caindo num fallback generico no backend.
             if (reviewedMessages.length > 0) {
                 jsonResponse.messages = reviewedMessages;
-            }
-
-            if (review && review.approved === false) {
-                jsonResponse.action = review.action || jsonResponse.action;
-                if (typeof review.current_state === 'string') {
-                    jsonResponse.current_state = review.current_state || jsonResponse.current_state;
+                if (REVIEW_ACTIONS.has(String(review?.action || ''))) {
+                    jsonResponse.action = review.action;
                 }
-                jsonResponse.preview_id = review.preview_id ?? jsonResponse.preview_id;
-                jsonResponse.payment_details = review.payment_details ?? jsonResponse.payment_details;
+                if (REVIEW_STATES.has(String(review?.current_state || ''))) {
+                    jsonResponse.current_state = review.current_state;
+                }
+                if (Object.prototype.hasOwnProperty.call(review || {}, 'preview_id')) {
+                    jsonResponse.preview_id = review.preview_id ?? null;
+                }
+                if (Object.prototype.hasOwnProperty.call(review || {}, 'payment_details')) {
+                    jsonResponse.payment_details = review.payment_details ?? null;
+                }
             }
 
             let evaluator: any = { approved: true, score: null, issues: [], messages: [] };
@@ -2334,14 +2348,18 @@ Faca a avaliacao final.`
                         : [];
                     if (evaluatedMessages.length > 0) {
                         jsonResponse.messages = evaluatedMessages;
-                    }
-                    if (evaluator?.approved === false) {
-                        jsonResponse.action = evaluator.action || jsonResponse.action;
-                        if (typeof evaluator.current_state === 'string') {
-                            jsonResponse.current_state = evaluator.current_state || jsonResponse.current_state;
+                        if (REVIEW_ACTIONS.has(String(evaluator?.action || ''))) {
+                            jsonResponse.action = evaluator.action;
                         }
-                        jsonResponse.preview_id = evaluator.preview_id ?? jsonResponse.preview_id;
-                        jsonResponse.payment_details = evaluator.payment_details ?? jsonResponse.payment_details;
+                        if (REVIEW_STATES.has(String(evaluator?.current_state || ''))) {
+                            jsonResponse.current_state = evaluator.current_state;
+                        }
+                        if (Object.prototype.hasOwnProperty.call(evaluator || {}, 'preview_id')) {
+                            jsonResponse.preview_id = evaluator.preview_id ?? null;
+                        }
+                        if (Object.prototype.hasOwnProperty.call(evaluator || {}, 'payment_details')) {
+                            jsonResponse.payment_details = evaluator.payment_details ?? null;
+                        }
                     }
                 } catch (evaluatorError: any) {
                     evaluatorStatus = 'falhou; resposta revisada preservada';

@@ -50,6 +50,9 @@ assert.match(checkout.customRequestBrief, /calcinha/i);
 
 const route = fs.readFileSync(path.join(root, 'src/app/api/process-message/route.ts'), 'utf8');
 const gateway = fs.readFileSync(path.join(root, 'src/lib/gemini.ts'), 'utf8');
+const gatewayRouter = fs.readFileSync(path.join(root, 'src/lib/aiGatewayRouter.ts'), 'utf8');
+const prompts = fs.readFileSync(path.join(root, 'src/lib/lariConversationPrompts.ts'), 'utf8');
+const types = fs.readFileSync(path.join(root, 'src/types.ts'), 'utf8');
 const migration = fs.readFileSync(path.join(root, 'custom_orders_migration.sql'), 'utf8');
 assert.match(route, /recordCustomOrderSafe/);
 assert.match(route, /sendMessageToGemini\(session\.id, finalUserMessage/);
@@ -57,6 +60,13 @@ assert.doesNotMatch(route, /Primeiro contato via \/start: usando saudação inic
 assert.match(route, /const isActualFirstRelationshipTurn = !lastBotMsg/);
 assert.match(gateway, /if \(reviewedMessages\.length > 0\)/);
 assert.doesNotMatch(gateway, /review\.approved === false && reviewedMessages\.length/);
+assert.match(gateway, /strategyCallPromise/);
+assert.match(gateway, /thinking = \{ type: 'disabled' \}/);
+assert.doesNotMatch(gateway, /const isRetryable = gateway\.provider === 'bai'/);
+assert.match(gatewayRouter, /timeoutMs: 10_000/);
+assert.match(route, /aiSelectedVoice = aiResponse\.action === 'send_voice_reply'/);
+assert.match(prompts, /FERRAMENTAS REAIS DO BACKEND/);
+assert.match(types, /"send_voice_reply"/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS custom_orders/i);
 assert.ok(fs.existsSync(path.join(root, 'src/app/admin/orders/page.tsx')));
 

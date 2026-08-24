@@ -606,6 +606,7 @@ const ACTION_STAGE_MAP: Record<string, string> = {
     send_video_preview: 'PREVIEW',
     send_hot_video_preview: 'PREVIEW',
     send_custom_preview: 'PREVIEW',
+    send_voice_reply: 'CONNECTION',
     generate_pix_payment: 'PAYMENT_CHECK',
     check_payment_status: 'PAYMENT_CHECK'
 };
@@ -2239,6 +2240,11 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             .maybeSingle()
         : { data: null };
     const userWantsAudio = userAskedForAudio(userOnlyText);
+    const aiSelectedVoice = aiResponse.action === 'send_voice_reply';
+    const shouldForceVoice = (userWantsAudio || aiSelectedVoice)
+        && fishAudioSettings.enabled
+        && Boolean(fishAudioSettings.apiKey)
+        && Boolean(fishAudioSettings.voiceId);
     let preferredAudioIndex = outgoingToSend.findIndex((message: string) =>
         shouldUseFishAudio({
             settings: fishAudioSettings,
@@ -2247,12 +2253,15 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             messageText: message,
             stage,
             action: String(aiResponse.action || 'none'),
-            hasRecentAudio: userWantsAudio ? false : Boolean(recentAudio),
+            hasRecentAudio: shouldForceVoice ? false : Boolean(recentAudio),
         })
     );
+    if (shouldForceVoice && preferredAudioIndex < 0 && outgoingToSend.length > 0) {
+        preferredAudioIndex = 0;
+    }
 
     let audioSpokenText = '';
-    if (userWantsAudio && fishAudioSettings.enabled && fishAudioSettings.apiKey && fishAudioSettings.voiceId) {
+    if (shouldForceVoice) {
         const combined = outgoingToSend.join('. ');
         if (combined.length >= 8 && !isUnsafeForVoice(combined)) {
             outgoingToSend = [combined];

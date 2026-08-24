@@ -6,7 +6,7 @@ const MEDIA_ACTIONS = new Set([
 ]);
 const EXPLICIT_MEDIA_ACTIONS = new Set(['send_hot_video_preview', 'send_wet_finger_photo', 'send_ass_photo_preview']);
 const VALID_ACTIONS = new Set([
-    'none', ...MEDIA_ACTIONS, 'generate_pix_payment', 'check_payment_status', 'request_app_install',
+    'none', ...MEDIA_ACTIONS, 'send_voice_reply', 'generate_pix_payment', 'check_payment_status',
 ]);
 
 const normalize = (value: unknown) => String(value || '')
