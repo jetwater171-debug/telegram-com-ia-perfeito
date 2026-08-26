@@ -1430,8 +1430,8 @@ ${latestUserText || combinedText}
 Responda primeiro e diretamente a ULTIMA MENSAGEM. Ela substitui pedido, hipotese ou assunto anterior quando houver correcao, objecao ou mudanca de intencao.
 Use o bloco anterior apenas como contexto; nunca deixe a ultima pergunta sem resposta.
 IDIOMA DO TURNO: ${conversationLanguage === 'en' ? 'English' : conversationLanguage === 'es' ? 'Español' : 'Português do Brasil'}. Responda somente nesse idioma, salvo se o lead pedir outro.
-Em conversa normal, prefira 1 balao curto; use 2 apenas quando a segunda ideia realmente precisar de outra mensagem.
-Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2 em negociacao ou fantasia adulta explicita ja estabelecida.`;
+Use de 2 a 4 baloes curtos. Em conversa normal, responda e depois conduza o assunto em 2 ou 3 baloes; nunca deixe o lead carregar a conversa sozinho.
+Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fantasia adulta reciproca, use 3 ou 4 para fazer a cena ou a decisao avancar.`;
     let mediaData = undefined;
 
     // Detectar Audio
@@ -1568,7 +1568,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead repetiu a mesma mensagem ${repetition.repeats}x ("${repetition.last}"). Responda diferente, quebre o loop e puxe o assunto com algo novo e humano. Nao repita a mesma frase.]`;
     }
     if (hasExplicitSexualFantasyTrigger(userOnlyText)) {
-        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead abriu putaria explicita. Antes de vender ou perguntar outra coisa, responda ao mesmo tema e preserve os papeis da cena. Use 1-2 baloes por padrao e no maximo 4 se a fantasia ja estiver estabelecida. So puxe previa ou oferta quando houver uma ponte real.]`;
+        finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead abriu putaria explicita. Responda ao mesmo tema, preserve os papeis da cena e conduza ativamente. Se o clima for reciproco, use 3-4 baloes curtos para situar, desenvolver e fazer o lead se imaginar na fantasia. So puxe previa ou oferta quando houver uma ponte real.]`;
     }
     if (cityQuestion && hasCity) {
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o lead perguntou onde voce mora. Voce mora na MESMA cidade do lead: "${userCity}". Responda no PRIMEIRO BALAO de forma humana, curta e natural: "sou de ${userCity}, e vc?". NAO diga "cidade vizinha", NAO diga "daqui" e NAO responda seco.]`;
@@ -2229,15 +2229,25 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));
     // Em turno de mídia, nenhum texto que prometa "olha" ou "te mandei" sai
     // antes do arquivo. A reação só é enviada depois da entrega confirmada.
-    const deferredMediaMessages = isMediaDeliveryTurn ? safeMessages.slice(0, 1) : [];
+    // Em mídia, o primeiro balão vira a legenda contextual da própria foto ou
+    // vídeo. Os demais continuam a conversa depois da entrega, sem repetir a
+    // legenda como uma nova mensagem solta.
+    const previewCaptionCandidate = isMediaDeliveryTurn
+        ? sanitizeOutgoingMessage(safeMessages[0] || '', latestUserText).slice(0, 85)
+        : '';
+    const deferredMediaMessages = isMediaDeliveryTurn ? safeMessages.slice(1, 4) : [];
     let outgoingToSend = isMediaDeliveryTurn
         ? []
         : safeMessages.slice(0, 4);
     let operationalLeadMemory = updatedLeadMemory;
     const persistMediaDeliveryStatus = async (
         status: 'delivered' | 'recovered' | 'failed',
-        details: { mediaType?: string; mediaUrl?: string; protected?: boolean } = {},
+        details: { mediaType?: string; mediaUrl?: string; protected?: boolean; caption?: string } = {},
     ) => {
+        const caption = sanitizeOutgoingMessage(details.caption || '', latestUserText).slice(0, 85);
+        const previousCaptionHistory = Array.isArray(operationalLeadMemory.metadata?.preview_caption_history)
+            ? operationalLeadMemory.metadata.preview_caption_history.map(String).filter(Boolean)
+            : [];
         operationalLeadMemory = {
             ...operationalLeadMemory,
             metadata: {
@@ -2248,6 +2258,10 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                 last_media_url: details.mediaUrl || null,
                 last_media_protected: details.protected === true,
                 last_media_at: new Date().toISOString(),
+                ...(caption ? {
+                    last_preview_caption: caption,
+                    preview_caption_history: [...previousCaptionHistory, caption].slice(-20),
+                } : {}),
             },
             updated_at: new Date().toISOString(),
         };
@@ -3020,25 +3034,31 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                 asset: any = selectedPreviewAsset,
             ) => {
                 const isVideo = type === 'video';
+                const recentCaptions = Array.isArray(operationalLeadMemory.metadata?.preview_caption_history)
+                    ? operationalLeadMemory.metadata.preview_caption_history.map(String).filter(Boolean)
+                    : [];
+                const generatedCaption = previewCaptionCandidate || buildDeliveredPreviewCaption({
+                    asset,
+                    userText: userOnlyText,
+                    timeZone: String(operationalLeadMemory.metadata?.redirect_timezone || ''),
+                    recentCaptions,
+                    variationKey: `${session.id}:${triggerMessageId || lastGroupedUserAt}`,
+                });
+                const caption = sanitizeOutgoingMessage(generatedCaption, latestUserText).slice(0, 85);
                 if (isVideo) {
                     await sendTelegramAction(botToken, chatId, 'upload_video');
                     const heartbeat = setInterval(() => {
                         void sendTelegramAction(botToken, chatId, 'upload_video');
                     }, 4_000);
                     try {
-                        await sendTelegramVideo(botToken, chatId, url, '', protection);
+                        await sendTelegramVideo(botToken, chatId, url, caption, protection);
                     } finally {
                         clearInterval(heartbeat);
                     }
-                    return;
+                    return caption;
                 }
 
                 const timeZone = String(operationalLeadMemory.metadata?.redirect_timezone || '');
-                const deliveredCaption = buildDeliveredPreviewCaption({
-                    asset,
-                    userText: userOnlyText,
-                    timeZone,
-                });
                 const isTakenNow = isPhotoTakenNow({
                     asset,
                     timeZone,
@@ -3055,11 +3075,11 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                     void sendTelegramAction(botToken, chatId, 'upload_photo');
                 }, 4_000);
                 try {
-                    await sendTelegramPhoto(botToken, chatId, url, deliveredCaption, protection);
+                    await sendTelegramPhoto(botToken, chatId, url, caption, protection);
                 } finally {
                     clearInterval(heartbeat);
                 }
-                return;
+                return caption;
             };
 
             const { data: recentMediaRows } = await supabase
@@ -3092,11 +3112,12 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
 
             let deliveredUrl = String(mediaUrl);
             let deliveredType = String(mediaType || '');
+            let deliveredCaption = '';
             const deliveryErrors: string[] = [];
             let deliveryRecovered = false;
 
             try {
-                await sendResolvedMedia(deliveredType, deliveredUrl, mediaProtection, selectedPreviewAsset);
+                deliveredCaption = await sendResolvedMedia(deliveredType, deliveredUrl, mediaProtection, selectedPreviewAsset);
             } catch (primaryError: any) {
                 deliveryErrors.push(`principal ${deliveredType}:${deliveredUrl} -> ${primaryError?.message || primaryError}`);
                 console.error('[MÍDIA] Ativo principal falhou, tentando fallback:', primaryError);
@@ -3128,7 +3149,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                 let recovered = false;
                 for (const candidate of fallbackCandidates) {
                     try {
-                        await sendResolvedMedia(candidate.type, candidate.url, candidate.protection, candidate.asset);
+                        deliveredCaption = await sendResolvedMedia(candidate.type, candidate.url, candidate.protection, candidate.asset);
                         deliveredUrl = candidate.url;
                         deliveredType = candidate.type;
                         mediaProtection = candidate.protection;
@@ -3161,9 +3182,9 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
             await insertGeneratedMessage({
                 session_id: session.id,
                 sender: 'bot',
-                content: mediaProtection.protectContent
+                content: deliveredCaption || (mediaProtection.protectContent
                     ? `[MÍDIA PROTEGIDA: ${aiResponse.action}]`
-                    : `[MÍDIA: ${aiResponse.action}]`,
+                    : `[MÍDIA: ${aiResponse.action}]`),
                 media_url: deliveredUrl,
                 media_type: deliveredType
             });
@@ -3171,6 +3192,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                 mediaType: deliveredType,
                 mediaUrl: deliveredUrl,
                 protected: mediaProtection.protectContent === true,
+                caption: deliveredCaption,
             });
             await appendLeadEventSafe({
                 sessionId: String(session.id),
@@ -3184,6 +3206,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                     protected: mediaProtection.protectContent === true,
                     recovered: deliveryRecovered,
                     requested_by_lead: userAskedMedia || userAffirmedMedia,
+                    caption: deliveredCaption || null,
                 },
             });
             const previousSentPreviewIds = brainRuntime.reality.media.sentPreviewIds || [];
