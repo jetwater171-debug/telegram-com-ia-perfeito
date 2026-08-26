@@ -10,6 +10,8 @@ import {
     DEFAULT_GROQ_STARTER_MODEL,
     DEFAULT_OPENROUTER_MODEL,
     GEMINI_MODEL_OPTIONS,
+    isBaiVisionModel,
+    normalizeBaiModelName,
     normalizeGeminiModelName,
     normalizeGroqModelName,
     normalizeOpenRouterPrimaryModel,
@@ -881,7 +883,10 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>): AiGatewayC
         }
     };
 
-    const baiModel = configured('bai_model', 'BAI_MODEL', DEFAULT_BAI_MODEL);
+    // Converte automaticamente o V4 Flash textual salvo no painel para a nova
+    // rota multimodal escolhida. Assim um setting antigo nao impede o deploy de
+    // realmente trocar o modelo em producao.
+    const baiModel = normalizeBaiModelName(configured('bai_model', 'BAI_MODEL', DEFAULT_BAI_MODEL));
     addProvider({
         provider: 'bai',
         apiKey: configured('bai_api_key', 'BAI_API_KEY'),
@@ -1509,13 +1514,16 @@ const callAiGatewayJson = async <T,>(options: {
 }): Promise<{ data: T; gateway: AiGatewayConfig; attempts: string[] }> => {
     const mediaMimeType = String(options.mediaPart?.inlineData?.mimeType || '').trim();
     const hasMedia = Boolean(mediaMimeType);
-    const providerOnly = hasMedia ? 'gemini' : options.providerOnly;
+    const hasImage = mediaMimeType.startsWith('image/');
+    // Audio/video continuam no Gemini. Imagem usa primeiro o DeepSeek Vision
+    // da B.AI e conserva o Gemini como fallback multimodal independente.
+    const providerOnly = hasMedia && !hasImage ? 'gemini' : options.providerOnly;
     const gateways = getTierAwareGatewayOrder({
         role: options.role,
         settings: options.settings,
         tier: options.orchestrationTier,
         routingKey: options.routingKey,
-        preferGemini: hasMedia,
+        preferGemini: hasMedia && !hasImage,
     })
         .filter((gateway) => !providerOnly || gateway.provider === providerOnly);
     const attempts: string[] = [];
@@ -1583,7 +1591,8 @@ const callAiGatewayJson = async <T,>(options: {
             if (gateway.provider !== "gemini") {
                 if (options.mediaPart) {
                     const mimeType = String(options.mediaPart?.inlineData?.mimeType || '');
-                    if (!mimeType.startsWith('image/')) {
+                    const acceptsImage = gateway.provider === 'bai' && isBaiVisionModel(gateway.model);
+                    if (!mimeType.startsWith('image/') || !acceptsImage) {
                         const message = `${gateway.label} pulado: midia nao suportada neste provider`;
                         attempts.push(message);
                         lease.cancelBeforeDispatch();
@@ -2276,11 +2285,14 @@ Revise e corrija se necessario.`
                 ? normalizeAiMessageList(review.messages)
                 : [];
 
-            // A revisora e a ultima autoridade textual do pipeline. Ela sempre
-            // devolve a resposta completa, inclusive quando aprova o rascunho.
-            // Antes, mensagens aprovadas eram descartadas; se o draft viesse
-            // vazio, o turno acabava caindo num fallback generico no backend.
-            if (reviewedMessages.length > 0) {
+            // As tres camadas continuam ativas, mas uma aprovacao nao pode
+            // degradar silenciosamente um rascunho especifico em fala generica.
+            // A revisora so substitui quando reprova/corrige ou quando o draft
+            // realmente veio vazio.
+            const reviewIssues = Array.isArray(review?.issues) ? review.issues.filter(Boolean) : [];
+            const reviewShouldReplace = reviewedMessages.length > 0
+                && (jsonResponse.messages.length === 0 || review?.approved === false || reviewIssues.length > 0);
+            if (reviewShouldReplace) {
                 jsonResponse.messages = reviewedMessages;
                 if (REVIEW_ACTIONS.has(String(review?.action || ''))) {
                     jsonResponse.action = review.action;
@@ -2347,7 +2359,10 @@ Faca a avaliacao final.`
                     const evaluatedMessages = Array.isArray(evaluator?.messages)
                         ? normalizeAiMessageList(evaluator.messages)
                         : [];
-                    if (evaluatedMessages.length > 0) {
+                    const evaluatorIssues = Array.isArray(evaluator?.issues) ? evaluator.issues.filter(Boolean) : [];
+                    const evaluatorShouldReplace = evaluatedMessages.length > 0
+                        && (jsonResponse.messages.length === 0 || evaluator?.approved === false || evaluatorIssues.length > 0);
+                    if (evaluatorShouldReplace) {
                         jsonResponse.messages = evaluatedMessages;
                         if (REVIEW_ACTIONS.has(String(evaluator?.action || ''))) {
                             jsonResponse.action = evaluator.action;

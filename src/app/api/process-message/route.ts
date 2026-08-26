@@ -38,6 +38,7 @@ import {
     userAskedForAudio,
 } from '@/lib/fishAudio';
 import { prepareFishAudioScript } from '@/lib/fishAudioScriptAgent';
+import { normalizeBaiModelName } from '@/lib/aiModels';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
 import { buildDeliveredPreviewCaption, isPhotoTakenNow, rankPreviewCandidatesByMoment } from '@/lib/previewMoment';
@@ -860,7 +861,7 @@ export async function POST(req: NextRequest) {
     const mem0UserId = mem0LeadUserId(chatId);
     const fishAudioScriptAgentSettings = {
         apiKey: botConfig.bai_api_key || process.env.BAI_API_KEY || '',
-        model: botConfig.bai_model || process.env.BAI_MODEL || 'deepseek-v4-flash',
+        model: normalizeBaiModelName(botConfig.bai_model || process.env.BAI_MODEL),
         baseUrl: process.env.BAI_BASE_URL || 'https://api.b.ai/v1',
         timeoutMs: 8_000,
     };

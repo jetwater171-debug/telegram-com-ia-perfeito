@@ -38,7 +38,7 @@ type RouterSnapshot = { key: string; inFlight: number; minuteRequests: number; m
 
 const PROVIDER_ORDER: ProviderKey[] = ["bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"];
 const PROVIDER_INFO: Record<ProviderKey, { label: string; short: string; description: string; keyUrl: string; keyLabel: string; color: string }> = {
-    bai: { label: "B.AI · DeepSeek V4 Flash", short: "Principal de texto · 0 créditos agora", description: "Usa DeepSeek V4 Flash nas conversas de texto. Foto e outras mídias pulam esta rota e caem no Gemini.", keyUrl: "https://chat.b.ai/chat", keyLabel: "Abrir B.AI e gerar chave", color: "from-emerald-400 to-cyan-300" },
+    bai: { label: "B.AI · DeepSeek V4 Flash Vision", short: "Principal multimodal · 0 créditos agora", description: "Usa DeepSeek V4 Flash Vision no texto e nas fotos. Gemini continua como fallback de visão e para outras mídias.", keyUrl: "https://chat.b.ai/chat", keyLabel: "Abrir B.AI e gerar chave", color: "from-emerald-400 to-cyan-300" },
     gemini: { label: "Google Gemini", short: "Visão + fallback", description: "Analisa fotos e outras mídias dos leads e assume o texto se a B.AI estiver indisponível.", keyUrl: "https://aistudio.google.com/apikey", keyLabel: "Pegar chave no Google AI Studio", color: "from-blue-400 to-cyan-300" },
     groq: { label: "Groq", short: "Muito rápido", description: "Absorve conversas de texto com baixa latência e reduz a carga do Gemini.", keyUrl: "https://console.groq.com/keys", keyLabel: "Pegar chave na Groq", color: "from-orange-400 to-amber-300" },
     nvidia: { label: "NVIDIA NIM", short: "Modelos hospedados", description: "Rota oficial NVIDIA com modelos rápidos para distribuir as conversas e aliviar os provedores principais.", keyUrl: "https://build.nvidia.com/settings/api-keys", keyLabel: "Pegar chave na NVIDIA", color: "from-lime-400 to-green-300" },
@@ -94,7 +94,7 @@ const providerSecretMeta = (settings: AiSettings, provider: ProviderKey) => {
 };
 
 const providerModelMeta = (settings: AiSettings, provider: ProviderKey) => {
-    if (provider === "bai") return { field: "baiModel", value: settings.baiModel, label: "Modelo de texto" };
+    if (provider === "bai") return { field: "baiModel", value: settings.baiModel, label: "Modelo principal multimodal" };
     if (provider === "gemini") return { field: "geminiDraftModel", value: settings.geminiDraftModel, label: "Modelo da Lari" };
     if (provider === "groq") return { field: "groqStarterModel", value: settings.groqStarterModel, label: "Modelo econômico" };
     if (provider === "nvidia") return { field: "nvidiaModel", value: settings.nvidiaModel, label: "Modelo" };

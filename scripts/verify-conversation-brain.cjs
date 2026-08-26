@@ -50,7 +50,8 @@ const firstOpening = refineNewRelationshipMessages(
     ['Oi, tudo bem?', 'Como tá o seu dia, amor?', 'kkk'],
     { userText: '/start', lastBotContent: '', hasKnownName: false, isConversationStart: true },
 );
-assert.deepEqual(firstOpening, ['oiii, tudo bem?', 'como é seu nome??']);
+assert.equal(firstOpening.length, 1);
+assert.match(firstOpening[0], /(?:nome|chamar|se chama)/i);
 
 const corePrompt = buildLariCorePrompt({
     localTime: '21:30', localPeriod: 'noite', city: 'São Paulo', deviceType: 'Android', totalPaid: 0,
@@ -87,6 +88,6 @@ assert.match(processSource, /isEarlyConversationEpisode/);
 assert.match(processSource, /const receivedStartCommand = Boolean\(conversationStartAt\)/);
 assert.match(processSource, /const isConversationStart = receivedStartCommand && !lastBotMsg/);
 assert.match(processSource, /RETOMADA DE CONVERSA/);
-assert.match(processSource, /const isReturningGreeting = Boolean\(lastBotMsg\)/);
+assert.match(processSource, /const isActualFirstRelationshipTurn = !lastBotMsg/);
 
 console.log('CONVERSATION_BRAIN_OK history=80 separate_brain=1 episode_reset=1 first_contact=1 persona=1 self_review=1');

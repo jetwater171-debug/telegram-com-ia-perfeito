@@ -1,4 +1,5 @@
 import { buildExpressiveSpeech, cleanTextForSpeech } from '@/lib/fishAudio';
+import { DEFAULT_BAI_MODEL, normalizeBaiModelName } from '@/lib/aiModels';
 
 export type FishAudioScriptAgentSettings = {
     apiKey: string;
@@ -110,7 +111,7 @@ export const prepareFishAudioScript = async ({
     if (!apiKey || !fallback.spokenText) return fallback;
 
     const baseUrl = String(settings.baseUrl || 'https://api.b.ai/v1').replace(/\/$/, '');
-    const model = String(settings.model || 'deepseek-v4-flash').trim() || 'deepseek-v4-flash';
+    const model = normalizeBaiModelName(settings.model || DEFAULT_BAI_MODEL);
     const systemPrompt = `Você é o DIRETOR DE VOZ DA LARI, especialista no Fish Audio S2.1 Pro.
 
 Sua função não é conversar com o lead. Sua única função é transformar uma mensagem já aprovada em roteiro de TTS.

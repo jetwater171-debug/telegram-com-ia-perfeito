@@ -9,6 +9,7 @@ import {
     DEFAULT_OPENROUTER_MODEL,
     normalizeGeminiModelName,
     normalizeGroqModelName,
+    normalizeBaiModelName,
     normalizeOpenRouterPrimaryModel,
 } from "@/lib/aiModels";
 import { DEFAULT_FISH_AUDIO_SETTINGS, normalizeFishAudioModel } from "@/lib/fishAudio";
@@ -139,7 +140,7 @@ const buildSettings = (map: Record<string, string>) => {
         customModel: map.ai_custom_gateway_model || process.env.AI_CUSTOM_DRAFT_MODEL || "auto",
         customTiers: map.ai_custom_gateway_tiers || process.env.AI_CUSTOM_GATEWAY_TIERS || "starter,buyer",
         customWeight: Number(map.ai_custom_gateway_weight || process.env.AI_CUSTOM_GATEWAY_WEIGHT || 5),
-        baiModel: map.bai_model || DEFAULTS.bai_model,
+        baiModel: normalizeBaiModelName(map.bai_model || DEFAULTS.bai_model),
         groqModel: normalizeGroqModelName(map.groq_model, DEFAULTS.groq_model),
         groqStarterModel: normalizeGroqModelName(map.groq_starter_model, DEFAULTS.groq_starter_model),
         nvidiaModel: map.nvidia_model || DEFAULTS.nvidia_model,
@@ -191,7 +192,7 @@ export async function POST(req: NextRequest) {
         const body = await req.json();
         const providerOrder = normalizeProviderOrder(body.aiModelOrder || body.aiDraftModelOrder);
         const rows: { key: string; value: string }[] = [
-            { key: "bai_model", value: cleanText(body.baiModel, DEFAULTS.bai_model) },
+            { key: "bai_model", value: normalizeBaiModelName(cleanText(body.baiModel, DEFAULTS.bai_model)) },
             { key: "openrouter_base_url", value: cleanText(body.openrouterBaseUrl, DEFAULTS.openrouter_base_url) },
             { key: "openrouter_referer", value: cleanText(body.openrouterReferer, DEFAULTS.openrouter_referer) },
             { key: "openrouter_title", value: cleanText(body.openrouterTitle, DEFAULTS.openrouter_title) },

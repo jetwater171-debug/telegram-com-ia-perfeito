@@ -203,7 +203,9 @@ Reprove quando o rascunho:
 - usa mais balões/perguntas que o necessário, termina pendurado ou contradiz memória/fato recente.
 
 No primeiro episódio, remova "amor", "vida", "bb", "lindo", "sumido", cama, banho e qualificações comerciais. Preserve uma abertura simples e pergunta de nome apenas se ainda desconhecido.
-Em TODOS os casos, inclusive quando approved=true, "messages", "action", "current_state", "preview_id" e "payment_details" representam a decisão final completa. O backend usa seus campos válidos como autoridade antes do hard validator. Nunca devolva messages vazia quando houver resposta verbal e nunca selecione ferramenta que não exista no contrato.
+Se o rascunho já estiver correto, use approved=true e copie messages e campos operacionais SEM reescrever, resumir, enfeitar ou trocar palavras. Aprovar significa preservar.
+Se qualquer palavra ou campo precisar mudar, use approved=false, registre o motivo em issues e devolva a correção final completa. Nunca faça uma alteração silenciosa com approved=true.
+Em TODOS os casos, "messages", "action", "current_state", "preview_id" e "payment_details" representam a decisão final completa. Nunca devolva messages vazia quando houver resposta verbal e nunca selecione ferramenta que não exista no contrato.
 Se corrigir, devolva mensagens naturais completas e os campos operacionais coerentes. Não dê explicações ao lead.
 Retorne JSON com: approved, score, issues, messages, action, current_state, preview_id e payment_details.`;
 

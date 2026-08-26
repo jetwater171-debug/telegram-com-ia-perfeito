@@ -16,7 +16,12 @@ const compile = (relativePath, customRequire = require) => {
 };
 
 const fish = compile('../src/lib/fishAudio.ts');
-const agent = compile('../src/lib/fishAudioScriptAgent.ts', (id) => id === '@/lib/fishAudio' ? fish : require(id));
+const aiModels = compile('../src/lib/aiModels.ts');
+const agent = compile('../src/lib/fishAudioScriptAgent.ts', (id) => {
+    if (id === '@/lib/fishAudio') return fish;
+    if (id === '@/lib/aiModels') return aiModels;
+    return require(id);
+});
 
 const createOggPage = (payload, sequence, headerType = 0) => {
     const lacing = [];
@@ -70,7 +75,7 @@ const fakeDeepSeek = async (url, init) => {
     assert.equal(script.spokenText, 'Você me deixa doida. Tô aqui pensando em você.');
     assert.doesNotMatch(script.fishText, /kkkk|\brs\b/i);
     assert.match(script.fishText, /^\[soft voice, playful, natural, unhurried\] \[giggle\]/);
-    assert.equal(deepSeekCalls[0].body.model, 'deepseek-v4-flash');
+    assert.equal(deepSeekCalls[0].body.model, 'deepseek-v4-flash-vision-exp');
     assert.equal(deepSeekCalls[0].body.max_tokens, 450);
 
     const invented = await agent.prepareFishAudioScript({
