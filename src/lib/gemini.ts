@@ -2160,8 +2160,8 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
             jsonResponse.decision_confidence = Math.max(0, Math.min(1, Number(jsonResponse.decision_confidence ?? strategy?.confidence ?? 0.5)));
             jsonResponse.memory_updates = Array.isArray(jsonResponse.memory_updates) ? jsonResponse.memory_updates.slice(0, 12) : [];
             jsonResponse.offer_id = jsonResponse.offer_id ?? null;
-            jsonResponse.recommended_message_count = Math.max(1, Math.min(4, Number(jsonResponse.messages?.length || strategy?.recommended_message_count || 2)));
-            jsonResponse.max_chars_per_message = Math.max(55, Math.min(110, Number(Math.max(0, ...(jsonResponse.messages || []).map((message) => String(message || '').length)) || strategy?.max_chars_per_message || 90)));
+            jsonResponse.recommended_message_count = Math.max(2, Math.min(4, Number(jsonResponse.messages?.length || strategy?.recommended_message_count || 2)));
+            jsonResponse.max_chars_per_message = Math.max(45, Math.min(85, Number(Math.max(0, ...(jsonResponse.messages || []).map((message) => String(message || '').length)) || strategy?.max_chars_per_message || 75)));
             strategy = {
                 ...strategy,
                 intent: jsonResponse.lead_classification || strategy?.intent || 'conversa',

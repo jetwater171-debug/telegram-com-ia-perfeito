@@ -110,19 +110,19 @@ const humanTextDelayMs = (text: string, bubbleIndex: number) => {
     const length = raw.length;
     const wordCount = raw.split(/\s+/).filter(Boolean).length;
 
-    // Digitação ágil e natural no celular: ~25ms por letra + ~60ms por palavra
-    const typingTimeMs = (length * 25) + (wordCount * 60) + randomBetween(150, 450);
+    // Digitação ágil e natural no celular, sem disparar todos os balões juntos.
+    const typingTimeMs = (length * 22) + (wordCount * 45) + randomBetween(120, 320);
 
     if (bubbleIndex === 0) {
         // Primeiro balão: a chamada de IA já funciona como a pausa de leitura.
         // Digitação rápida para responder quase de imediato.
-        return Math.min(2_500, Math.max(500, typingTimeMs));
+        return Math.min(1_900, Math.max(350, typingTimeMs));
     }
 
     // Balões seguintes: intervalo curto e natural entre mensagens digitadas em sequência
-    const gapBetweenBubblesMs = 400 + randomBetween(100, 300);
+    const gapBetweenBubblesMs = randomBetween(650, 1_100);
     const total = gapBetweenBubblesMs + typingTimeMs;
-    return Math.min(2_800, Math.max(700, total));
+    return Math.min(3_200, Math.max(950, total));
 };
 
 const humanAudioRecordingDelayMs = (text: string) => {
@@ -262,7 +262,7 @@ const fixGluedWords = (text: string) => {
     }).join('');
 };
 
-const sanitizeOutgoingMessage = (text: unknown) => {
+const sanitizeOutgoingMessage = (text: unknown, currentUserText = '') => {
     let out = extractAiMessageText(text);
     out = out.replace(/\beu\s+sou\s+a\s+lari\b/gi, 'eu sou lari');
     out = out.replace(/\beu\s+sou\s+a\s+larissa\b/gi, 'eu sou larissa');
@@ -285,8 +285,15 @@ const sanitizeOutgoingMessage = (text: unknown) => {
     out = out.replace(/\b(?:um\s+)?carinho\s+virtual\b/gi, 'um carinho bem gostoso');
     out = out.replace(/\b(?:apoio|presen[cç]a|mundo)\s+virtual\b/gi, 'meu carinho');
     out = out.replace(/([a-záéíóúâêôãõç])((?:kkk|rsrs)+)\b/gi, '$1 $2');
+    // A interface da Lari é texto puro: sem emojis nem suspense por reticências.
+    out = out.replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\u200D]/gu, '');
+    out = out.replace(/(?:\.{3,}|…+)/gu, '');
+    const mirroredContigo = out.match(/^\s*quero\s+(.+?)\s+contigo\s*[?!.]*\s*$/i);
+    if (mirroredContigo && /^\s*quero\s+.+?\s+contigo\s*[?!.]*\s*$/i.test(String(currentUserText || ''))) {
+        out = `quer ${mirroredContigo[1].trim()} comigo?`;
+    }
     out = out.replace(/\s+/g, ' ');
-    out = out.replace(/\s*(?:\.{3,}|…)\s*$/u, '');
+    out = out.replace(/\s+([,.!?])/g, '$1').trim();
     out = fixGluedWords(out);
     return out;
 };
@@ -2131,7 +2138,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
             recentUserTexts,
         },
     )
-        .map((m) => sanitizeOutgoingMessage(m))
+        .map((m) => sanitizeOutgoingMessage(m, latestUserText))
         .filter(Boolean);
 
     const lastBotContent = lastBotMsg?.content || '';
@@ -2148,6 +2155,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
         latestUserText,
         language: conversationLanguage,
     });
+    safeMessages = safeMessages.map((message) => sanitizeOutgoingMessage(message, latestUserText)).filter(Boolean);
     const relationshipStageBeforeTurn = String(leadMemory.relationship_stage || 'new').trim().toLowerCase();
     const episodeStartedAtMs = Date.parse(String(leadMemory.metadata?.conversation_started_at || ''));
     const episodeLeadTurns = Number.isFinite(episodeStartedAtMs)
@@ -2191,17 +2199,17 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
     const stage = String(aiResponse.current_state || '').toUpperCase();
     const explicitFantasy = hasExplicitSexualFantasyTrigger(userOnlyText);
     const maxMessagesForTurn = (() => {
-        if (isEarlyConversationEpisode) return 1;
         if (stage === 'PAYMENT_CHECK' || aiResponse.action === 'generate_pix_payment') return 2;
-        if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 2;
-        if (explicitFantasy) return 2;
-        return 1;
+        if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 3;
+        if (explicitFantasy) return Math.min(4, Math.max(3, Number(aiResponse.recommended_message_count || 3)));
+        if (isEarlyConversationEpisode) return 2;
+        return Math.min(3, Math.max(2, Number(aiResponse.recommended_message_count || 2)));
     })();
 
     safeMessages = shapeConversationBubbles(safeMessages, {
-        preferredCount: aiResponse.recommended_message_count || 1,
+        preferredCount: aiResponse.recommended_message_count || 2,
         maxBubbles: maxMessagesForTurn,
-        maxChars: aiResponse.max_chars_per_message || 100,
+        maxChars: aiResponse.max_chars_per_message || 75,
     });
 
     safeMessages = filterConversationConsistencyMessages(safeMessages, {
@@ -2213,6 +2221,10 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
     if (safeMessages.length === 0 && !MEDIA_ACTIONS.has(String(aiResponse.action || 'none'))) {
         safeMessages = buildRecoveryMessages();
     }
+    safeMessages = safeMessages
+        .map((message) => sanitizeOutgoingMessage(message, latestUserText))
+        .filter(Boolean)
+        .slice(0, 4);
 
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));
     // Em turno de mídia, nenhum texto que prometa "olha" ou "te mandei" sai
@@ -2220,7 +2232,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
     const deferredMediaMessages = isMediaDeliveryTurn ? safeMessages.slice(0, 1) : [];
     let outgoingToSend = isMediaDeliveryTurn
         ? []
-        : safeMessages.slice(0, 2);
+        : safeMessages.slice(0, 4);
     let operationalLeadMemory = updatedLeadMemory;
     const persistMediaDeliveryStatus = async (
         status: 'delivered' | 'recovered' | 'failed',
@@ -2405,7 +2417,10 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
         }
 
         const modelDurationMs = Number(aiResponse.ai_debug?.duration_ms || 0);
-        await waitWithChatAction('typing', modelDurationMs >= 8_000 ? 150 : humanTextDelayMs(msgText, i));
+        const messageDelayMs = i === 0 && modelDurationMs >= 8_000
+            ? 150
+            : humanTextDelayMs(msgText, i);
+        await waitWithChatAction('typing', messageDelayMs);
         const interruptedDuringTyping = await findNewerUserMessage();
         if (interruptedDuringTyping) {
             console.log(`[PROCESSADOR] Texto cancelado porque o lead enviou uma mensagem nova: ${interruptedDuringTyping.id}`);
@@ -2628,7 +2643,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                         const storedPaid = lastPayMsg.payment_data?.paid === true || isPaymentPaidPayload(lastPayMsg.payment_data);
 
                         if (!paymentId) {
-                            await sendTelegramMessage(botToken, chatId, "amor nao achei o codigo da transação aqui... manda o comprovante?");
+                            await sendTelegramMessage(botToken, chatId, "amor nao achei o codigo da transação aqui, manda o comprovante?");
                             break;
                         }
 
@@ -2673,7 +2688,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                                 chatId,
                                 isSocialMeetupPayment
                                     ? 'pagamento confirmado, agora vamos alinhar e confirmar os detalhes do nosso encontro'
-                                    : 'confirmado amor! obrigada... vou te mandar agora',
+                                    : 'confirmado amor! obrigada, vou te mandar agora',
                             );
 
                             // Forçar IA a saber que pagou na proxima iteração se necessário, 
@@ -2789,7 +2804,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                                     last_status_payload: statusData
                                 }
                             }).eq('id', lastPayMsg.id);
-                            await sendTelegramMessage(botToken, chatId, "amor ainda não caiu aqui... tem certeza? (Status: " + status + ")");
+                            await sendTelegramMessage(botToken, chatId, "amor ainda não caiu aqui, tem certeza? (Status: " + status + ")");
                         }
 
                     } else {
@@ -2854,7 +2869,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                     }
 
                     if (sameValue && sameProduct && sameGateway && notPaid && lastPixCode) {
-                        await sendTelegramMessage(botToken, chatId, "ta aqui o pix de novo amor 👇");
+                        await sendTelegramMessage(botToken, chatId, "ta aqui o pix de novo amor");
                         await sendTelegramCopyableCode(botToken, chatId, lastPixCode);
 
                         await supabase.from('messages').insert({
@@ -2908,7 +2923,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                     });
 
                     if (payment && payment.pixCopiaCola) {
-                        await sendTelegramMessage(botToken, chatId, "ta aqui o pix amor 👇");
+                        await sendTelegramMessage(botToken, chatId, "ta aqui o pix amor");
                         if (payment.gateway === 'pushinpay') {
                             await sendTelegramMessage(botToken, chatId, "aviso rapidinho: a PushinPay so processa o pagamento, a entrega e suporte continuam comigo.");
                         }
@@ -2966,7 +2981,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                             payment: { pendingPaymentId: String(payment.paymentId) },
                         });
                     } else {
-                        await sendTelegramMessage(botToken, chatId, "amor o sistema caiu aqui rapidinho... tenta daqui a pouco?");
+                        await sendTelegramMessage(botToken, chatId, "amor o sistema caiu aqui rapidinho, tenta daqui a pouco?");
                     }
                 } catch (err: any) {
                     console.error("Erro Pagamento:", err);
@@ -2977,7 +2992,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
                         content: `[DEBUG] Erro Gateway PIX: ${err.message || JSON.stringify(err)}`
                     });
 
-                    await sendTelegramMessage(botToken, chatId, "amor nao consegui gerar o pix agora... que raiva");
+                    await sendTelegramMessage(botToken, chatId, "amor nao consegui gerar o pix agora, que raiva");
                 }
                 break;
             }
