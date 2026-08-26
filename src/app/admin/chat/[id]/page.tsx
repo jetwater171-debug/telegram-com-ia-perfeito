@@ -23,6 +23,14 @@ interface MediaPreview {
     label: string;
 }
 
+interface ChatPagePayload {
+    session?: any;
+    messages: Message[];
+    hasMore: boolean;
+    leadOrigin?: any;
+    latestFunnelStep?: string | null;
+}
+
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
 const mergeMessages = (current: Message[], incoming: Message[]) => {
@@ -32,6 +40,34 @@ const mergeMessages = (current: Message[], incoming: Message[]) => {
         const time = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
         return time || a.id.localeCompare(b.id);
     });
+};
+
+const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+const fetchChatPage = async (
+    telegramChatId: string,
+    params: Record<string, string> = {},
+): Promise<ChatPagePayload> => {
+    const query = new URLSearchParams(params);
+    const suffix = query.size ? `?${query.toString()}` : "";
+    const url = `/api/admin/chat/${encodeURIComponent(telegramChatId)}${suffix}`;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+            const response = await fetch(url, { cache: "no-store" });
+            const payload = await response.json().catch(() => ({}));
+            if (response.status === 401) throw new Error("Sua sessão do painel expirou. Entre novamente.");
+            if (response.status === 404) throw new Error("Conversa não encontrada.");
+            if (!response.ok) throw new Error("Falha ao carregar a conversa.");
+            return payload as ChatPagePayload;
+        } catch (error: any) {
+            lastError = error instanceof Error ? error : new Error("Falha ao carregar a conversa.");
+            if (attempt === 0) await wait(350);
+        }
+    }
+
+    throw lastError || new Error("Falha ao carregar a conversa.");
 };
 
 export default function AdminChatPage() {
@@ -58,11 +94,17 @@ export default function AdminChatPage() {
     const [reengaging, setReengaging] = useState(false);
     const [scoreLoading, setScoreLoading] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
+    const [syncing, setSyncing] = useState(false);
+    const [loadingOlder, setLoadingOlder] = useState(false);
+    const [hasOlderMessages, setHasOlderMessages] = useState(false);
     const [lastSync, setLastSync] = useState<Date | null>(null);
     const [mediaPreview, setMediaPreview] = useState<MediaPreview | null>(null);
     const messagesViewportRef = useRef<HTMLElement>(null);
     const didInitialScroll = useRef(false);
     const autoFollowRef = useRef(true);
+    const syncInFlightRef = useRef(false);
+    const latestMessageAtRef = useRef("");
 
     const visibleMessages = useMemo(() => {
         return messages.filter((msg) => {
@@ -79,26 +121,28 @@ export default function AdminChatPage() {
         (async () => {
             if (!telegramChatId) return;
             setLoading(true);
+            setLoadError("");
             setMessages([]);
             didInitialScroll.current = false;
             autoFollowRef.current = true;
-            const { data } = await supabase
-                .from("sessions")
-                .select("*")
-                .eq("telegram_chat_id", telegramChatId)
-                .single();
-
-            if (!active || !data) {
-                setLoading(false);
-                return;
+            latestMessageAtRef.current = "";
+            try {
+                const snapshot = await fetchChatPage(telegramChatId, { limit: "160" });
+                if (!active) return;
+                if (!snapshot.session) throw new Error("Conversa não encontrada.");
+                setSession(snapshot.session);
+                setLeadOrigin(snapshot.leadOrigin || null);
+                setLatestFunnelStep(snapshot.latestFunnelStep || null);
+                setMessages(snapshot.messages || []);
+                setHasOlderMessages(Boolean(snapshot.hasMore));
+                latestMessageAtRef.current = snapshot.messages?.at(-1)?.created_at || "";
+                setLastSync(new Date());
+                cleanup = subscribe(snapshot.session.id);
+            } catch (error: any) {
+                if (active) setLoadError(error?.message || "Não foi possível carregar esta conversa.");
+            } finally {
+                if (active) setLoading(false);
             }
-
-            setSession(data);
-            cleanup = subscribe(data.id);
-            await loadLeadOrigin(data);
-            await loadLatestFunnel(data.id, data.funnel_step);
-            await loadMessages(data.id);
-            setLoading(false);
         })();
 
         return () => {
@@ -108,10 +152,10 @@ export default function AdminChatPage() {
     }, [telegramChatId]);
 
     useEffect(() => {
-        if (!session?.id) return;
-        const timer = window.setInterval(() => loadMessages(session.id), 5000);
+        if (!session?.id || !telegramChatId) return;
+        const timer = window.setInterval(() => syncLatestMessages(), 8000);
         return () => window.clearInterval(timer);
-    }, [session?.id]);
+    }, [session?.id, telegramChatId]);
 
     useEffect(() => {
         const timer = window.setInterval(() => setTypingClock(Date.now()), 5000);
@@ -127,66 +171,69 @@ export default function AdminChatPage() {
         if (autoFollowRef.current) window.requestAnimationFrame(() => scrollToBottom(behavior));
     }, [visibleMessages.length, visibleMessages[visibleMessages.length - 1]?.id]);
 
-    const loadLatestFunnel = async (sessionId: string, currentStep?: string) => {
-        if (currentStep) {
-            setLatestFunnelStep(null);
-            return;
-        }
-        const { data } = await supabase
-            .from("funnel_events")
-            .select("step, created_at")
-            .eq("session_id", sessionId)
-            .order("created_at", { ascending: false })
-            .limit(1);
-        setLatestFunnelStep(data?.[0]?.step || null);
-    };
-
-    const loadMessages = async (sessionId: string) => {
-        const { data, error } = await supabase
-            .from("messages")
-            .select("*")
-            .eq("session_id", sessionId)
-            .order("created_at", { ascending: false })
-            .limit(600);
-        if (error) {
-            setActionMsg("Falha momentânea ao sincronizar. Tentando novamente...");
-            return;
-        }
-        if (data) {
-            const latest = (data as Message[]).reverse();
-            setMessages((current) => mergeMessages(current, latest));
+    const syncLatestMessages = async (showBusy = false) => {
+        if (!telegramChatId || syncInFlightRef.current) return;
+        syncInFlightRef.current = true;
+        if (showBusy) setSyncing(true);
+        try {
+            const params: Record<string, string> = { limit: "120" };
+            if (latestMessageAtRef.current) params.after = latestMessageAtRef.current;
+            const page = await fetchChatPage(telegramChatId, params);
+            if (page.messages?.length) {
+                setMessages((current) => mergeMessages(current, page.messages));
+                latestMessageAtRef.current = page.messages.at(-1)?.created_at || latestMessageAtRef.current;
+            }
             setLastSync(new Date());
+            setLoadError("");
             setActionMsg((current) => current.startsWith("Falha momentânea") ? "" : current);
+        } catch {
+            setActionMsg("Falha momentânea ao sincronizar. Use Sincronizar para tentar novamente.");
+        } finally {
+            syncInFlightRef.current = false;
+            if (showBusy) setSyncing(false);
         }
     };
 
-    const loadLeadOrigin = async (currentSession: any) => {
-        if (!currentSession?.id && !currentSession?.telegram_chat_id) return;
-
-        let row: any = null;
-        if (currentSession.telegram_chat_id) {
-            const { data } = await supabase
-                .from("lead_redirects")
-                .select("*")
-                .eq("telegram_chat_id", currentSession.telegram_chat_id)
-                .order("created_at", { ascending: false })
-                .limit(1)
-                .maybeSingle();
-            row = data;
+    const loadOlderMessages = async () => {
+        if (!telegramChatId || loadingOlder || messages.length === 0) return;
+        const viewport = messagesViewportRef.current;
+        const previousHeight = viewport?.scrollHeight || 0;
+        setLoadingOlder(true);
+        autoFollowRef.current = false;
+        try {
+            const page = await fetchChatPage(telegramChatId, { limit: "160", before: messages[0].created_at });
+            setMessages((current) => mergeMessages(current, page.messages || []));
+            setHasOlderMessages(Boolean(page.hasMore));
+            window.requestAnimationFrame(() => {
+                if (viewport) viewport.scrollTop += viewport.scrollHeight - previousHeight;
+            });
+        } catch (error: any) {
+            setActionMsg(error?.message || "Não foi possível carregar as mensagens anteriores.");
+        } finally {
+            setLoadingOlder(false);
         }
+    };
 
-        if (!row && currentSession.id) {
-            const { data } = await supabase
-                .from("lead_redirects")
-                .select("*")
-                .eq("session_id", currentSession.id)
-                .order("created_at", { ascending: false })
-                .limit(1)
-                .maybeSingle();
-            row = data;
+    const openPromptInspector = async (targetMsg: Message, debug?: AiDebugData | null) => {
+        setSelectedInspectorMessage({
+            debugData: debug || targetMsg.ai_debug || null,
+            createdAt: targetMsg.created_at,
+            thoughtContent: targetMsg.sender === "thought" ? targetMsg.content : undefined,
+        });
+        if (debug || targetMsg.ai_debug || !telegramChatId) return;
+        try {
+            const query = new URLSearchParams({ debug: targetMsg.id });
+            const response = await fetch(`/api/admin/chat/${encodeURIComponent(telegramChatId)}?${query}`, { cache: "no-store" });
+            if (!response.ok) throw new Error("debug_unavailable");
+            const result = await response.json();
+            setSelectedInspectorMessage({
+                debugData: result.aiDebug || null,
+                createdAt: targetMsg.created_at,
+                thoughtContent: result.thoughtContent || (targetMsg.sender === "thought" ? targetMsg.content : undefined),
+            });
+        } catch {
+            setActionMsg("Os dados avançados deste turno não estão disponíveis.");
         }
-
-        setLeadOrigin(row);
     };
 
     const subscribe = (sessionId: string) => {
@@ -205,6 +252,8 @@ export default function AdminChatPage() {
                 setMessages((prev) => {
                     return mergeMessages(prev, [payload.new as Message]);
                 });
+                const incomingCreatedAt = String((payload.new as Message)?.created_at || "");
+                if (incomingCreatedAt > latestMessageAtRef.current) latestMessageAtRef.current = incomingCreatedAt;
                 setLastSync(new Date());
             })
             .on("postgres_changes", {
@@ -292,7 +341,7 @@ export default function AdminChatPage() {
             });
             const data = await res.json();
             setActionMsg(data?.message || (data?.ok ? "Lead chamado!" : "Falha ao chamar"));
-            if (session?.id) await loadMessages(session.id);
+            await syncLatestMessages(true);
         } catch (e: any) {
             setActionMsg(e?.message || "Erro ao chamar lead");
         } finally {
@@ -382,10 +431,11 @@ export default function AdminChatPage() {
                                 ⚡ Visão Avançada
                             </SegmentButton>
                             <button
-                                onClick={() => session?.id && loadMessages(session.id)}
+                                onClick={() => syncLatestMessages(true)}
+                                disabled={syncing}
                                 className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-cyan-300/40"
                             >
-                                Sincronizar
+                                {syncing ? "Sincronizando..." : "Sincronizar"}
                             </button>
                             <button
                                 onClick={callSingleLead}
@@ -428,6 +478,32 @@ export default function AdminChatPage() {
                     <div className="mx-auto flex w-full max-w-4xl flex-col gap-3">
                         {loading && <div className="p-10 text-center text-slate-500">Carregando conversa...</div>}
 
+                        {!loading && loadError && (
+                            <div className="mx-auto my-10 max-w-md rounded-lg border border-amber-300/25 bg-amber-300/10 p-5 text-center">
+                                <p className="text-sm text-amber-100">{loadError}</p>
+                                <button
+                                    type="button"
+                                    onClick={() => window.location.reload()}
+                                    className="mt-3 rounded-lg border border-amber-200/30 bg-amber-200/10 px-3 py-2 text-xs font-semibold text-amber-50"
+                                >
+                                    Tentar novamente
+                                </button>
+                            </div>
+                        )}
+
+                        {!loading && !loadError && hasOlderMessages && (
+                            <div className="flex justify-center pb-2">
+                                <button
+                                    type="button"
+                                    onClick={loadOlderMessages}
+                                    disabled={loadingOlder}
+                                    className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-cyan-300/40 disabled:opacity-50"
+                                >
+                                    {loadingOlder ? "Carregando..." : "Carregar mensagens anteriores"}
+                                </button>
+                            </div>
+                        )}
+
                         {visibleMessages.map((msg, index) => {
                             const previous = visibleMessages[index - 1];
                             const showDate = !previous || !isSameDay(previous.created_at, msg.created_at);
@@ -447,19 +523,13 @@ export default function AdminChatPage() {
                                         onOpenMedia={setMediaPreview}
                                         showAdvancedView={showAdvancedView}
                                         associatedDebug={associatedDebug}
-                                        onInspectPrompt={(targetMsg, debug) => {
-                                            setSelectedInspectorMessage({
-                                                debugData: debug || targetMsg.ai_debug || null,
-                                                createdAt: targetMsg.created_at,
-                                                thoughtContent: targetMsg.sender === "thought" ? targetMsg.content : undefined,
-                                            });
-                                        }}
+                                        onInspectPrompt={openPromptInspector}
                                     />
                                 </React.Fragment>
                             );
                         })}
 
-                        {!loading && visibleMessages.length === 0 && (
+                        {!loading && !loadError && visibleMessages.length === 0 && (
                             <div className="p-10 text-center text-slate-500">Nenhuma mensagem visivel nesta conversa.</div>
                         )}
 
@@ -635,7 +705,7 @@ function MessageBubble({
                                         : "border border-amber-300/30 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20"}`}
                                     title="Inspecionar prompt completo e resposta bruta da IA"
                                 >
-                                    <span>⚡ {message.ai_debug ? "Ver Prompt & JSON" : "Inspecionar"}</span>
+                                    <span>⚡ {message.ai_debug ? "Ver Prompt & JSON" : "Carregar Prompt & JSON"}</span>
                                     {message.ai_debug?.model && <span className="opacity-75">· {message.ai_debug.model}</span>}
                                     {message.ai_debug?.duration_ms ? <span className="text-emerald-300">· {message.ai_debug.duration_ms}ms</span> : null}
                                 </button>
@@ -685,7 +755,7 @@ function MessageBubble({
                             className="flex items-center gap-1.5 rounded-md border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-200 transition hover:border-cyan-400/60 hover:bg-cyan-400/20"
                             title="Inspecionar o prompt completo e a resposta da IA para esta mensagem"
                         >
-                            <span>⚡ {effectiveDebug ? "Ver Prompt & Resposta IA" : "Sem dados deste turno"}</span>
+                            <span>⚡ {effectiveDebug ? "Ver Prompt & Resposta IA" : "Carregar Prompt & Resposta IA"}</span>
                             {effectiveDebug?.model && <span className="opacity-75">· {effectiveDebug.model}</span>}
                             {effectiveDebug?.duration_ms ? <span className="text-emerald-300">· {effectiveDebug.duration_ms}ms</span> : null}
                         </button>

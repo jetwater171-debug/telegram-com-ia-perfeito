@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS messages (
     ai_debug JSONB -- Stores full prompt, raw response and model telemetry for advanced inspector
 );
 
+CREATE INDEX IF NOT EXISTS idx_messages_session_created_at
+ON messages (session_id, created_at DESC);
+
 -- Create bot_settings table (for dynamic token)
 CREATE TABLE IF NOT EXISTS bot_settings (
     key TEXT PRIMARY KEY,
@@ -100,6 +103,9 @@ CREATE TABLE IF NOT EXISTS funnel_events (
     source TEXT DEFAULT 'ai',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_funnel_events_session_created_at
+ON funnel_events (session_id, created_at DESC);
 
 -- Index para reengajamento
 CREATE INDEX IF NOT EXISTS idx_sessions_reengagement ON sessions (last_bot_activity_at) WHERE reengagement_sent = FALSE;
