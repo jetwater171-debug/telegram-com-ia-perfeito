@@ -23,6 +23,8 @@ export type Mem0LeadMemory = {
 
 type FetchLike = typeof fetch;
 
+let mem0QuotaCooldownUntil = 0;
+
 const cleanText = (value: unknown, maxLength = 2_000) => String(value || '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -58,6 +60,9 @@ const mem0Request = async <T>({
     fetcher?: FetchLike;
 }): Promise<T> => {
     if (!settings.apiKey) throw new Error('MEM0_API_KEY não configurada');
+    if (mem0QuotaCooldownUntil > Date.now()) {
+        throw new Error('Mem0 temporariamente em cooldown de quota; usando memória local');
+    }
 
     const response = await fetcher(`${MEM0_API_BASE_URL}${path}`, {
         method: 'POST',
@@ -77,6 +82,11 @@ const mem0Request = async <T>({
     }
     if (!response.ok) {
         const message = cleanText(data?.detail || data?.message || data?.error || data?.raw || `HTTP ${response.status}`, 500);
+        if ([402, 429].includes(response.status)) {
+            // Nao repete duas chamadas sabidamente impossiveis (busca + escrita)
+            // no mesmo turno. A memoria estruturada local segue autoritativa.
+            mem0QuotaCooldownUntil = Date.now() + 60 * 60_000;
+        }
         throw new Error(`Mem0 ${response.status}: ${message}`);
     }
     return data as T;

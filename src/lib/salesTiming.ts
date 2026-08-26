@@ -70,7 +70,9 @@ const isRecent = (value: unknown, maxAgeMs: number, now: Date) => {
 const isDirectCheckoutRequest = (text: string) => {
     const value = normalize(text);
     return /^(pix|chave pix|codigo pix)$/i.test(value)
+        || /\b(?:qual|cad[eê]|kd|onde esta|onde ta|me da|me passa)\b.{0,20}\b(?:o )?(?:pix|chave pix|codigo pix|copia e cola)\b/i.test(value)
         || /\b(?:manda|mande|gera|gere|passa|envia|manda ai|manda aí|mande ai)\b.{0,24}\b(?:pix|chave|codigo|link)\b/i.test(value)
+        || /\b(?:pix|chave pix|codigo pix|copia e cola)\b.{0,20}\b(?:manda|passa|envia|agora)\b/i.test(value)
         || /\b(?:quero|vou|posso|ja quero|já quero)\s+pagar\b/i.test(value)
         || /\bcomo\s+(?:eu\s+)?pago\b/i.test(value)
         || /\b(?:pode|ja pode|pode ja)\s+(?:gerar|cobrar|mandar o pix|passar o pix)\b/i.test(value)
@@ -366,13 +368,22 @@ export const evaluateSalesTiming = ({
     const recentOfferDetails = findRecentOffer(recentMessages, now, activeProduct);
     const recentOffer = Boolean(recentOfferDetails);
     const acceptedOffer = isOfferAcceptance(userText);
+    const latestBotMessage = recentMessages
+        .filter((message) => String(message.sender || '') === 'bot' && message.created_at)
+        .sort((left, right) => Date.parse(String(right.created_at)) - Date.parse(String(left.created_at)))[0];
+    const latestBotText = String(latestBotMessage?.content || '');
+    const acceptanceAnswersCurrentOffer = acceptedOffer
+        && Boolean(latestBotText)
+        && (isCheckoutMessage(latestBotText)
+            || isPricePitchMessage(latestBotText)
+            || (detectPaidProduct(latestBotText) === activeProduct && extractOfferValue(latestBotText) !== null));
     const salesContextActive = Boolean(detectedProduct || engagedContinuation || directCheckout || askedPrice || acceptedOffer || recentOffer);
     const canPitchPrice = true;
     const explicitBudget = extractExplicitBudget(userText);
     const fixedVipBudgetGap = activeProduct === 'vip'
         && explicitBudget !== null
         && explicitBudget < VIP_PRICE;
-    const canGeneratePayment = (directCheckout || acceptedOffer) && !fixedVipBudgetGap;
+    const canGeneratePayment = (directCheckout || acceptanceAnswersCurrentOffer) && !fixedVipBudgetGap;
     const offerPlan = createOfferPlan({
         product: activeProduct,
         explicitBudget,

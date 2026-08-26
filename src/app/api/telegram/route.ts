@@ -199,7 +199,18 @@ export async function POST(req: NextRequest) {
                     user_city: null,
                     device_type: "Unknown",
                     user_name: senderName,
-                    status: 'active'
+                    status: 'active',
+                    // O Telegram e aberto somente depois do presell +18. O
+                    // payload profundo melhora atribuicao, mas nao e requisito
+                    // para preservar a verificacao ja feita na admissao.
+                    lead_memory: {
+                        metadata: {
+                            adult_verified: true,
+                            adult_verification_source: 'presell_admission',
+                            adult_verified_at: new Date().toISOString(),
+                        },
+                        updated_at: new Date().toISOString(),
+                    },
                 }])
                 .select()
                 .single();

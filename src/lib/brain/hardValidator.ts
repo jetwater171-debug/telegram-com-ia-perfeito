@@ -65,7 +65,15 @@ const sanitizeMemoryUpdates = (response: MasterBrainResponse, userText: string) 
             confidence = Math.min(confidence, 0.65);
         }
         return { kind, key, content, confidence, importance: clamp01(item?.importance, 0.5), status };
-    }).filter((item) => item.key && item.content) as MasterBrainResponse['memory_updates'];
+    }).filter((item) => {
+        if (!item.key || !item.content) return false;
+
+        // Entregas, cobrancas e pagamentos pertencem ao Event Store do backend.
+        // O modelo pode propor a acao, mas nunca registrar que ela aconteceu.
+        const operationalClaim = normalize(`${item.key} ${item.content}`);
+        if (item.kind === 'outcome') return false;
+        return !/\b(preview|foto|video|midia|pix|pagamento|cobranca)\b.{0,32}\b(enviad|entreg|gerad|criad|confirmad|pago|sucesso)|\b(enviad|entreg|gerad|criad|confirmad|pago)\b.{0,32}\b(preview|foto|video|midia|pix|pagamento|cobranca)\b/i.test(operationalClaim);
+    }) as MasterBrainResponse['memory_updates'];
 };
 
 export const validateMasterBrainResponse = ({

@@ -1334,7 +1334,11 @@ export async function POST(req: NextRequest) {
         userText: userOnlyText,
         recentMessages: recentSalesHistory,
     });
-    const verifiedByPresell = Boolean(leadMemory.metadata?.redirect_code)
+    // O bot e a etapa posterior do presell. Portanto, uma sessao admitida pelo
+    // webhook do Telegram ja cumpriu o gate +18, mesmo quando o Telegram remove
+    // ou nao devolve o payload profundo do /start.
+    const verifiedByPresell = Boolean(session.telegram_chat_id)
+        || Boolean(leadMemory.metadata?.redirect_code)
         || (leadMemory.metadata?.adult_verified === true
             && leadMemory.metadata?.adult_verification_source === 'presell_redirect');
     if (verifiedByPresell && !brainRuntime.reality.adultVerified) {
@@ -1621,10 +1625,30 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
             userText: userOnlyText,
         });
     }
-    const userAffirmedMedia = /\b(sim|quero|quero ver|sim eu quero|manda|manda aí|manda ai|mostra|deixa ver|pode mandar|manda sim|solta|quero sim|claro|com certeza|bora|pode ser|kd|cade|cadê)\b/i.test(userOnlyText)
+    const backendMustGeneratePayment = salesTiming.canGeneratePayment
+        && Boolean(salesTiming.offerPlan)
+        && (salesTiming.directCheckout || salesTiming.acceptedOffer);
+    if (backendMustGeneratePayment && aiResponse.action !== 'check_payment_status') {
+        aiResponse.action = 'generate_pix_payment';
+        aiResponse.current_state = 'CLOSING';
+        aiResponse.next_best_action = 'GENERATE_PAYMENT';
+        aiResponse.payment_details = salesTiming.offerPlan ? {
+            value: salesTiming.offerPlan.value,
+            description: salesTiming.offerPlan.description,
+        } : aiResponse.payment_details;
+    }
+    const recentConversationWindow = recentSalesHistory.slice(0, 10);
+    const userReportsMissingMedia = /\b(?:vc|voce|você)?\s*(?:nao|não)\s+(?:mandou|enviou)\s+(?:nada|a foto|o video|o vídeo)|\b(?:nao|não)\s+(?:chegou|veio)|\bcad[eê]\s+(?:a foto|o video|o vídeo|ela)\b/i.test(userOnlyText);
+    const recentMediaOpenLoop = recentConversationWindow.some((msg: any) => {
+        const content = String(msg.content || '');
+        return msg.sender === 'bot'
+            ? /\b(ver|v[eê]|foto|fotinha|fotos|video|vídeo|previa|prévia|olhar|mostrar|assim|esperando|toma|mandar|envio|separei)\b/i.test(content)
+            : /\b(foto|fotinha|fotos|video|vídeo|previa|prévia|nude|nudes|me mostra|quero ver|manda o que|manda oq)\b/i.test(content);
+    });
+    const userAffirmedMedia = /\b(sim|quero|quero ver|sim eu quero|manda|mandar|manda aí|manda ai|mostra|deixa ver|pode mandar|manda sim|solta|quero sim|claro|com certeza|bora|pode ser|kd|cade|cadê|agora vai)\b/i.test(userOnlyText)
         && (
-            /\b(ver|foto|fotinha|fotos|video|vídeo|previa|prévia|olhar|mostrar|assim|esperando|toma)\b/i.test(lastBotMsg?.content || '')
-            || recentSalesHistory.slice(-4).some((msg: any) => msg.sender === 'user' && /\b(foto|fotinha|fotos|video|vídeo|previa|prévia|nude|nudes)\b/i.test(msg.content || ''))
+            /\b(ver|v[eê]|foto|fotinha|fotos|video|vídeo|previa|prévia|olhar|mostrar|assim|esperando|toma|mandar|separei)\b/i.test(lastBotMsg?.content || '')
+            || recentMediaOpenLoop
         );
 
     const userMediaKind = classifyRequestedMediaLocally(userOnlyText);
@@ -1634,7 +1658,8 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
         || userAffirmedMedia
         || /\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|video|vídeo|previa|prévia)\b/i.test(userOnlyText)
         || /\b(manda|mostra|envia|quero ver|deixa ver|solta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo|uma)\b/i.test(userOnlyText)
-        || /\b(quero te ver|qualquer foto|manda qualquer|me mostra vc|me mostra você|kd a foto|kd|cadê a foto|cade a foto)\b/i.test(userOnlyText);
+        || /\b(quero te ver|qualquer foto|manda qualquer|manda (?:o que|oq) (?:vc|voce|você)?\s*(?:tem)?|me mostra vc|me mostra você|kd a foto|kd|cadê a foto|cade a foto)\b/i.test(userOnlyText)
+        || userReportsMissingMedia;
 
     const botMessagesPromiseMedia = (Array.isArray(aiResponse.messages) ? aiResponse.messages : []).some((msg: string) =>
         /\b(toma|olha só|olha so|olha essa|como eu t[oô]|te esperando|aqui pra vc|te mandei|olha a fotinha|olha aqui|olha amor|olha como|separei pra vc|olha o look|olha meu look|olha eu|tirando foto|tirei essa|tirei agora|fotinha pra vc|foto pra vc|olha essa foto|deitadinha aqui|olha como eu fico)\b/i.test(msg)
@@ -1662,7 +1687,30 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
         console.log('[HARD VALIDATOR] decisão corrigida:', hardValidation.corrections);
     }
 
-    const brainPersistencePromise = (async () => {
+    // O modelo descreve a relacao, mas nao tem autoridade para declarar compra,
+    // pagamento ou entrega. Esses estados so podem nascer de eventos do backend.
+    const hasConfirmedPurchase = Number(session.total_paid || 0) > 0;
+    if (aiResponse.lead_memory_patch && typeof aiResponse.lead_memory_patch === 'object') {
+        const memoryPatch: any = { ...aiResponse.lead_memory_patch };
+        if (!hasConfirmedPurchase && String(memoryPatch.relationship_stage || '').toLowerCase() === 'buyer') {
+            memoryPatch.relationship_stage = 'engaged';
+        }
+        const unconfirmedOperation = /\b(preview|foto|video|midia|pix|pagamento|cobranca)\b.{0,32}\b(enviad|entreg|gerad|criad|confirmad|pago|sucesso)|\b(enviad|entreg|gerad|criad|confirmad|pago)\b.{0,32}\b(preview|foto|video|midia|pix|pagamento|cobranca)\b/i;
+        for (const field of ['known_facts', 'notes'] as const) {
+            if (Array.isArray(memoryPatch[field])) {
+                memoryPatch[field] = memoryPatch[field].filter((value: unknown) => !unconfirmedOperation.test(String(value || '')));
+            }
+        }
+        if (unconfirmedOperation.test(String(memoryPatch.next_personal_step || ''))) {
+            memoryPatch.next_personal_step = '';
+        }
+        aiResponse.lead_memory_patch = memoryPatch;
+    }
+
+    // Persistimos as inferencias somente depois das ferramentas terminarem.
+    // Assim uma decisao de "enviar" nunca vira memoria de "enviado" antes da
+    // confirmacao real de Telegram/gateway.
+    const persistBrainAfterTurn = async () => {
         const responseOutcome = await responseOutcomePromise;
         if (responseOutcome.previewId) {
             await recordPreviewReactionSafe(responseOutcome.previewId, responseOutcome.positive);
@@ -1714,7 +1762,7 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
                 validator_corrections: hardValidation.corrections,
             },
         });
-    })();
+    };
 
     const modelAttemptedMedia = botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || ''));
     let shouldDeliverMedia = shouldDeliverRequestedMedia({
@@ -1763,7 +1811,8 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
 
     // Pedido de mídia só vira cobrança quando o lead também manifesta uma compra real.
     // Palavras soltas como "pix" ou "pagar" em uma reclamação não autorizam cobrança.
-    const explicitTransactionRequest = /\b(quero comprar|vou comprar|quero pagar|vou pagar|pode cobrar|gera(?:r)? (?:o )?pix|manda (?:o )?pix|passa (?:o )?pix|qual (?:o )?(?:preco|preço|valor)|quanto custa)\b/i.test(userOnlyText);
+    const explicitTransactionRequest = salesTiming.directCheckout
+        || /\b(quero comprar|vou comprar|quero pagar|vou pagar|pode cobrar|gera(?:r)? (?:o )?pix|manda (?:o )?pix|passa (?:o )?pix|qual (?:e|é)?\s*(?:o )?(?:pix|preco|preço|valor)|quanto custa)\b/i.test(userOnlyText);
     const explicitPaidProduct = /\b(vip|vitalicio|vitalício|mensal|chamada|videochamada|call|encontro social|encontro presencial|companhia presencial|whatsapp|numero pessoal|número pessoal|personalizad[oa]|sob encomenda|video completo|vídeo completo|audio erotico|áudio erótico)\b/i.test(userOnlyText);
     const rejectsPaymentNow = /\b(?:nao|não|sem)\b.{0,28}\b(?:pix|pagar|pagamento|cobrar)\b/i.test(userOnlyText)
         || /\b(?:pedi|quero|manda)\b.{0,30}\b(?:previa|prévia|foto)\b.{0,30}\b(?:nao|não|sem)\b.{0,12}\bpix\b/i.test(userOnlyText);
@@ -1970,6 +2019,14 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
     }
     if ((previousStep == null || String(previousStep).toUpperCase() === 'WELCOME') && nextStep === 'WELCOME' && userOnlyText.trim().length > 0) {
         nextStep = 'CONNECTION';
+    }
+    const hadPendingPaymentBeforeTurn = Boolean(brainRuntime.reality.payment.pendingPaymentId);
+    if (nextStep === 'PAYMENT_CHECK'
+        && !hadPendingPaymentBeforeTurn
+        && aiResponse.action !== 'check_payment_status') {
+        // A intencao de gerar PIX ainda e apenas uma decisao. PAYMENT_CHECK so
+        // existe depois que o gateway realmente devolve uma cobranca pendente.
+        nextStep = aiResponse.action === 'generate_pix_payment' ? 'CLOSING' : 'SALES_PITCH';
     }
 
     const detectedLeadMemory = detectLeadMemorySignals(
@@ -2239,7 +2296,14 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
     let outgoingToSend = isMediaDeliveryTurn
         ? []
         : safeMessages.slice(0, 4);
+    if (aiResponse.action === 'generate_pix_payment') {
+        // O backend envia texto + codigo somente depois de o gateway confirmar
+        // a criacao. Isso elimina promessas falsas de PIX e pedido redundante
+        // de comprovante antes mesmo de existir uma cobranca.
+        outgoingToSend = [];
+    }
     let operationalLeadMemory = updatedLeadMemory;
+    let paymentCreatedThisTurn = false;
     const persistMediaDeliveryStatus = async (
         status: 'delivered' | 'recovered' | 'failed',
         details: { mediaType?: string; mediaUrl?: string; protected?: boolean; caption?: string } = {},
@@ -2911,6 +2975,7 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
                         await patchRealityStateSafe(String(session.id), {
                             payment: { pendingPaymentId: String(lastPaymentId || '') || null },
                         });
+                        paymentCreatedThisTurn = true;
                         break;
                     }
                     // Gerar Pagamento
@@ -2994,6 +3059,7 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
                         await patchRealityStateSafe(String(session.id), {
                             payment: { pendingPaymentId: String(payment.paymentId) },
                         });
+                        paymentCreatedThisTurn = true;
                     } else {
                         await sendTelegramMessage(botToken, chatId, "amor o sistema caiu aqui rapidinho, tenta daqui a pouco?");
                     }
@@ -3241,7 +3307,23 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
     // A análise pode usar outra IA, mas nunca segura os balões: só aguardamos a
     // persistência depois que a resposta ao lead já foi entregue.
     if (pendingPhotoRequestAnalysis) await pendingPhotoRequestAnalysis;
-    await brainPersistencePromise;
+    if (paymentCreatedThisTurn) {
+        nextStep = 'PAYMENT_CHECK';
+        const { error: paymentStepError } = await supabase
+            .from('sessions')
+            .update({ funnel_step: nextStep })
+            .eq('id', session.id);
+        if (paymentStepError) {
+            console.warn('[VENDA] PIX criado, mas falhou ao persistir PAYMENT_CHECK:', paymentStepError.message);
+        } else if (previousStep !== nextStep) {
+            await supabase.from('funnel_events').insert({
+                session_id: session.id,
+                step: nextStep,
+                source: 'backend',
+            });
+        }
+    }
+    await persistBrainAfterTurn();
 
     return NextResponse.json({
         success: true,

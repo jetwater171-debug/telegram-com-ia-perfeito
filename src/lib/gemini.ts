@@ -822,7 +822,7 @@ const ROLE_ENV_KEYS: Record<AiRole, string> = {
     evaluator: "AI_EVALUATOR_MODEL_ORDER",
 };
 
-const DEFAULT_PROVIDER_ORDER = "bai,gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom";
+const DEFAULT_PROVIDER_ORDER = "bai,openrouter,groq,gemini,nvidia,cloudflare,mistral,cerebras,custom";
 const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
     strategy: DEFAULT_OPENROUTER_MODEL,
     draft: DEFAULT_OPENROUTER_MODEL,
@@ -1146,7 +1146,15 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings, tier?: AiI
     // DeepSeek V4 pela B.AI é a linha principal textual. O painel continua
     // ordenando todos os fallbacks, mas não pode acidentalmente deslocar o
     // Master Brain; mídia incompatível é roteada ao Gemini acima desta camada.
-    const providerPreference = ['bai', ...configuredPreference.filter((provider) => provider !== 'bai')];
+    // Mantem o DeepSeek V4 da B.AI em primeiro. Se ele estiver sem saldo,
+    // prioriza fallbacks de qualidade (DeepSeek via OpenRouter e Groq) antes de
+    // chegar no Gemini Lite, que deve ser somente a ultima rede de seguranca.
+    const qualityFallbacks: AiProvider[] = ['openrouter', 'groq', 'gemini'];
+    const providerPreference = [
+        'bai' as AiProvider,
+        ...qualityFallbacks,
+        ...configuredPreference.filter((provider) => provider !== 'bai' && !qualityFallbacks.includes(provider as AiProvider)),
+    ];
     const providerRank = new Map(providerPreference.map((provider, index) => [provider, index]));
     const order = [...roleSpecific, ...globalOrder, ...directGateways, ...defaults, ...extraOpenRouterModels, ...extraGeminiModels]
         .map((gateway, index) => ({ gateway, index }))
@@ -1248,8 +1256,11 @@ const reserveSharedGatewayCapacity = async (
             retryAfterMs: Math.max(0, Number(result.retry_after_ms || 0)),
         };
     } catch (error: any) {
-        sharedLimiterDisabledUntil = Date.now() + 60_000;
-        console.warn('[AI Gateway] limitador compartilhado indisponivel; usando controle local por 60s:', error?.message || error);
+        const message = String(error?.message || error);
+        const migrationMissing = /reserve_ai_gateway_capacity|schema cache|function public/i.test(message);
+        const cooldownMs = migrationMissing ? 6 * 60 * 60_000 : 60_000;
+        sharedLimiterDisabledUntil = Date.now() + cooldownMs;
+        console.warn(`[AI Gateway] limitador compartilhado indisponivel; usando controle local por ${migrationMissing ? '6h' : '60s'}:`, message);
         return null;
     }
 };
@@ -2242,6 +2253,14 @@ Revise e corrija se necessario.`
 
             }
 
+            const reviewScore = Number(review?.score);
+            if (Number.isFinite(reviewScore) && reviewScore < 70) {
+                review.approved = false;
+                review.issues = Array.from(new Set([
+                    ...(Array.isArray(review?.issues) ? review.issues : []),
+                    'score_abaixo_do_minimo',
+                ]));
+            }
             const reviewedMessages = Array.isArray(review?.messages)
                 ? normalizeAiMessageList(review.messages)
                 : [];
@@ -2317,6 +2336,14 @@ Faca a avaliacao final.`
                         output: evaluatorResult.data,
                     };
 
+                    const evaluatorScore = Number(evaluator?.score);
+                    if (Number.isFinite(evaluatorScore) && evaluatorScore < 70) {
+                        evaluator.approved = false;
+                        evaluator.issues = Array.from(new Set([
+                            ...(Array.isArray(evaluator?.issues) ? evaluator.issues : []),
+                            'score_abaixo_do_minimo',
+                        ]));
+                    }
                     const evaluatedMessages = Array.isArray(evaluator?.messages)
                         ? normalizeAiMessageList(evaluator.messages)
                         : [];
