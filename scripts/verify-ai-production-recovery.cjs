@@ -53,24 +53,24 @@ const loadPureTypeScriptModule = (relativePath) => {
     assert.doesNotThrow(() => normalizeAiMessageList([{ action: 'none' }]));
 
     const { buildProcessingFailureRecoveryMessages } = loadPureTypeScriptModule('src/lib/conversationQuality.ts');
-    assert.deepEqual(
-        buildProcessingFailureRecoveryMessages({
+    const firstContactRecovery = buildProcessingFailureRecoveryMessages({
             userText: 'oi',
             recentBotTexts: [],
             recentUserTexts: ['oi'],
             isFirstContact: true,
-        }),
-        ['oiii, tudo bem?', 'como é seu nome??'],
-    );
-    assert.deepEqual(
-        buildProcessingFailureRecoveryMessages({
+        });
+    assert.equal(firstContactRecovery.length, 1);
+    assert.match(firstContactRecovery[0], /^(oi|eii)/i);
+    assert.match(firstContactRecovery[0], /(nome|cham)/i);
+    const startRecovery = buildProcessingFailureRecoveryMessages({
             userText: '/start',
             recentBotTexts: [],
             recentUserTexts: ['/start'],
             isFirstContact: true,
-        }),
-        ['oiii, tudo bem?', 'como é seu nome??'],
-    );
+        });
+    assert.equal(startRecovery.length, 1);
+    assert.match(startRecovery[0], /^(oi|eii)/i);
+    assert.match(startRecovery[0], /(nome|cham)/i);
     const returningGreeting = buildProcessingFailureRecoveryMessages({
         userText: 'oi',
         recentBotTexts: ['oiii, tudo bem?'],

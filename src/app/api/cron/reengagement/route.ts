@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendTelegramMessage } from '@/lib/telegram';
+import { buildContextualReengagement } from '@/lib/reengagement';
 
 export const dynamic = 'force-dynamic'; // Garantir que não faça cache
 
@@ -52,19 +53,24 @@ export async function GET(req: NextRequest) {
 
         // 4. Processar Cada Sessão
         let processedCount = 0;
-        const messagesToSent = [
-            "lembrei do que a gente tava falando, quando voltar me chama",
-            "passei aqui pra continuar de onde a gente parou",
-            "quando vc aparecer quero continuar aquela conversa"
-        ];
-
         for (const session of sessions) {
             const chatId = session.telegram_chat_id;
             if (!chatId) continue;
 
             console.log(`[CRON] Enviando reengajamento para sessão ${session.id} (Chat ${chatId})`);
 
-            const msg = messagesToSent[Math.floor(Math.random() * messagesToSent.length)];
+            const { data: recentMessages } = await supabase
+                .from('messages')
+                .select('sender,content')
+                .eq('session_id', session.id)
+                .in('sender', ['user', 'bot'])
+                .order('created_at', { ascending: false })
+                .limit(12);
+            const msg = buildContextualReengagement({
+                recentMessages: recentMessages || [],
+                userName: session.user_name,
+            });
+            if (!msg) continue;
             await sendTelegramMessage(botToken, chatId, msg);
             await new Promise(r => setTimeout(r, 500));
 

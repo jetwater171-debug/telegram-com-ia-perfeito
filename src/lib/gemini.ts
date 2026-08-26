@@ -2033,6 +2033,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
 - Modo: ${orchestration.objective}.
 - Estrategia, redacao e revisao sao obrigatorias neste turno, independentemente do total pago.
 - Mais inteligencia melhora memoria, coerencia, personalizacao e qualidade. Ela nunca autoriza pressao, culpa, urgencia falsa, exploracao de solidao, dificuldade financeira ou dependencia emocional.
+- Se REALITY_STATE.adultVerified=true, a maioridade ja foi confirmada no presell: nunca pergunte idade de novo. Se estiver false, respeite o gate do backend.
 - Depois de uma compra, primeiro confirme entrega e satisfacao. Uma nova oferta so entra quando combinar com um pedido, preferencia ou abertura real do lead.
 
 # COMPRAS CONFIRMADAS — CONTEXTO INTERNO

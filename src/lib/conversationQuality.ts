@@ -8,6 +8,29 @@ const asksName = (value: unknown) => /\b(como (?:vc|voce) se chama|qual (?:e )?s
 
 const tokens = (value: unknown) => lower(value).match(/[a-z0-9]+/g) || [];
 
+export type ConversationLanguage = 'pt' | 'en' | 'es';
+
+export const detectConversationLanguage = (value: unknown, acceptLanguage?: unknown): ConversationLanguage => {
+    const text = ` ${lower(value)} `;
+    const count = (pattern: RegExp) => (text.match(pattern) || []).length;
+    const english = count(/\b(the|you|your|what|why|how|can|could|would|want|send|show|more|love|please|hello|hi|yes|no|pay|price)\b/g);
+    const spanish = count(/\b(que|como|quiero|puedes|manda|muestra|hola|amor|precio|pagar|por favor|si|pero)\b/g);
+    const portuguese = count(/\b(voce|vc|quero|manda|mostra|oi|ola|amor|preco|pagar|porque|nao|sim|cad[eê]|como)\b/g);
+    if (english >= 2 && english > portuguese + 1 && english > spanish) return 'en';
+    if (spanish >= 2 && spanish > portuguese + 1 && spanish > english) return 'es';
+    const hint = lower(acceptLanguage);
+    if (!normalize(value) && hint.startsWith('en')) return 'en';
+    if (!normalize(value) && hint.startsWith('es')) return 'es';
+    return 'pt';
+};
+
+const stableChoice = <T>(values: T[], key: unknown): T => {
+    const seed = normalize(key) || 'default';
+    let hash = 0;
+    for (let index = 0; index < seed.length; index += 1) hash = ((hash * 31) + seed.charCodeAt(index)) >>> 0;
+    return values[hash % values.length];
+};
+
 const isMeaningfulPhrase = (value: unknown) => {
     const text = lower(value);
     return text.length >= 8 && tokens(text).length >= 2;
@@ -27,7 +50,11 @@ const isNearDuplicate = (left: unknown, right: unknown) => {
     leftTokens.forEach((token) => {
         if (rightTokens.has(token)) shared += 1;
     });
-    return shared / Math.min(leftTokens.size, rightTokens.size) >= 0.8;
+    const union = new Set([...leftTokens, ...rightTokens]).size;
+    const smaller = Math.min(leftTokens.size, rightTokens.size);
+    const jaccard = union > 0 ? shared / union : 0;
+    const shortContainment = smaller <= 6 && shared / smaller >= 0.9;
+    return jaccard >= 0.82 || shortContainment;
 };
 
 const stripPrematureEndearments = (value: unknown) => normalize(value)
@@ -43,6 +70,7 @@ export const refineNewRelationshipMessages = (messages: unknown[], options: {
     lastBotContent?: string;
     hasKnownName?: boolean;
     isConversationStart?: boolean;
+    variationKey?: string;
 }) => {
     const userText = normalize(options.userText);
     const userOnlyGreeting = isGreetingOnly(userText) || /^\/start(?:\s+\S+)?$/i.test(userText);
@@ -66,9 +94,13 @@ export const refineNewRelationshipMessages = (messages: unknown[], options: {
         unique.push(message);
     }
     if (options.isConversationStart && userOnlyGreeting) {
-        return options.hasKnownName
-            ? ['oiii, tudo bem?']
-            : ['oiii, tudo bem?', 'como é seu nome??'];
+        const knownOpenings = ['oii, tudo bem?', 'eii, como vc tá?', 'oi, tudo certo por aí?'];
+        const unknownOpenings = [
+            'oii, tudo bem? como posso te chamar?',
+            'eii, chegou bem? qual seu nome?',
+            'oi, tudo certo por aí? como vc se chama?',
+        ];
+        return [stableChoice(options.hasKnownName ? knownOpenings : unknownOpenings, options.variationKey || userText)];
     }
     if (unique.length === 0) {
         return options.hasKnownName ? ['quero entender direito o que vc quis dizer'] : ['como é seu nome??'];
@@ -105,11 +137,38 @@ export const filterConversationConsistencyMessages = (messages: unknown[], optio
     return accepted;
 };
 
+export const enforceLatestIntentMessages = (messages: string[], options: {
+    latestUserText?: string;
+    language?: ConversationLanguage;
+}) => {
+    const latest = lower(options.latestUserText);
+    const combined = lower(messages.join(' '));
+    if (options.language !== 'pt') return messages;
+
+    const asksHowToSubscribe = /\b(como (?:eu )?(?:assino|assinar|compro|comprar)|quero assinar|como ter acesso)\b/i.test(latest);
+    if (asksHowToSubscribe && !/\b(vip|19[,.]90|pix|acesso)\b/i.test(combined)) {
+        return ['o vip é 19,90. se quiser fechar, eu já gero o pix pra vc'];
+    }
+
+    const saysMediaDidNotArrive = /\b(nao chegou|não chegou|nao apareceu|não apareceu|nao vi|não vi|cade a foto|cadê a foto|kd a foto)\b/i.test(latest);
+    if (saysMediaDidNotArrive && /\b(cego|olha direito|ta ai|tá aí|eu mandei)\b/i.test(combined)) {
+        return ['foi mal, vc tem razão: não tinha chegado'];
+    }
+
+    const correctsPaymentPromise = /\b(por que|porque|pq)\b.{0,35}\b(pagar|pagamento|pix)\b|\b(disse|falou|prometeu)\b.{0,45}\b(desculpa|gratis|grátis|sem pagar)\b/i.test(latest);
+    if (correctsPaymentPromise && !/\b(tem razao|tem razão|vc ta certo|vc tá certo|combinado|eu tinha dito)\b/i.test(combined)) {
+        return ['vc tem razão, eu tinha dito que seria pra te compensar. não vou mudar o combinado'];
+    }
+
+    return messages;
+};
+
 export const buildConversationRecoveryMessages = (options: {
     userText?: string;
     recentBotTexts?: unknown[];
     recentUserTexts?: unknown[];
     action?: string;
+    language?: ConversationLanguage;
 }) => {
     const userText = lower(options.userText);
     const action = lower(options.action);
@@ -121,6 +180,20 @@ export const buildConversationRecoveryMessages = (options: {
     const affirmed = /^(sim|quero|pode|manda|bora|vamos|claro|com certeza|ok|beleza)\b/i.test(userText);
     const affectionateGreeting = /^(?:oi+e*|ola+|e\s*ai|eai|bom dia|boa tarde|boa noite)[,!?.\s]*(?:amor|vida|bb|bebe|lindo)[!?.\s]*$/i.test(userText);
     const greetingOnly = isGreetingOnly(userText);
+
+    const localized = options.language === 'en'
+        ? ['tell me, I want to answer what you just said properly']
+        : options.language === 'es'
+            ? ['dime, quiero responder bien a lo que acabas de decir']
+            : null;
+    if (localized) {
+        const filtered = filterConversationConsistencyMessages(localized, {
+            currentUserText: options.userText,
+            recentUserTexts: options.recentUserTexts,
+            recentBotTexts: options.recentBotTexts,
+        });
+        return filtered.length > 0 ? filtered : localized;
+    }
 
     const candidates = affectionateGreeting
         ? [
@@ -177,6 +250,7 @@ export const buildProcessingFailureRecoveryMessages = (options: {
     recentBotTexts?: unknown[];
     recentUserTexts?: unknown[];
     isFirstContact?: boolean;
+    language?: ConversationLanguage;
 }) => {
     const userText = normalize(options.userText);
     const recentBotTexts = (options.recentBotTexts || []).map(normalize).filter(Boolean);
@@ -184,10 +258,21 @@ export const buildProcessingFailureRecoveryMessages = (options: {
     const startsConversation = /^\/start(?:\s+\S+)?$/i.test(userText);
     const greetingOnly = isGreetingOnly(userText);
 
+    if (options.language === 'en') {
+        return greetingOnly ? ['hey, how are you?'] : ['my Telegram glitched right when I replied, send that last message again?'];
+    }
+    if (options.language === 'es') {
+        return greetingOnly ? ['hola, cómo estás?'] : ['mi Telegram falló justo cuando respondí, me mandas ese último mensaje otra vez?'];
+    }
+
     // A recuperação roda fora da IA. No primeiro contato ela precisa preservar a
     // abertura humana em vez de fingir que existe um assunto para o lead explicar.
     if ((startsConversation || greetingOnly) && options.isFirstContact !== false) {
-        return ['oiii, tudo bem?', 'como é seu nome??'];
+        return [stableChoice([
+            'oii, tudo bem? como posso te chamar?',
+            'eii, chegou bem? qual seu nome?',
+            'oi, tudo certo por aí? como vc se chama?',
+        ], userText)];
     }
 
     if (startsConversation || greetingOnly) {

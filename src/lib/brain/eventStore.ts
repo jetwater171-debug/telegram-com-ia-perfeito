@@ -133,12 +133,12 @@ export const recordAiDecisionSafe = async (row: {
     }
 };
 
-export const markAdultDeclarationSafe = async (sessionId: string, declaredAt = new Date().toISOString()) => {
+export const markAdultVerificationSafe = async (sessionId: string, verifiedAt = new Date().toISOString()) => {
     try {
         const { error } = await supabase.from('lead_reality_states').upsert({
             session_id: sessionId,
             adult_verified: true,
-            updated_at: declaredAt,
+            updated_at: verifiedAt,
         }, { onConflict: 'session_id' });
         if (error && !missingArchitectureRelation(error)) console.warn('[REALITY STATE] declaração adulta não persistida:', error.message);
         return !error;
@@ -147,6 +147,9 @@ export const markAdultDeclarationSafe = async (sessionId: string, declaredAt = n
         return false;
     }
 };
+
+// Compatibilidade com eventos antigos de autodeclaração no Telegram.
+export const markAdultDeclarationSafe = markAdultVerificationSafe;
 
 export const persistBrainProjectionsSafe = async ({
     sessionId,

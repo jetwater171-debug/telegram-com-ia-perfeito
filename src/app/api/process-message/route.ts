@@ -17,6 +17,8 @@ import {
 import {
     buildConversationRecoveryMessages,
     buildProcessingFailureRecoveryMessages,
+    detectConversationLanguage,
+    enforceLatestIntentMessages,
     filterConversationConsistencyMessages,
     refineNewRelationshipMessages,
 } from '@/lib/conversationQuality';
@@ -56,6 +58,7 @@ import { formatBrainRuntimeContext, loadBrainRuntimeState } from '@/lib/brain/st
 import {
     appendLeadEventSafe,
     markAdultDeclarationSafe,
+    markAdultVerificationSafe,
     patchRealityStateSafe,
     persistBrainProjectionsSafe,
     persistMemoryUpdatesSafe,
@@ -1111,6 +1114,7 @@ export async function POST(req: NextRequest) {
     const groupedUserMessages = filteredGroupMessages.filter((m: any) => m.sender === 'user');
     const combinedText = filteredGroupMessages.map((m: any) => m.content).join("\n");
     const userOnlyText = groupedUserMessages.map((m: any) => m.content).join("\n");
+    const latestUserText = String(groupedUserMessages.at(-1)?.content || userOnlyText).trim();
     const lastGroupedUserAt = filteredGroupMessages
         .filter((m: any) => m.sender === 'user' && m.created_at)
         .map((m: any) => String(m.created_at))
@@ -1124,6 +1128,7 @@ export async function POST(req: NextRequest) {
         sourceId: triggerMessageId ? String(triggerMessageId) : String(lastGroupedUserAt || crypto.randomUUID()),
         payload: {
             content: userOnlyText.slice(0, 4_000),
+            latest_content: latestUserText.slice(0, 2_000),
             grouped_message_count: groupedUserMessages.length,
             adult_declaration: adultDeclaredNow,
         },
@@ -1219,6 +1224,9 @@ export async function POST(req: NextRequest) {
                     redirect_timezone: redirectRow.timezone || leadMemory.metadata?.redirect_timezone || '',
                     redirect_accept_language: redirectRow.metadata?.accept_language || leadMemory.metadata?.redirect_accept_language || '',
                     redirect_user_agent: redirectRow.user_agent || leadMemory.metadata?.redirect_user_agent || '',
+                    adult_verified: true,
+                    adult_verification_source: 'presell_redirect',
+                    adult_verified_at: redirectRow.clicked_at || redirectRow.created_at || new Date().toISOString(),
                 },
                 updated_at: new Date().toISOString(),
             };
@@ -1307,13 +1315,35 @@ export async function POST(req: NextRequest) {
         '- Venda o resultado que ele pediu; para pouco dinheiro, reduza o escopo do mesmo desejo em vez de empurrar outro produto.',
         '- Este plano pertence apenas ao cerebro. Mesmo em relacao nova, uma intencao comercial literal pode ser atendida imediatamente; sem intencao real, converse normalmente.',
     ].join('\n');
-    extraScript = [extraScript, adaptiveSalesDirective].filter(Boolean).join('\n\n');
+    const verifiedLeadName = sessionHasUsefulName(session.user_name) ? String(session.user_name).trim() : '';
+    const identityDirective = verifiedLeadName
+        ? `# IDENTIDADE DO LEAD\n- Nome verificado: ${verifiedLeadName}. Nunca chame o lead por outro nome.`
+        : '# IDENTIDADE DO LEAD\n- Nome ainda nao confirmado. Nao invente nome nem apelido pessoal.';
+    extraScript = [extraScript, adaptiveSalesDirective, identityDirective].filter(Boolean).join('\n\n');
 
     const brainRuntime = await loadBrainRuntimeState({
         session: { ...session, lead_memory: leadMemory },
         userText: userOnlyText,
         recentMessages: recentSalesHistory,
     });
+    const verifiedByPresell = Boolean(leadMemory.metadata?.redirect_code)
+        || (leadMemory.metadata?.adult_verified === true
+            && leadMemory.metadata?.adult_verification_source === 'presell_redirect');
+    if (verifiedByPresell && !brainRuntime.reality.adultVerified) {
+        brainRuntime.reality.adultVerified = true;
+        const verifiedAt = String(leadMemory.metadata?.adult_verified_at || lastGroupedUserAt);
+        await Promise.all([
+            markAdultVerificationSafe(String(session.id), verifiedAt),
+            appendLeadEventSafe({
+                sessionId: String(session.id),
+                eventType: 'adult_verified',
+                source: 'presell',
+                sourceId: `presell:${String(leadMemory.metadata?.redirect_code || session.id)}`,
+                payload: { method: 'presell_confirmation' },
+                occurredAt: verifiedAt,
+            }),
+        ]);
+    }
     if (adultDeclaredNow) brainRuntime.reality.adultVerified = true;
     extraScript = [extraScript, formatBrainRuntimeContext(brainRuntime)].filter(Boolean).join('\n\n');
 
@@ -1342,6 +1372,7 @@ export async function POST(req: NextRequest) {
         // O aparelho ajuda a adaptar formato/linguagem, nunca a inventar poder de compra.
         isHighTicket: false,
         leadProfile: {
+            userName: verifiedLeadName,
             deviceType: String(session.device_type || 'Unknown'),
             city: userCity || '',
             region: String(leadMemory.metadata?.redirect_region || ''),
@@ -1376,15 +1407,23 @@ export async function POST(req: NextRequest) {
         return { fileId, caption };
     };
 
-    let finalUserMessage = `[MENSAGENS DO LEAD NO MESMO TURNO]
-${combinedText}
+    const priorTurnText = groupedUserMessages.slice(0, -1).map((message: any) => String(message.content || '')).join('\n').trim();
+    const conversationLanguage = detectConversationLanguage(
+        latestUserText,
+        leadMemory?.metadata?.redirect_accept_language,
+    );
+    let finalUserMessage = `[CONTEXTO ANTERIOR DESTE TURNO]
+${priorTurnText || '(nenhuma mensagem anterior no pacote)'}
+
+[ULTIMA MENSAGEM DO LEAD — RESPOSTA OBRIGATORIA]
+${latestUserText || combinedText}
 
 [REGRA DE CONVERSA]
-Leia todas as mensagens acima como uma fala agrupada do lead, com visao geral da conversa.
-Nao responda linha por linha.
-Responda principalmente a ultima intencao do lead, usando o contexto das mensagens anteriores.
+Responda primeiro e diretamente a ULTIMA MENSAGEM. Ela substitui pedido, hipotese ou assunto anterior quando houver correcao, objecao ou mudanca de intencao.
+Use o bloco anterior apenas como contexto; nunca deixe a ultima pergunta sem resposta.
+IDIOMA DO TURNO: ${conversationLanguage === 'en' ? 'English' : conversationLanguage === 'es' ? 'Español' : 'Português do Brasil'}. Responda somente nesse idioma, salvo se o lead pedir outro.
 Em conversa normal, prefira 1 balao curto; use 2 apenas quando a segunda ideia realmente precisar de outra mensagem.
-Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas em negociacao ou fantasia adulta explicita ja estabelecida.`;
+Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2 em negociacao ou fantasia adulta explicita ja estabelecida.`;
     let mediaData = undefined;
 
     // Detectar Audio
@@ -2076,10 +2115,11 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         .map((row: any) => String(row.content || ''))
         .filter(Boolean);
     const buildRecoveryMessages = () => buildConversationRecoveryMessages({
-        userText: userOnlyText,
+        userText: latestUserText,
         recentBotTexts,
         recentUserTexts,
         action: String(aiResponse.action || 'none'),
+        language: conversationLanguage,
     });
 
     const outgoingMessages = normalizeAiMessageList(aiResponse.messages);
@@ -2087,7 +2127,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
     let safeMessages = filterConversationConsistencyMessages(
         outgoingMessages.length > 0 ? outgoingMessages : buildRecoveryMessages(),
         {
-            currentUserText: userOnlyText,
+            currentUserText: latestUserText,
             recentUserTexts,
         },
     )
@@ -2096,13 +2136,17 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
 
     const lastBotContent = lastBotMsg?.content || '';
     safeMessages = applyConversationQualityGuards(safeMessages, {
-        userText: userOnlyText,
+        userText: latestUserText,
         // O perfil do Telegram nao prova como um lead novo prefere ser chamado.
         sessionName: lastBotMsg ? session.user_name : null,
         hasCity,
         userAskedCity: cityQuestion,
         extractedName: aiResponse.extracted_user_name,
         lastBotContent
+    });
+    safeMessages = enforceLatestIntentMessages(safeMessages, {
+        latestUserText,
+        language: conversationLanguage,
     });
     const relationshipStageBeforeTurn = String(leadMemory.relationship_stage || 'new').trim().toLowerCase();
     const episodeStartedAtMs = Date.parse(String(leadMemory.metadata?.conversation_started_at || ''));
@@ -2124,6 +2168,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             lastBotContent,
             hasKnownName: sessionHasUsefulName(session.user_name) || userProbablyProvidedName(userOnlyText, aiResponse.extracted_user_name),
             isConversationStart,
+            variationKey: String(session.id),
         });
     }
     if (mediaSuppressedForRepetition || mediaSuppressedForPolicy) {
@@ -2146,11 +2191,11 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
     const stage = String(aiResponse.current_state || '').toUpperCase();
     const explicitFantasy = hasExplicitSexualFantasyTrigger(userOnlyText);
     const maxMessagesForTurn = (() => {
-        if (isEarlyConversationEpisode) return 2;
+        if (isEarlyConversationEpisode) return 1;
         if (stage === 'PAYMENT_CHECK' || aiResponse.action === 'generate_pix_payment') return 2;
-        if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 3;
-        if (explicitFantasy) return 4;
-        return 3;
+        if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 2;
+        if (explicitFantasy) return 2;
+        return 1;
     })();
 
     safeMessages = shapeConversationBubbles(safeMessages, {
@@ -2160,7 +2205,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
     });
 
     safeMessages = filterConversationConsistencyMessages(safeMessages, {
-        currentUserText: userOnlyText,
+        currentUserText: latestUserText,
         recentUserTexts,
         recentBotTexts,
     });
@@ -2170,11 +2215,12 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
     }
 
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));
-    const setupMessage = isMediaDeliveryTurn && safeMessages.length > 0 ? safeMessages[0] : '';
-    const deferredMediaMessages = isMediaDeliveryTurn && safeMessages.length > 1 ? safeMessages.slice(1, 2) : [];
+    // Em turno de mídia, nenhum texto que prometa "olha" ou "te mandei" sai
+    // antes do arquivo. A reação só é enviada depois da entrega confirmada.
+    const deferredMediaMessages = isMediaDeliveryTurn ? safeMessages.slice(0, 1) : [];
     let outgoingToSend = isMediaDeliveryTurn
-        ? (setupMessage ? [setupMessage] : [])
-        : safeMessages.slice(0, 3);
+        ? []
+        : safeMessages.slice(0, 2);
     let operationalLeadMemory = updatedLeadMemory;
     const persistMediaDeliveryStatus = async (
         status: 'delivered' | 'recovered' | 'failed',
@@ -2245,7 +2291,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
         && fishAudioSettings.enabled
         && Boolean(fishAudioSettings.apiKey)
         && Boolean(fishAudioSettings.voiceId);
-    let preferredAudioIndex = outgoingToSend.findIndex((message: string) =>
+    let preferredAudioIndex = shouldForceVoice ? outgoingToSend.findIndex((message: string) =>
         shouldUseFishAudio({
             settings: fishAudioSettings,
             seed: `${session.id}:${triggerMessageId || lastGroupedUserAt}:${message}`,
@@ -2255,7 +2301,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             action: String(aiResponse.action || 'none'),
             hasRecentAudio: shouldForceVoice ? false : Boolean(recentAudio),
         })
-    );
+    ) : -1;
     if (shouldForceVoice && preferredAudioIndex < 0 && outgoingToSend.length > 0) {
         preferredAudioIndex = 0;
     }
@@ -2358,7 +2404,8 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
             }
         }
 
-        await waitWithChatAction('typing', humanTextDelayMs(msgText, i));
+        const modelDurationMs = Number(aiResponse.ai_debug?.duration_ms || 0);
+        await waitWithChatAction('typing', modelDurationMs >= 8_000 ? 150 : humanTextDelayMs(msgText, i));
         const interruptedDuringTyping = await findNewerUserMessage();
         if (interruptedDuringTyping) {
             console.log(`[PROCESSADOR] Texto cancelado porque o lead enviou uma mensagem nova: ${interruptedDuringTyping.id}`);
@@ -3201,6 +3248,7 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use 3-4 apenas 
                     recentBotTexts,
                     recentUserTexts,
                     isFirstContact: recentBotTexts.length === 0 && recentUserTexts.length <= 1,
+                    language: detectConversationLanguage(latestText),
                 });
                 const safeReason = reason
                     .replace(/(?:sk|key|token|secret)[-_][a-z0-9_-]{8,}/gi, '[REDACTED]')

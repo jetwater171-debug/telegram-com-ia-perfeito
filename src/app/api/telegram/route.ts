@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { approveChatJoinRequest } from '@/lib/telegram';
+import { appendLeadEventSafe, markAdultVerificationSafe } from '@/lib/brain/eventStore';
 
 const parseStartPayload = (text: string | undefined) => {
     const match = (text || '').trim().match(/^\/?start(?:\s+(.+))?$/i);
@@ -248,7 +249,10 @@ export async function POST(req: NextRequest) {
                         redirect_country: redirectRow.country || '',
                         redirect_timezone: redirectRow.timezone || '',
                         redirect_accept_language: redirectRow.metadata?.accept_language || '',
-                        redirect_user_agent: redirectRow.user_agent || ''
+                        redirect_user_agent: redirectRow.user_agent || '',
+                        adult_verified: true,
+                        adult_verification_source: 'presell_redirect',
+                        adult_verified_at: redirectRow.clicked_at || redirectRow.created_at || new Date().toISOString(),
                     },
                     updated_at: new Date().toISOString()
                 };
@@ -268,6 +272,19 @@ export async function POST(req: NextRequest) {
                 if (!sessionPatchError) {
                     session = { ...session, ...sessionPatch };
                 }
+
+                const adultVerifiedAt = redirectRow.clicked_at || redirectRow.created_at || new Date().toISOString();
+                await Promise.all([
+                    markAdultVerificationSafe(String(session.id), adultVerifiedAt),
+                    appendLeadEventSafe({
+                        sessionId: String(session.id),
+                        eventType: 'adult_verified',
+                        source: 'presell',
+                        sourceId: `presell:${leadRedirectCode}`,
+                        payload: { method: 'presell_confirmation', redirect_code: leadRedirectCode },
+                        occurredAt: adultVerifiedAt,
+                    }),
+                ]);
 
                 await supabase
                     .from('lead_redirects')

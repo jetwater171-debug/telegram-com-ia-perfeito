@@ -48,9 +48,12 @@ assert.doesNotMatch(core, /Churrasco \/ Picanha|Academia \/ Treino|MULTIMODALIDA
 
 const start = quality.refineNewRelationshipMessages(
     ['oi amor, tudo bem?', 'to deitadinha no meu quarto', 'kkk'],
-    { userText: '/start', hasKnownName: false, isConversationStart: true },
+    { userText: '/start', hasKnownName: false, isConversationStart: true, variationKey: 'lead-123' },
 );
-assert.deepEqual(start, ['oiii, tudo bem?', 'como é seu nome??']);
+assert.equal(start.length, 1);
+assert.match(start[0], /^(oi|eii)/i);
+assert.match(start[0], /(nome|cham)/i);
+assert.notEqual(start[0], 'oiii, tudo bem?');
 
 const alreadyGreeted = quality.refineNewRelationshipMessages(
     ['oii, tudo bem?', 'como ta seu dia amor?', 'como vc se chama?'],
@@ -80,8 +83,8 @@ assert.equal(prompts.needsLariReview({ relationshipStage: 'familiar', userText: 
 assert.equal(prompts.needsLariReview({ relationshipStage: 'familiar', userText: 'fiz churrasco hoje', messages: ['aí sim kkk ficou bom?'], strategyConfidence: 0.95 }), false);
 
 const starter = orchestration.resolveAiOrchestrationPlan(0);
-assert.equal(starter.separateStrategy, false);
-assert.equal(orchestration.shouldRunAiReview(starter, true), false);
+assert.equal(starter.separateStrategy, true);
+assert.equal(orchestration.shouldRunAiReview(starter, true), true);
 assert.equal(models.normalizeGeminiModelName('gemini-3.5-flash'), 'gemini-3.5-flash');
 assert.equal(models.normalizeGroqModelName('llama-3.1-8b-instant'), 'openai/gpt-oss-20b');
 

@@ -35,6 +35,19 @@ assert.deepEqual(
 
 assert.deepEqual(
     quality.filterConversationConsistencyMessages(
+        ['kkkk verdade, no relógio parece que trava mesmo'],
+        {
+            currentUserText: 'no relógio parece que o tempo não passa',
+            recentUserTexts: [],
+            recentBotTexts: ['quando a gente fica olhando o relógio parece que trava mesmo kkk'],
+        },
+    ),
+    ['kkkk verdade, no relógio parece que trava mesmo'],
+    'uma resposta contextual válida não pode ser apagada por compartilhar o assunto',
+);
+
+assert.deepEqual(
+    quality.filterConversationConsistencyMessages(
         ['entendi me conta essa parte melhor', 'vc já explicou, eu que me perdi'],
         {
             currentUserText: 'já falei',
@@ -62,6 +75,23 @@ const recovery = quality.buildConversationRecoveryMessages({
 assert.equal(recovery.length, 1);
 assert.doesNotMatch(recovery[0], /me conta|me explica/i);
 assert.match(recovery[0], /vc (?:tem razão|já)|eu (?:me perdi|que respondi)/i);
+
+assert.deepEqual(quality.enforceLatestIntentMessages(['agora eu entendi'], {
+    latestUserText: 'como assinar moça?',
+    language: 'pt',
+}), ['o vip é 19,90. se quiser fechar, eu já gero o pix pra vc']);
+assert.deepEqual(quality.enforceLatestIntentMessages(['tá cego é?'], {
+    latestUserText: 'não chegou foto nenhuma',
+    language: 'pt',
+}), ['foi mal, vc tem razão: não tinha chegado']);
+assert.equal(quality.detectConversationLanguage('Can you show me more please?'), 'en');
+assert.equal(quality.detectConversationLanguage('como faço pra assinar?'), 'pt');
+assert.equal(quality.refineNewRelationshipMessages(['oiii, tudo bem?'], {
+    userText: '/start',
+    isConversationStart: true,
+    hasKnownName: false,
+    variationKey: 'lead-123',
+}).length, 1);
 
 assert.equal(prompts.needsLariReview({
     relationshipStage: 'familiar',

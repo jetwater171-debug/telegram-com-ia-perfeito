@@ -1,18 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendTelegramMessage } from '@/lib/telegram';
+import { buildContextualReengagement } from '@/lib/reengagement';
 
 export const dynamic = 'force-dynamic';
-
-export const REENGAGEMENT_MESSAGES = [
-    "lembrei do que a gente tava falando, quando voltar me chama",
-    "passei aqui pra continuar de onde a gente parou",
-    "quando vc aparecer quero continuar aquela conversa"
-] as const;
-
-export const pickRandomReengagementMessage = () => {
-    return REENGAGEMENT_MESSAGES[Math.floor(Math.random() * REENGAGEMENT_MESSAGES.length)];
-};
 
 export async function POST(req: NextRequest) {
     try {
@@ -70,7 +61,18 @@ export async function POST(req: NextRequest) {
             const chatId = session.telegram_chat_id;
             if (!chatId) continue;
 
-            const text = pickRandomReengagementMessage();
+            const { data: recentMessages } = await supabase
+                .from('messages')
+                .select('sender,content')
+                .eq('session_id', session.id)
+                .in('sender', ['user', 'bot'])
+                .order('created_at', { ascending: false })
+                .limit(12);
+            const text = buildContextualReengagement({
+                recentMessages: recentMessages || [],
+                userName: session.user_name,
+            });
+            if (!text) continue;
 
             try {
                 // Enviar direto no Telegram sem IA
