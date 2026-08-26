@@ -9,7 +9,17 @@ const configured = (value: unknown) => Boolean(String(value || '').trim());
 export async function GET() {
     const startedAt = Date.now();
     try {
-        const [settingsResult, sessionsResult, eventResult, outcomeResult, decisionResult] = await Promise.all([
+        const [
+            settingsResult,
+            sessionsResult,
+            eventResult,
+            outcomeResult,
+            decisionResult,
+            realityResult,
+            twinResult,
+            episodeResult,
+            memoryResult,
+        ] = await Promise.all([
             supabase.from('bot_settings').select('key,value').in('key', [
                 'bai_api_key', 'bai_model', 'telegram_bot_token', 'ai_model_order',
             ]),
@@ -21,9 +31,23 @@ export async function GET() {
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .maybeSingle(),
+            supabase.from('lead_reality_states').select('session_id', { count: 'exact', head: true }),
+            supabase.from('lead_twins').select('session_id', { count: 'exact', head: true }),
+            supabase.from('lead_episode_states').select('id', { count: 'exact', head: true }),
+            supabase.from('lead_memory_items').select('id', { count: 'exact', head: true }),
         ]);
 
-        const errors = [settingsResult.error, sessionsResult.error, eventResult.error, outcomeResult.error, decisionResult.error]
+        const errors = [
+            settingsResult.error,
+            sessionsResult.error,
+            eventResult.error,
+            outcomeResult.error,
+            decisionResult.error,
+            realityResult.error,
+            twinResult.error,
+            episodeResult.error,
+            memoryResult.error,
+        ]
             .filter(Boolean)
             .map((error) => String(error?.message || 'database_error'));
         const map = Object.fromEntries((settingsResult.data || []).map((row) => [row.key, row.value]));
@@ -31,7 +55,8 @@ export async function GET() {
         const telegramConfigured = configured(map.telegram_bot_token) || configured(process.env.TELEGRAM_BOT_TOKEN);
         const databaseReady = errors.length === 0;
         const eventStoreReady = !eventResult.error && !decisionResult.error;
-        const healthy = databaseReady && eventStoreReady && deepseekConfigured && telegramConfigured;
+        const memoryReady = !realityResult.error && !twinResult.error && !episodeResult.error && !memoryResult.error;
+        const healthy = databaseReady && eventStoreReady && memoryReady && deepseekConfigured && telegramConfigured;
         const lastDecision = decisionResult.data || null;
         const corrections = Array.isArray(lastDecision?.validator_result?.corrections)
             ? lastDecision.validator_result.corrections.length
@@ -45,6 +70,7 @@ export async function GET() {
             checks: {
                 database: databaseReady,
                 eventStore: eventStoreReady,
+                memoryV2: memoryReady,
                 deepseek: deepseekConfigured,
                 telegram: telegramConfigured,
             },
@@ -60,6 +86,10 @@ export async function GET() {
                 activeSessions: sessionsResult.count || 0,
                 events: eventResult.count || 0,
                 outcomes: outcomeResult.count || 0,
+                realityStates: realityResult.count || 0,
+                leadTwins: twinResult.count || 0,
+                episodes: episodeResult.count || 0,
+                memoryItems: memoryResult.count || 0,
             },
             warnings: errors.slice(0, 3),
         }, { headers: { 'Cache-Control': 'no-store, max-age=0' } });
@@ -69,7 +99,7 @@ export async function GET() {
             status: 'degraded',
             checkedAt: new Date().toISOString(),
             latencyMs: Date.now() - startedAt,
-            checks: { database: false, eventStore: false, deepseek: false, telegram: false },
+            checks: { database: false, eventStore: false, memoryV2: false, deepseek: false, telegram: false },
             warnings: [String(error?.message || error || 'health_check_failed')],
         }, { status: 503, headers: { 'Cache-Control': 'no-store, max-age=0' } });
     }

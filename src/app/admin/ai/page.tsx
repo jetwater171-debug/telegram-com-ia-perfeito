@@ -399,9 +399,9 @@ export default function AdminAiPage() {
 
                     <Panel title="Proteção para 30 leads/min">
                         <Toggle title="Limitador compartilhado" description={settings.sharedRateLimitReady ? "Pronto para coordenar todas as instâncias da Vercel." : "Falta SERVICE_ROLE e aplicar a migration do limitador."} checked={settings.aiSharedRateLimitEnabled} onChange={(value) => updateSetting("aiSharedRateLimitEnabled", value)} />
-                        <Toggle title="1 · Estrategista DeepSeek" description="Sempre ativo para todos os leads; conduz desejo, oferta, prévia e PIX." checked={true} disabled onChange={() => undefined} />
-                        <Toggle title="2 · Lari redatora" description="Sempre ativa para transformar o plano em conversa humana e rápida." checked={true} disabled onChange={() => undefined} />
-                        <Toggle title="3 · Revisora DeepSeek" description="Sempre ativa antes do envio para corrigir venda, contexto e repetição." checked={true} disabled onChange={() => undefined} />
+                        <Toggle title="1 · Master Brain DeepSeek" description="Uma chamada principal entende, conduz, vende, escolhe prévia/PIX e escreve a resposta." checked={true} disabled onChange={() => undefined} />
+                        <Toggle title="2 · Validador do backend" description="Confere pagamento, mídia, oferta e memória sem fazer outra chamada de IA." checked={true} disabled onChange={() => undefined} />
+                        <Toggle title="3 · Revisora adaptativa" description="Só usa outra chamada em pagamento, contradição, falha evidente ou baixa confiança." checked={true} disabled onChange={() => undefined} />
                     </Panel>
 
                     <Panel title="Memória humana · Mem0">

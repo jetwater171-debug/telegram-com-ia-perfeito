@@ -18,8 +18,8 @@ const load = (relativePath) => {
 const orchestration = load('src/lib/aiOrchestration.ts');
 for (const paid of [0, 19.9, 100, 200]) {
   const plan = orchestration.resolveAiOrchestrationPlan(paid);
-  assert.equal(plan.separateStrategy, true);
-  assert.equal(plan.reviewMode, 'always');
+  assert.equal(plan.separateStrategy, false);
+  assert.equal(plan.reviewMode, 'critical');
   assert.equal(plan.evaluator, false);
 }
 
@@ -61,7 +61,9 @@ assert.match(route, /const isActualFirstRelationshipTurn = !lastBotMsg/);
 assert.match(gateway, /const reviewShouldReplace = reviewedMessages\.length > 0/);
 assert.match(gateway, /review\?\.approved === false \|\| reviewIssues\.length > 0/);
 assert.match(prompts, /Aprovar significa preservar/);
-assert.match(gateway, /strategyCallPromise/);
+assert.doesNotMatch(gateway, /strategyCallPromise/);
+assert.match(prompts, /MASTER BRAIN ÚNICO DA LARI/);
+assert.match(prompts, /O padrão é dois balões curtos/);
 assert.match(gateway, /thinking = \{ type: 'disabled' \}/);
 assert.doesNotMatch(gateway, /const isRetryable = gateway\.provider === 'bai'/);
 assert.match(gatewayRouter, /timeoutMs: 10_000/);
@@ -77,4 +79,13 @@ assert.doesNotMatch(
   /agora eu entendi|peguei seu ponto/i,
 );
 
-console.log('THREE_BRAIN_COMMERCE_OK layers=3 all_leads=1 custom_requests=1 multigateway_queue=1 temporal_state=1');
+const stateBuilder = fs.readFileSync(path.join(root, 'src/lib/brain/stateBuilder.ts'), 'utf8');
+const memoryRetriever = fs.readFileSync(path.join(root, 'src/lib/brain/memoryRetriever.ts'), 'utf8');
+const eventStore = fs.readFileSync(path.join(root, 'src/lib/brain/eventStore.ts'), 'utf8');
+assert.match(stateBuilder, /gapHours/);
+assert.match(stateBuilder, /returning_day.*returning_days.*reactivation/);
+assert.match(stateBuilder, /\.in\('status', \['active', 'uncertain'\]\)/);
+assert.match(memoryRetriever, /\['active', 'uncertain'\]\.includes/);
+assert.match(eventStore, /status: 'superseded'/);
+
+console.log('MASTER_BRAIN_FAST_OK primary_calls=1 adaptive_review=1 custom_requests=1 multigateway_fallback=1 temporal_state=1 memory_v2=1');

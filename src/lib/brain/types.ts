@@ -56,6 +56,8 @@ export type TemporalState = {
     lastBotAt: string | null;
     previousActivityAt: string | null;
     gapMinutes: number | null;
+    gapHours: number | null;
+    gapDays: number | null;
     gapBucket: 'live' | 'same_day' | 'returning_day' | 'returning_days' | 'reactivation' | 'unknown';
     crossedCalendarDay: boolean;
 };

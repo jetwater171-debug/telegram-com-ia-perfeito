@@ -9,7 +9,8 @@
     "lint": "eslint",
     "verify:brain-v2": "node scripts/verify-master-brain-v2.cjs",
     "eval:brain-v2": "node scripts/eval-master-brain-v2.cjs",
-    "verify:three-brain": "node scripts/verify-three-brain-commerce.cjs"
+    "verify:three-brain": "node scripts/verify-three-brain-commerce.cjs",
+    "verify:master-brain": "node scripts/verify-three-brain-commerce.cjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

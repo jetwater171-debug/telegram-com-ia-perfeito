@@ -40,7 +40,6 @@ import {
     buildLariCorePrompt,
     buildLariDraftPrompt,
     buildLariReviewPrompt,
-    buildLariStrategyPrompt,
     needsLariReview,
 } from '@/lib/lariConversationPrompts';
 
@@ -1028,10 +1027,8 @@ const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
         aiDraftModelOrder: settings.ai_draft_model_order || process.env.AI_DRAFT_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
         aiReviewModelOrder: settings.ai_review_model_order || process.env.AI_REVIEW_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
         aiEvaluatorModelOrder: settings.ai_evaluator_model_order || process.env.AI_EVALUATOR_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
-        // Constituicao operacional: os tres cerebros sao obrigatorios para
-        // todos os leads. Settings antigos nao podem rebaixar silenciosamente
-        // quem ainda nao comprou para uma chamada unica.
-        aiStrategyEnabled: true,
+        // Estrategia, voz e action vivem no Master Brain da chamada principal.
+        aiStrategyEnabled: false,
         aiReviewEnabled: true,
         aiEvaluatorEnabled: false,
         aiSharedRateLimitEnabled: settings.ai_shared_rate_limit_enabled !== "false" && process.env.AI_SHARED_RATE_LIMIT_ENABLED !== "false",
@@ -2036,12 +2033,13 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         context?.leadProfile || null,
     ) + `
 
-# PIPELINE DE TRES CEREBROS — CONTEXTO INTERNO
+# MASTER BRAIN ÚNICO — CONTEXTO INTERNO
 - Nivel: ${orchestration.tier} (${orchestration.label}).
 - Total confirmado: R$ ${orchestration.totalPaid.toFixed(2).replace('.', ',')}.
 - Mensagens do lead neste episodio: ${episodeLeadMessageCount}.
 - Modo: ${orchestration.objective}.
-- Estrategia, redacao e revisao sao obrigatorias neste turno, independentemente do total pago.
+- Leitura, estrategia, redacao, memoria e escolha de action acontecem nesta unica chamada principal.
+- A revisao externa e excepcional e so pode rodar em pagamento, contradicao, falha evidente ou baixa confianca.
 - Mais inteligencia melhora memoria, coerencia, personalizacao e qualidade. Ela nunca autoriza pressao, culpa, urgencia falsa, exploracao de solidao, dificuldade financeira ou dependencia emocional.
 - Se REALITY_STATE.adultVerified=true, a maioridade ja foi confirmada no presell: nunca pergunte idade de novo. Se estiver false, respeite o gate do backend.
 - Depois de uma compra, primeiro confirme entrega e satisfacao. Uma nova oferta so entra quando combinar com um pedido, preferencia ou abertura real do lead.
@@ -2082,55 +2080,14 @@ ${purchaseHistoryText}
             let draftResultInfo: any = null;
             let reviewResultInfo: any = null;
             let evaluatorResultInfo: any = null;
-            const useSeparateStrategyCall = aiSettings.aiStrategyEnabled && orchestration.separateStrategy;
-            const strategyPrompt = buildLariStrategyPrompt(baseInstruction);
-            const strategyUserPrompt = `Analise este lead e gere um plano curto e executavel do proximo turno.\n\nMENSAGEM ATUAL:\n${userMessage}`;
-            const strategyStartTime = Date.now();
-            const strategyCallPromise: Promise<any> = useSeparateStrategyCall
-                ? (async () => {
-                    try {
-                        const strategyResult = await callAiGatewayJson<any>({
-                            settings: aiSettings,
-                            role: "strategy",
-                            orchestrationTier: orchestration.tier,
-                            routingKey: sessionId,
-                            schemaName: "centralBrainSchema",
-                            systemInstruction: strategyPrompt,
-                            responseSchemaConfig: centralBrainSchema as any,
-                            history: cleanHistory,
-                            text: strategyUserPrompt,
-                            mediaPart: media ? currentMessageParts[1] : undefined,
-                        });
-                        return {
-                            strategy: strategyResult.data,
-                            status: `cerebro paralelo via ${strategyResult.gateway.label}`,
-                            info: {
-                                name: "Cérebro Estratégico",
-                                role: "strategy",
-                                model: strategyResult.gateway.model,
-                                provider: strategyResult.gateway.provider,
-                                duration_ms: Date.now() - strategyStartTime,
-                                prompt: strategyPrompt,
-                                user_prompt: strategyUserPrompt,
-                                gateway_attempts: strategyResult.attempts,
-                                output: strategyResult.data,
-                            },
-                        };
-                    } catch (strategyError: any) {
-                        console.warn("Cérebro central falhou, usando fallback local:", strategyError?.message || strategyError);
-                        return null;
-                    }
-                })()
-                : Promise.resolve(null);
-
             const draftPrompt = buildLariDraftPrompt(baseInstruction);
 
             const draftParts: any[] = [{
                 text: `${userMessage}
 
-[MODO REDATORA INDEPENDENTE]
-Crie agora a melhor resposta candidata usando a mensagem, o historico, a memoria e as ferramentas reais do backend.
-O cerebro estrategico esta trabalhando em paralelo e a revisora reconciliara as duas leituras. Nao espere nem invente o plano dele.`
+[MODO MASTER BRAIN]
+Resolva agora, em uma unica decisao, entendimento, continuidade, estrategia comercial, memoria, ferramenta e resposta final.
+Use somente fatos e opcoes do backend. Nao espere outra IA completar seu trabalho.`
             }];
             if (media) draftParts.push(currentMessageParts[1]);
             let mediaRecoveryUsed = false;
@@ -2177,14 +2134,6 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                     text: textOnlyRecoveryPrompt,
                 });
             }
-            const strategyOutcome = await strategyCallPromise;
-            if (strategyOutcome?.strategy && typeof strategyOutcome.strategy === 'object') {
-                strategy = strategyOutcome.strategy;
-                strategyStatus = strategyOutcome.status;
-                strategyResultInfo = strategyOutcome.info;
-            }
-            console.log("🧠 Cérebro Central Lari:", JSON.stringify(strategy));
-
             const responseText = JSON.stringify(draftResult.data);
 
             draftResultInfo = {
@@ -2211,8 +2160,19 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
             jsonResponse.decision_confidence = Math.max(0, Math.min(1, Number(jsonResponse.decision_confidence ?? strategy?.confidence ?? 0.5)));
             jsonResponse.memory_updates = Array.isArray(jsonResponse.memory_updates) ? jsonResponse.memory_updates.slice(0, 12) : [];
             jsonResponse.offer_id = jsonResponse.offer_id ?? null;
-            jsonResponse.recommended_message_count = Math.max(1, Math.min(6, Number(jsonResponse.messages?.length || strategy?.recommended_message_count || 3)));
+            jsonResponse.recommended_message_count = Math.max(1, Math.min(4, Number(jsonResponse.messages?.length || strategy?.recommended_message_count || 2)));
             jsonResponse.max_chars_per_message = Math.max(55, Math.min(110, Number(Math.max(0, ...(jsonResponse.messages || []).map((message) => String(message || '').length)) || strategy?.max_chars_per_message || 90)));
+            strategy = {
+                ...strategy,
+                intent: jsonResponse.lead_classification || strategy?.intent || 'conversa',
+                relationship_stage: jsonResponse.lead_memory_patch?.relationship_stage || strategy?.relationship_stage || context?.leadMemory?.relationship_stage || 'new',
+                objective: jsonResponse.next_best_action || 'TALK',
+                next_step: jsonResponse.next_best_action || 'TALK',
+                next_best_action: jsonResponse.next_best_action || 'TALK',
+                confidence: jsonResponse.decision_confidence,
+                memory_patch: jsonResponse.lead_memory_patch || strategy?.memory_patch || null,
+            };
+            strategyStatus = `integrado no Master Brain via ${draftResult.gateway.label}`;
 
             let review: any = {
                 approved: true,
@@ -2286,8 +2246,8 @@ Revise e corrija se necessario.`
                 ? normalizeAiMessageList(review.messages)
                 : [];
 
-            // As tres camadas continuam ativas, mas uma aprovacao nao pode
-            // degradar silenciosamente um rascunho especifico em fala generica.
+            // A revisora excepcional nao pode degradar silenciosamente uma
+            // decisao especifica do Master Brain em fala generica.
             // A revisora so substitui quando reprova/corrige ou quando o draft
             // realmente veio vazio.
             const reviewIssues = Array.isArray(review?.issues) ? review.issues.filter(Boolean) : [];

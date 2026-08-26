@@ -1576,9 +1576,8 @@ Cada balao deve ter uma funcao e normalmente ate 100 caracteres. Use no maximo 2
         hasMedia: Boolean(mediaData),
     });
     let aiResponse: Awaited<ReturnType<typeof sendMessageToGemini>>;
-    // Inclusive o primeiro contato passa pelos tres cerebros. Isso evita uma
-    // personalidade fixa no /start e garante leitura, estrategia e revisao para
-    // todos os leads desde a primeira mensagem.
+    // Uma chamada do Master Brain resolve o turno inteiro. A revisora adaptativa
+    // so entra em decisoes criticas e nunca atrasa toda conversa por padrao.
     const typingHeartbeat = setInterval(() => {
         void sendTelegramAction(botToken, chatId, 'typing').catch((error: any) => {
             console.warn('[PROCESSADOR] Falha ao renovar digitando:', error?.message || error);

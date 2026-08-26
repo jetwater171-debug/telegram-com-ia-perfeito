@@ -67,7 +67,7 @@ export const rankMemoryRows = ({
     const nowMs = now.getTime();
 
     return (rows || [])
-        .filter((row) => String(row.status || 'active') === 'active')
+        .filter((row) => ['active', 'uncertain'].includes(String(row.status || 'active')))
         .map((row) => {
             const content = String(row.content || '').replace(/\s+/g, ' ').trim().slice(0, 500);
             const key = String(row.memory_key || '').trim().slice(0, 160);
@@ -89,7 +89,7 @@ export const rankMemoryRows = ({
                 kind: (['fact', 'hypothesis', 'preference', 'episode', 'outcome'].includes(String(row.kind))
                     ? String(row.kind)
                     : 'fact') as RetrievedMemory['kind'],
-                status: 'active' as const,
+                status: (String(row.status || 'active') === 'uncertain' ? 'uncertain' : 'active') as RetrievedMemory['status'],
                 key,
                 content,
                 confidence: clamp01(row.confidence, 0.5),
@@ -108,7 +108,7 @@ export const rankMemoryRows = ({
 export const formatRetrievedMemories = (memories: RetrievedMemory[]) => {
     if (!memories.length) return '- nenhuma memória relevante recuperada';
     return memories.map((memory) => {
-        const epistemic = memory.kind === 'hypothesis'
+        const epistemic = memory.kind === 'hypothesis' || memory.status === 'uncertain'
             ? `HIPÓTESE ${memory.confidence.toFixed(2)}`
             : `${memory.kind.toUpperCase()} ${memory.confidence.toFixed(2)}`;
         return `- [${epistemic}] ${memory.content}`;

@@ -59,7 +59,7 @@ export const persistMemoryUpdatesSafe = async ({
     updates?: StructuredMemoryUpdate[] | null;
     sourceEventId?: string | null;
 }) => {
-    const sanitized = (updates || []).slice(0, 12).map((update) => ({
+    const normalized = (updates || []).slice(0, 12).map((update) => ({
         session_id: sessionId,
         kind: update.kind,
         status: update.status || (update.kind === 'hypothesis' ? 'uncertain' : 'active'),
@@ -70,25 +70,64 @@ export const persistMemoryUpdatesSafe = async ({
         source_event_id: sourceEventId || null,
         updated_at: new Date().toISOString(),
     })).filter((row) => row.memory_key && row.content);
+    // Um único turno pode repetir a mesma chave. A versão final do turno vence,
+    // evitando duas memórias simultaneamente ativas para o mesmo conceito.
+    const sanitized = [...new Map(normalized.map((row) => [row.memory_key, row] as const)).values()];
     if (!sanitized.length) return 0;
 
     try {
+        const keys = Array.from(new Set(sanitized.map((row) => row.memory_key)));
+        const { data: existingRows, error: existingError } = await supabase
+            .from('lead_memory_items')
+            .select('id,memory_key,content,status,confidence,importance')
+            .eq('session_id', sessionId)
+            .in('memory_key', keys)
+            .in('status', ['active', 'uncertain']);
+        if (existingError) throw existingError;
+
+        let persisted = 0;
         for (const row of sanitized) {
-            if (row.status === 'active' && row.kind !== 'hypothesis') {
-                await supabase.from('lead_memory_items')
-                    .update({ status: 'superseded', updated_at: new Date().toISOString() })
-                    .eq('session_id', sessionId)
-                    .eq('memory_key', row.memory_key)
-                    .eq('status', 'active')
-                    .neq('content', row.content);
+            const matching = (existingRows || []).filter((item: any) => item.memory_key === row.memory_key);
+            const normalizeContent = (value: unknown) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            const same = matching.find((item: any) => normalizeContent(item.content) === normalizeContent(row.content));
+
+            if (row.status === 'superseded' || row.status === 'expired') {
+                const ids = matching.map((item: any) => item.id).filter(Boolean);
+                if (ids.length > 0) {
+                    const result = await supabase.from('lead_memory_items')
+                        .update({ status: row.status, updated_at: row.updated_at })
+                        .in('id', ids);
+                    if (result.error) throw result.error;
+                    persisted += ids.length;
+                }
+                continue;
             }
+
+            if (same?.id) {
+                const result = await supabase.from('lead_memory_items').update({
+                    status: row.status,
+                    confidence: Math.max(Number(same.confidence || 0), row.confidence),
+                    importance: Math.max(Number(same.importance || 0), row.importance),
+                    source_event_id: row.source_event_id,
+                    updated_at: row.updated_at,
+                }).eq('id', same.id);
+                if (result.error) throw result.error;
+                persisted += 1;
+                continue;
+            }
+
+            const priorIds = matching.map((item: any) => item.id).filter(Boolean);
+            if (priorIds.length > 0) {
+                const supersedeResult = await supabase.from('lead_memory_items')
+                    .update({ status: 'superseded', updated_at: row.updated_at })
+                    .in('id', priorIds);
+                if (supersedeResult.error) throw supersedeResult.error;
+            }
+            const insertResult = await supabase.from('lead_memory_items').insert(row);
+            if (insertResult.error) throw insertResult.error;
+            persisted += 1;
         }
-        const { error } = await supabase.from('lead_memory_items').insert(sanitized);
-        if (error) {
-            if (!missingArchitectureRelation(error)) console.warn('[MEMÓRIA V2] persistência falhou:', error.message);
-            return 0;
-        }
-        return sanitized.length;
+        return persisted;
     } catch (error: any) {
         if (!missingArchitectureRelation(error)) console.warn('[MEMÓRIA V2] indisponível:', error?.message || error);
         return 0;
@@ -170,6 +209,9 @@ export const persistBrainProjectionsSafe = async ({
     const interests = { ...state.twin.interests };
     const mediaPreferences = { ...state.twin.mediaPreferences };
     const openLoops = new Set([...state.twin.openLoops, ...state.episode.openLoops]);
+    const importantOutcomes = new Set<string>();
+    let episodeTopic = state.episode.topic;
+    let episodeSummary = state.episode.summary;
     for (const update of updates || []) {
         if (update.status !== 'active' && update.status !== 'uncertain') continue;
         if (update.kind === 'preference') {
@@ -178,7 +220,13 @@ export const persistBrainProjectionsSafe = async ({
                 : interests;
             target[update.key] = Math.max(Number(target[update.key] || 0), Math.max(0, Math.min(1, Number(update.confidence) || 0.5)));
         }
-        if (update.kind === 'episode' && update.content) openLoops.add(update.content.slice(0, 180));
+        if (update.kind === 'episode' && update.content) {
+            const key = String(update.key || '').toLowerCase();
+            if (/topic|assunto/.test(key)) episodeTopic = update.content.slice(0, 180);
+            else if (/summary|resumo/.test(key)) episodeSummary = update.content.slice(0, 500);
+            else openLoops.add(update.content.slice(0, 180));
+        }
+        if (update.kind === 'outcome' && update.content) importantOutcomes.add(update.content.slice(0, 180));
     }
     const trimmedUserText = String(userText || '').replace(/\s+/g, ' ').trim();
     const messageLength = trimmedUserText.length <= 45 ? 'short' : trimmedUserText.length >= 180 ? 'long' : 'medium';
@@ -186,7 +234,12 @@ export const persistBrainProjectionsSafe = async ({
     const directSignal = /\b(quero|manda|faz|quanto|pix|agora|sim|nao|não)\b/i.test(trimmedUserText) ? 0.8 : state.twin.conversationStyle.directness;
 
     try {
-        const [twinResult, episodeResult] = await Promise.all([
+        const [closeResult, twinResult, episodeResult] = await Promise.all([
+            supabase.from('lead_episode_states').update({
+                status: 'closed',
+                ended_at: now,
+                updated_at: now,
+            }).eq('session_id', sessionId).eq('status', 'active').neq('episode_key', state.episode.episodeKey),
             supabase.from('lead_twins').upsert({
                 session_id: sessionId,
                 relationship: { stage, familiarity: familiarityByStage[stage] ?? state.twin.relationship.familiarity },
@@ -201,14 +254,15 @@ export const persistBrainProjectionsSafe = async ({
                 session_id: sessionId,
                 episode_key: state.episode.episodeKey,
                 status: 'active',
-                topic: state.episode.topic || null,
-                summary: state.episode.summary || null,
+                topic: episodeTopic || null,
+                summary: episodeSummary || null,
                 open_loops: [...openLoops].slice(0, 12),
                 momentum: state.episode.momentum,
+                ...(importantOutcomes.size > 0 ? { important_outcomes: [...importantOutcomes].slice(0, 12) } : {}),
                 updated_at: now,
             }, { onConflict: 'session_id,episode_key' }),
         ]);
-        const error = twinResult.error || episodeResult.error;
+        const error = closeResult.error || twinResult.error || episodeResult.error;
         if (error && !missingArchitectureRelation(error)) console.warn('[PROJEÇÕES V2] persistência falhou:', error.message);
         return !error;
     } catch (error: any) {

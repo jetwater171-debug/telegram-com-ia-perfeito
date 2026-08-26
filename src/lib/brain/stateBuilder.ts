@@ -59,15 +59,21 @@ const fallbackTwin = (leadMemory: any): LeadTwinState => {
     };
 };
 
-const fallbackEpisode = (leadMemory: any, recentMessages: any[]): EpisodeState => {
+const fallbackEpisode = (leadMemory: any, recentMessages: any[], temporal: TemporalState): EpisodeState => {
     const metadata = asObject(asObject(leadMemory).metadata);
-    const startedAt = String(metadata.conversation_started_at || recentMessages[0]?.created_at || new Date().toISOString());
+    const startsNewEpisode = ['returning_day', 'returning_days', 'reactivation'].includes(temporal.gapBucket);
+    const ordered = [...recentMessages]
+        .filter((message) => message?.created_at)
+        .sort((left, right) => Date.parse(String(left.created_at)) - Date.parse(String(right.created_at)));
+    const startedAt = startsNewEpisode
+        ? String(temporal.lastLeadAt || temporal.now)
+        : String(metadata.conversation_started_at || ordered[0]?.created_at || temporal.now);
     return {
         episodeKey: `episode:${startedAt.slice(0, 19)}`,
         topic: '',
         summary: '',
         openLoops: asList(asObject(leadMemory).conversation_hooks),
-        momentum: recentMessages.length >= 8 ? 0.7 : recentMessages.length >= 3 ? 0.45 : 0.2,
+        momentum: startsNewEpisode ? 0.2 : recentMessages.length >= 8 ? 0.7 : recentMessages.length >= 3 ? 0.45 : 0.2,
     };
 };
 
@@ -115,6 +121,8 @@ const buildTemporalState = (session: any, recentMessages: any[]): TemporalState 
         lastBotAt: lastBotAt ? String(lastBotAt) : null,
         previousActivityAt,
         gapMinutes,
+        gapHours: gapMinutes === null ? null : Math.round((gapMinutes / 60) * 10) / 10,
+        gapDays: gapMinutes === null ? null : Math.round((gapMinutes / 1_440) * 10) / 10,
         gapBucket,
         crossedCalendarDay,
     };
@@ -131,15 +139,15 @@ export const loadBrainRuntimeState = async ({
 }): Promise<BrainRuntimeState> => {
     const realityFallback = fallbackReality(session, recentMessages);
     const twinFallback = fallbackTwin(session?.lead_memory);
-    const episodeFallback = fallbackEpisode(session?.lead_memory, recentMessages);
     const temporal = buildTemporalState(session, recentMessages);
+    const episodeFallback = fallbackEpisode(session?.lead_memory, recentMessages, temporal);
 
     try {
         const [realityResult, twinResult, episodeResult, memoryResult] = await Promise.all([
             supabase.from('lead_reality_states').select('*').eq('session_id', session.id).maybeSingle(),
             supabase.from('lead_twins').select('*').eq('session_id', session.id).maybeSingle(),
             supabase.from('lead_episode_states').select('*').eq('session_id', session.id).eq('status', 'active').order('updated_at', { ascending: false }).limit(1).maybeSingle(),
-            supabase.from('lead_memory_items').select('id,kind,status,memory_key,content,confidence,importance,updated_at').eq('session_id', session.id).eq('status', 'active').order('updated_at', { ascending: false }).limit(80),
+            supabase.from('lead_memory_items').select('id,kind,status,memory_key,content,confidence,importance,updated_at').eq('session_id', session.id).in('status', ['active', 'uncertain']).order('updated_at', { ascending: false }).limit(80),
         ]);
         const fatal = [realityResult.error, twinResult.error, episodeResult.error, memoryResult.error].find(Boolean);
         if (fatal) throw fatal;
@@ -161,7 +169,8 @@ export const loadBrainRuntimeState = async ({
             commercial: { ...twinFallback.commercial, ...asObject(twinRow.commercial) },
             openLoops: asList(twinRow.open_loops),
         } : twinFallback;
-        const episode: EpisodeState = episodeResult.data ? {
+        const startsNewEpisode = ['returning_day', 'returning_days', 'reactivation'].includes(temporal.gapBucket);
+        const episode: EpisodeState = episodeResult.data && !startsNewEpisode ? {
             episodeKey: String(episodeRow.episode_key || episodeFallback.episodeKey),
             topic: String(episodeRow.topic || ''),
             summary: String(episodeRow.summary || ''),

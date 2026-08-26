@@ -24,9 +24,9 @@ export const AI_ORCHESTRATION_THRESHOLDS = {
 const normalizePaid = (value: unknown) => Math.max(0, Number(value) || 0);
 
 /**
- * Todo lead recebe o pipeline completo de tres cerebros. Os niveis continuam
- * existindo apenas para ajustar a quantidade de memoria recuperada, nunca para
- * reduzir estrategia ou revisao de quem ainda nao comprou.
+ * Um Master Brain resolve leitura, estrategia, voz e action na mesma chamada.
+ * A revisora e adaptativa: protege somente turnos criticos sem atrasar toda a
+ * conversa. Memoria longa fica nas projecoes; historico recente fica enxuto.
  */
 export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestrationPlan => {
     const totalPaid = normalizePaid(totalPaidInput);
@@ -36,14 +36,14 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             tier: 'elite',
             label: 'cliente elite',
             totalPaid,
-            separateStrategy: true,
-            reviewMode: 'always',
+            separateStrategy: false,
+            reviewMode: 'critical',
             evaluator: false,
-            historyMessageLimit: 48,
-            historyMaxEntries: 36,
-            historyMaxChars: 18_000,
-            promptBlockMaxChars: 12_000,
-            objective: 'tres cerebros sempre ativos com maxima continuidade e personalizacao',
+            historyMessageLimit: 30,
+            historyMaxEntries: 24,
+            historyMaxChars: 14_000,
+            promptBlockMaxChars: 8_000,
+            objective: 'master brain unico com memoria maxima e revisao apenas critica',
         };
     }
 
@@ -52,14 +52,14 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             tier: 'premium',
             label: 'cliente premium',
             totalPaid,
-            separateStrategy: true,
-            reviewMode: 'always',
+            separateStrategy: false,
+            reviewMode: 'critical',
             evaluator: false,
-            historyMessageLimit: 44,
-            historyMaxEntries: 34,
-            historyMaxChars: 17_000,
-            promptBlockMaxChars: 12_000,
-            objective: 'tres cerebros sempre ativos com revisao completa',
+            historyMessageLimit: 26,
+            historyMaxEntries: 22,
+            historyMaxChars: 12_000,
+            promptBlockMaxChars: 8_000,
+            objective: 'master brain unico com continuidade premium e revisao critica',
         };
     }
 
@@ -68,14 +68,14 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
             tier: 'buyer',
             label: 'cliente ativo',
             totalPaid,
-            separateStrategy: true,
-            reviewMode: 'always',
+            separateStrategy: false,
+            reviewMode: 'critical',
             evaluator: false,
-            historyMessageLimit: 40,
-            historyMaxEntries: 32,
-            historyMaxChars: 16_000,
-            promptBlockMaxChars: 11_000,
-            objective: 'tres cerebros sempre ativos para conduzir, vender e revisar',
+            historyMessageLimit: 22,
+            historyMaxEntries: 20,
+            historyMaxChars: 10_000,
+            promptBlockMaxChars: 7_000,
+            objective: 'master brain unico para conduzir, vender e agir sem latencia extra',
         };
     }
 
@@ -83,14 +83,14 @@ export const resolveAiOrchestrationPlan = (totalPaidInput: unknown): AiOrchestra
         tier: 'starter',
         label: 'primeiro ciclo',
         totalPaid,
-        separateStrategy: true,
-        reviewMode: 'always',
+        separateStrategy: false,
+        reviewMode: 'critical',
         evaluator: false,
-        historyMessageLimit: 36,
-        historyMaxEntries: 30,
-        historyMaxChars: 15_000,
-        promptBlockMaxChars: 10_000,
-        objective: 'tres cerebros sempre ativos desde o primeiro contato',
+        historyMessageLimit: 18,
+        historyMaxEntries: 16,
+        historyMaxChars: 8_000,
+        promptBlockMaxChars: 6_000,
+        objective: 'master brain unico desde o primeiro contato com resposta rapida',
     };
 };
 

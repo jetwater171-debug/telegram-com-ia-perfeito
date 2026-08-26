@@ -80,7 +80,7 @@ const providerDefaults = (provider: string, model: string): GatewayRatePolicy =>
             tpd: 1_000_000_000,
             maxConcurrency: 12,
             // O V4 continua sendo sempre o primeiro, mas um canal lento nao
-            // pode segurar tres cerebros em sequencia. Depois deste limite o
+            // pode segurar uma chamada critica e seu fallback. Depois deste limite o
             // roteador usa imediatamente o proximo fallback configurado.
             timeoutMs: 10_000,
             maxQueueMs: 1_000,
