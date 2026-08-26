@@ -1515,9 +1515,10 @@ const callAiGatewayJson = async <T,>(options: {
     const mediaMimeType = String(options.mediaPart?.inlineData?.mimeType || '').trim();
     const hasMedia = Boolean(mediaMimeType);
     const hasImage = mediaMimeType.startsWith('image/');
-    // Audio/video continuam no Gemini. Imagem usa primeiro o DeepSeek Vision
-    // da B.AI e conserva o Gemini como fallback multimodal independente.
-    const providerOnly = hasMedia && !hasImage ? 'gemini' : options.providerOnly;
+    // Foto pertence exclusivamente ao DeepSeek V4 Vision. Outros modelos so
+    // podem entrar depois, na recuperacao textual, se a chamada visual falhar.
+    // Audio/video continuam no Gemini porque o endpoint B.AI nao os recebe.
+    const providerOnly = hasImage ? 'bai' : hasMedia ? 'gemini' : options.providerOnly;
     const gateways = getTierAwareGatewayOrder({
         role: options.role,
         settings: options.settings,
