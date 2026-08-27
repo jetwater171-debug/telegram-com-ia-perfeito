@@ -163,6 +163,42 @@ export const enforceLatestIntentMessages = (messages: string[], options: {
     return messages;
 };
 
+/**
+ * Ultima barreira local para correcoes e negativas. Ela nao tenta escrever a
+ * conversa pela IA; apenas impede que uma resposta volte a insistir no que o
+ * lead acabou de recusar ou pergunte novamente um desejo ja declarado.
+ */
+export const enforceSemanticTurnContinuityMessages = (messages: string[], options: {
+    latestUserText?: string;
+    recentUserTexts?: unknown[];
+}) => {
+    const latest = lower(options.latestUserText);
+    const correction = /\b(nao quero|nao foi isso|sem isso|para com|nao faz|eu disse|ja falei)\b/i.test(latest);
+    if (!correction) return messages;
+
+    const rejectedAction = latest.match(/\bnao\s+quero\s+(?:que\s+)?(?:(?:te|me|vc|voce)\s+)?([a-z]{3,})\b/i)?.[1] || '';
+    const previousTexts = (options.recentUserTexts || [])
+        .map(lower)
+        .filter((text) => text && text !== latest);
+    const desireAlreadyKnown = previousTexts.some((text) => /\b(quero|vou|pode|faz|manda)\b/i.test(text));
+
+    const safe = (messages || []).map(normalize).filter(Boolean).filter((message) => {
+        const normalized = lower(message);
+        const repeatsRejectedAction = rejectedAction
+            && new RegExp(`\\b${rejectedAction}\\b`, 'i').test(normalized)
+            && !new RegExp(`\\b(?:sem|nao|nunca)\\b.{0,18}\\b${rejectedAction}\\b`, 'i').test(normalized);
+        const asksKnownDesireAgain = desireAlreadyKnown
+            && /\b(?:me conta|fala|diz)\b.{0,24}\b(?:como|o que)\b.{0,24}\b(?:quer|queria|usar|fazer)\b/i.test(normalized);
+        const danglingAlternative = /\bsem\s+[a-z]+(?:\s+[a-z]+){0,3}\s+(?:pode|vai)\s+ser\s+(?:com\s+)?(?:forca|forte|assim)\b/i.test(normalized);
+        return !repeatsRejectedAction && !asksKnownDesireAgain && !danglingAlternative;
+    });
+
+    if (safe.length > 0) return safe;
+    return desireAlreadyKnown
+        ? ['entendi, sem isso', 'vou seguir só no que vc já tinha me pedido']
+        : ['entendi, sem isso', 'me diz só o que vc prefere então'];
+};
+
 export const buildConversationRecoveryMessages = (options: {
     userText?: string;
     recentBotTexts?: unknown[];

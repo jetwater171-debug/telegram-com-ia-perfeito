@@ -2203,6 +2203,7 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                 action: jsonResponse.action,
                 messages: jsonResponse.messages,
                 strategyConfidence: strategy?.confidence,
+                isFallbackModel: draftResult.gateway.provider !== 'bai',
             });
             const useSeparateReviewCall = aiSettings.aiReviewEnabled
                 && shouldRunAiReview(orchestration, criticalReviewNeeded);

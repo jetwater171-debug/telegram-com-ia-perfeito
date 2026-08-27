@@ -19,6 +19,7 @@ import {
     buildProcessingFailureRecoveryMessages,
     detectConversationLanguage,
     enforceLatestIntentMessages,
+    enforceSemanticTurnContinuityMessages,
     filterConversationConsistencyMessages,
     refineNewRelationshipMessages,
 } from '@/lib/conversationQuality';
@@ -2401,6 +2402,10 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         latestUserText,
         language: conversationLanguage,
     });
+    safeMessages = enforceSemanticTurnContinuityMessages(safeMessages, {
+        latestUserText,
+        recentUserTexts,
+    });
     safeMessages = safeMessages.map((message) => sanitizeOutgoingMessage(message, latestUserText)).filter(Boolean);
     const relationshipStageBeforeTurn = String(leadMemory.relationship_stage || 'new').trim().toLowerCase();
     const episodeStartedAtMs = Date.parse(String(leadMemory.metadata?.conversation_started_at || ''));
@@ -2447,7 +2452,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     const maxMessagesForTurn = (() => {
         if (stage === 'PAYMENT_CHECK' || aiResponse.action === 'generate_pix_payment') return 2;
         if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 3;
-        if (explicitFantasy) return Math.min(4, Math.max(3, Number(aiResponse.recommended_message_count || 3)));
+        if (explicitFantasy) return Math.min(4, Math.max(2, Number(aiResponse.recommended_message_count || 2)));
         if (isEarlyConversationEpisode) return 2;
         return Math.min(3, Math.max(2, Number(aiResponse.recommended_message_count || 2)));
     })();
