@@ -33,11 +33,14 @@ import {
     cleanTextForElevenLabsSpeech,
     DEFAULT_ELEVENLABS_SETTINGS,
     ELEVENLABS_CONVERSION_AUDIO_MAX_CHARS,
+    ELEVENLABS_CONVERSION_AUDIO_MAX_WORDS,
     ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS,
+    ELEVENLABS_REQUESTED_AUDIO_MAX_WORDS,
     generateElevenLabsAudio,
     isElevenLabsConversionMoment,
     isElevenLabsDeliveryPromise,
     isUnsafeForElevenLabsVoice,
+    limitElevenLabsSpeechDuration,
     normalizeElevenLabsSettings,
     shouldUseElevenLabsAudio,
     userAskedForElevenLabsAudio,
@@ -65,7 +68,6 @@ import {
     buildSalesOrderSnapshot,
     canonicalizeSalesOfferMessages,
     evaluateSalesTiming,
-    extractExplicitBudget,
     guardPrematureSaleMessages,
     readActiveSalesOrder,
     type ActiveSalesOrder,
@@ -546,18 +548,6 @@ const extractPrices = (text: string) => {
     if (!text) return [];
     const matches = text.match(/\b\d{1,3}[.,]\d{2}\b/g) || [];
     return matches.map(m => Number(m.replace(',', '.'))).filter(n => !Number.isNaN(n));
-};
-
-const extractNegotiatedUserValue = (text: string) => {
-    return extractExplicitBudget(text);
-};
-
-const inferPixValue = (texts: string[]) => {
-    for (let i = texts.length - 1; i >= 0; i--) {
-        const prices = extractPrices(texts[i]);
-        if (prices.length > 0) return prices[prices.length - 1];
-    }
-    return null;
 };
 
 const PAID_STATUS_WORDS = new Set([
@@ -2168,6 +2158,19 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             updated_at: new Date().toISOString(),
         };
     }
+    const hadStoredSalesOrder = Boolean(leadMemory.metadata?.sales_active_order);
+    const shouldReplaceStoredSalesOrder = Boolean(activeSalesOrder)
+        || (salesTiming.salesContextActive && hadStoredSalesOrder && !salesTiming.activeOrder);
+    if (shouldReplaceStoredSalesOrder) {
+        updatedLeadMemory = {
+            ...updatedLeadMemory,
+            metadata: {
+                ...(updatedLeadMemory.metadata || {}),
+                sales_active_order: activeSalesOrder,
+            },
+            updated_at: new Date().toISOString(),
+        };
+    }
 
     const updatePayload: any = {
         lead_score: aiResponse.lead_stats,
@@ -2197,6 +2200,26 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         }
     } else {
         console.log("✅ Stats Atualizados no DB com Sucesso:", updateResult.data);
+    }
+
+    if (activeSalesOrder && (activeSalesOrder.orderId !== salesTiming.activeOrder?.orderId
+        || activeSalesOrder.status !== salesTiming.activeOrder?.status)) {
+        const orderEventType = activeSalesOrder.status === 'accepted' ? 'offer_accepted' : 'offer_created';
+        await appendLeadEventSafe({
+            sessionId: String(session.id),
+            eventType: orderEventType,
+            source: 'backend',
+            sourceId: activeSalesOrder.orderId,
+            payload: {
+                order_id: activeSalesOrder.orderId,
+                product: activeSalesOrder.product,
+                amount: activeSalesOrder.amount,
+                description: activeSalesOrder.description,
+                request_brief: activeSalesOrder.requestBrief,
+                status: activeSalesOrder.status,
+            },
+            occurredAt: activeSalesOrder.offeredAt,
+        });
     }
 
     if (nextStep && previousStep !== nextStep) {
@@ -2418,14 +2441,28 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     let outgoingToSend = isMediaDeliveryTurn
         ? []
         : safeMessages.slice(0, 4);
-    if (aiResponse.action === 'generate_pix_payment') {
+    if (aiResponse.action === 'generate_pix_payment' || aiResponse.action === 'check_payment_status') {
         // O backend envia texto + codigo somente depois de o gateway confirmar
-        // a criacao. Isso elimina promessas falsas de PIX e pedido redundante
-        // de comprovante antes mesmo de existir uma cobranca.
+        // a criacao/consulta. Isso elimina promessas falsas de PIX confirmado e
+        // pedidos redundantes antes de existir uma resposta real do gateway.
         outgoingToSend = [];
     }
     let operationalLeadMemory = updatedLeadMemory;
     let paymentCreatedThisTurn = false;
+    const persistSalesOrderState = async (order: Record<string, unknown> | null) => {
+        operationalLeadMemory = {
+            ...operationalLeadMemory,
+            metadata: {
+                ...(operationalLeadMemory.metadata || {}),
+                sales_active_order: order,
+            },
+            updated_at: new Date().toISOString(),
+        };
+        const { error } = await supabase.from('sessions')
+            .update({ lead_memory: operationalLeadMemory })
+            .eq('id', session.id);
+        if (error) throw new Error(`sales_order_state_update: ${error.message}`);
+    };
     const persistMediaDeliveryStatus = async (
         status: 'delivered' | 'recovered' | 'failed',
         details: { mediaType?: string; mediaUrl?: string; protected?: boolean; caption?: string } = {},
@@ -2549,6 +2586,14 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         elevenLabsSettings.maxChars,
         userWantsAudio ? ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS : ELEVENLABS_CONVERSION_AUDIO_MAX_CHARS,
     );
+    const audioMaxWords = userWantsAudio
+        ? ELEVENLABS_REQUESTED_AUDIO_MAX_WORDS
+        : ELEVENLABS_CONVERSION_AUDIO_MAX_WORDS;
+    const verifiedVoiceLeadName = sessionHasUsefulName(session.user_name)
+        ? String(session.user_name).trim().split(/\s+/)[0].replace(/[^\p{L}'-]/gu, '').slice(0, 30)
+        : '';
+    const shouldSayLeadName = Boolean(verifiedVoiceLeadName)
+        && stablePercent(`${session.id}:${triggerMessageId || lastGroupedUserAt}:voice-name`) < 28;
     if (shouldForceVoice) {
         const combined = outgoingToSend.slice(0, userWantsAudio ? 2 : 1).join('. ');
         if (combined.length >= 8 && !isUnsafeForElevenLabsVoice(combined)) {
@@ -2559,12 +2604,25 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     } else if (preferredAudioIndex >= 0) {
         audioSpokenText = outgoingToSend[preferredAudioIndex];
     }
+    if (audioSpokenText && shouldSayLeadName
+        && !new RegExp(`\\b${verifiedVoiceLeadName}\\b`, 'iu').test(audioSpokenText)) {
+        audioSpokenText = `${verifiedVoiceLeadName}... ${audioSpokenText}`;
+    }
+    if (audioSpokenText) {
+        audioSpokenText = limitElevenLabsSpeechDuration(audioSpokenText, {
+            maxChars: audioMaxChars,
+            maxWords: audioMaxWords,
+        });
+    }
 
     const preparedAudioPromise = preferredAudioIndex >= 0 && audioSpokenText
         ? (() => {
             const emotionalContext = String(session.lead_memory?.emotional_context || '');
             const deterministicFallback = () => ({
-                spokenText: cleanTextForElevenLabsSpeech(audioSpokenText, audioMaxChars),
+                spokenText: limitElevenLabsSpeechDuration(audioSpokenText, {
+                    maxChars: audioMaxChars,
+                    maxWords: audioMaxWords,
+                }),
                 elevenText: buildElevenV3Performance({
                     messageText: audioSpokenText,
                     userText: userOnlyText,
@@ -2581,6 +2639,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 userText: userOnlyText,
                 emotionalContext,
                 maxChars: audioMaxChars,
+                maxWords: audioMaxWords,
                 // Um pedido explícito merece uma resposta criada para ser dita,
                 // não a mera leitura de uma bolha de texto já montada.
                 mode: userWantsAudio ? 'requested_audio' : 'voice_render',
@@ -2597,6 +2656,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     },
                     relationship: {
                         leadName: session.user_name || null,
+                        sayLeadName: shouldSayLeadName,
                         stage,
                         totalPaid: Number(session.total_paid || 0),
                         tier: leadVoicePolicy.tier,
@@ -3133,29 +3193,26 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
 
             case 'generate_pix_payment':
                 try {
-                    const isSocialMeetup = salesTiming.activeProduct === 'social_meetup';
-                    const paymentProduct = isSocialMeetup ? 'social_meetup' : (salesTiming.activeProduct || 'custom_offer');
-                    const inferredValue = inferPixValue([
-                        ...(Array.isArray(aiResponse.messages) ? aiResponse.messages : []),
-                        combinedText,
-                        lastBotMsg?.content || ''
-                    ]);
-                    const negotiatedUserValue = extractNegotiatedUserValue(userOnlyText);
-                    // O backend, e nao apenas o modelo, garante o preco ja aceito/planejado.
-                    // Isso evita cobrar acima do limite declarado ou trocar o produto no fechamento.
-                    const value = isSocialMeetup
-                        ? 500
-                        : Number(salesTiming.offerPlan?.value ?? negotiatedUserValue ?? aiResponse.payment_details?.value ?? inferredValue ?? 19.90);
-                    const description = isSocialMeetup
-                        ? 'Encontro com Larissa Morais'
-                        : (salesTiming.offerPlan?.description || aiResponse.payment_details?.description || "Pack Exclusivo");
-                    const customRequestBrief = paymentProduct === 'custom_request'
-                        ? String(salesTiming.customRequestBrief || salesTiming.offerPlan?.requestBrief || aiResponse.payment_details?.description || 'pedido personalizado').trim().slice(0, 2_000)
-                        : null;
-                    const idempotencyKey = `${session.id}:${paymentProduct}:${value.toFixed(2)}`;
-                    // Idempotencia por sessao + produto + valor: uma nova tentativa
-                    // reenviara exatamente o mesmo PIX, mesmo se outro produto tiver
-                    // gerado uma cobranca mais recente na conversa.
+                    const authoritativeOrder = readActiveSalesOrder(operationalLeadMemory.metadata?.sales_active_order);
+                    if (!authoritativeOrder || !['accepted', 'payment_pending'].includes(authoritativeOrder.status)) {
+                        console.error('[VENDA] Geração de PIX bloqueada sem pedido aceito', {
+                            sessionId: session.id,
+                            action: aiResponse.action,
+                            product: salesTiming.activeProduct,
+                        });
+                        await sendTelegramMessage(botToken, chatId, 'me confirma qual pedido e o valor que vc quer fechar pra eu gerar certinho');
+                        break;
+                    }
+                    const paymentProduct = authoritativeOrder.product;
+                    const isSocialMeetup = paymentProduct === 'social_meetup';
+                    const value = authoritativeOrder.amount;
+                    const description = authoritativeOrder.description;
+                    const customRequestBrief = authoritativeOrder.requestBrief;
+                    const orderId = authoritativeOrder.orderId;
+                    const idempotencyKey = `${session.id}:${orderId}`;
+                    // Idempotência por pedido, não por produto/preço. Uma nova
+                    // compra igual cria outro PIX; repetir o mesmo pedido reenvia
+                    // exatamente a cobrança já criada.
                     const { data: lastPixMsg } = await supabase
                         .from('messages')
                         .select('id, payment_data, created_at')
@@ -3182,6 +3239,14 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     }
 
                     if (sameValue && sameProduct && sameGateway && notPaid && lastPixCode) {
+                        const pendingOrder = {
+                            ...authoritativeOrder,
+                            status: 'payment_pending',
+                            paymentId: String(lastPaymentId || authoritativeOrder.paymentId || '') || null,
+                            gateway: String(lastPaymentData.gateway || authoritativeOrder.gateway || '') || null,
+                            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+                        };
+                        await persistSalesOrderState(pendingOrder);
                         await sendTelegramMessage(botToken, chatId, "ta aqui o pix de novo amor");
                         await sendTelegramCopyableCode(botToken, chatId, lastPixCode);
 
@@ -3200,6 +3265,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                             source: 'backend',
                             sourceId: `${lastPaymentId || 'unknown'}:${triggerMessageId || lastGroupedUserAt}`,
                             payload: {
+                                order_id: orderId,
                                 payment_id: lastPaymentId || null,
                                 gateway: lastPaymentData.gateway || null,
                                 product: paymentProduct,
@@ -3209,6 +3275,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                         });
                         await patchRealityStateSafe(String(session.id), {
                             payment: { pendingPaymentId: String(lastPaymentId || '') || null },
+                            commercial: { currentOrder: pendingOrder },
                         });
                         paymentCreatedThisTurn = true;
                         break;
@@ -3223,6 +3290,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                         description: description,
                         metadata: {
                             session_id: session.id,
+                            order_id: orderId,
                             product: paymentProduct,
                             idempotency_key: idempotencyKey,
                             ...(customRequestBrief ? { custom_request_brief: customRequestBrief } : {}),
@@ -3253,6 +3321,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                                 gatewayLabel: payment.gatewayLabel,
                                 gatewayAttempts: payment.gatewayAttempts,
                                 value,
+                                order_id: orderId,
                                 description,
                                 product: paymentProduct,
                                 custom_request_brief: customRequestBrief,
@@ -3264,26 +3333,39 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                                 status: payment.status || 'pending'
                             }
                         });
-                        if (customRequestBrief) {
+                        const requiresAdminFulfillment = ['custom_photo', 'custom_video', 'custom_request', 'erotic_audio', 'evaluation', 'social_meetup'].includes(paymentProduct);
+                        if (requiresAdminFulfillment) {
                             await recordCustomOrderSafe({
                                 sessionId: String(session.id),
                                 paymentId: String(payment.paymentId),
                                 gateway: payment.gateway,
-                                requestBrief: customRequestBrief,
+                                requestBrief: customRequestBrief || description,
                                 amount: value,
+                                product: paymentProduct,
+                                orderId,
                                 paymentData: {
                                     description,
                                     product: paymentProduct,
+                                    order_id: orderId,
                                     idempotency_key: idempotencyKey,
                                 },
                             });
                         }
+                        const pendingOrder = {
+                            ...authoritativeOrder,
+                            status: 'payment_pending',
+                            paymentId: String(payment.paymentId),
+                            gateway: String(payment.gateway || '') || null,
+                            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+                        };
+                        await persistSalesOrderState(pendingOrder);
                         await appendLeadEventSafe({
                             sessionId: String(session.id),
                             eventType: 'payment_created',
                             source: 'backend',
                             sourceId: String(payment.paymentId),
                             payload: {
+                                order_id: orderId,
                                 payment_id: payment.paymentId,
                                 gateway: payment.gateway,
                                 product: paymentProduct,
@@ -3293,6 +3375,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                         });
                         await patchRealityStateSafe(String(session.id), {
                             payment: { pendingPaymentId: String(payment.paymentId) },
+                            commercial: { currentOrder: pendingOrder },
                         });
                         paymentCreatedThisTurn = true;
                     } else {

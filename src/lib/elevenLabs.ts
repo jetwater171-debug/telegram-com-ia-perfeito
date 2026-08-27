@@ -46,6 +46,8 @@ export const userAskedForElevenLabsAudio = (text: string) =>
 
 export const ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS = 110;
 export const ELEVENLABS_CONVERSION_AUDIO_MAX_CHARS = 90;
+export const ELEVENLABS_REQUESTED_AUDIO_MAX_WORDS = 18;
+export const ELEVENLABS_CONVERSION_AUDIO_MAX_WORDS = 14;
 
 export const isElevenLabsConversionMoment = ({
     stage,
@@ -173,6 +175,19 @@ export const cleanTextForElevenLabsSpeech = (input: string, maxChars = 500) => {
     );
     if (text && !/[.!?…]$/u.test(text)) text += '.';
     return text;
+};
+
+export const limitElevenLabsSpeechDuration = (
+    input: string,
+    { maxChars, maxWords }: { maxChars: number; maxWords: number },
+) => {
+    const cleaned = cleanTextForElevenLabsSpeech(input, maxChars);
+    const words = cleaned.replace(/[.!?…]+$/u, '').split(/\s+/).filter(Boolean);
+    if (words.length <= maxWords) return cleaned;
+    const shortened = words.slice(0, Math.max(1, maxWords)).join(' ')
+        .replace(/[,:;\-–—]+$/u, '')
+        .trim();
+    return shortened ? `${shortened}.` : '';
 };
 
 export const buildElevenV3Performance = ({

@@ -33,6 +33,10 @@ assert.equal(eleven.isElevenLabsConversionMoment({ stage: 'CONNECTION', leadHeat
 assert.equal(eleven.isElevenLabsConversionMoment({ stage: 'SALES_PITCH', leadHeat: 20 }), true);
 assert.equal(eleven.isElevenLabsDeliveryPromise('aqui ó, minha voz pra você agora'), true);
 assert.match(eleven.buildElevenLabsUnavailableReply({ language: 'pt', seed: 'teste' }), /n[aã]o (?:consigo|d[aá])|n[aã]o consigo/i);
+assert.equal(
+    eleven.limitElevenLabsSpeechDuration('um dois três quatro cinco seis sete', { maxChars: 100, maxWords: 5 }),
+    'Um dois três quatro cinco.',
+);
 
 (async () => {
     const settings = { apiKey: 'bai-test', model: 'deepseek-v4-flash', baseUrl: 'https://api.b.ai/v1' };
@@ -129,6 +133,8 @@ assert.match(eleven.buildElevenLabsUnavailableReply({ language: 'pt', seed: 'tes
     assert.match(processSource, /ELEVENLABS_API_KEY/);
     assert.match(processSource, /mode: userWantsAudio \? 'requested_audio' : 'voice_render'/);
     assert.match(processSource, /ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS/);
+    assert.match(processSource, /ELEVENLABS_REQUESTED_AUDIO_MAX_WORDS/);
+    assert.match(processSource, /sayLeadName: shouldSayLeadName/);
     assert.match(processSource, /buildElevenLabsUnavailableReply/);
     assert.match(processSource, /getElevenLabsSubscriptionForBudget/);
 
