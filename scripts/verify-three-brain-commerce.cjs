@@ -27,6 +27,10 @@ const sales = load('src/lib/salesTiming.ts');
 assert.equal(sales.detectPaidProduct('quero comprar sua calcinha'), 'custom_request');
 assert.equal(sales.detectPaidProduct('se eu te pagar vc grava isso pra mim?'), 'custom_request');
 assert.equal(sales.detectPaidProduct('quero te mandar 40 pro ifood'), 'gift');
+assert.equal(
+  sales.detectPaidProduct('eu quero um vídeo seu de quatro mostrando o cuzinho'),
+  'custom_video',
+);
 
 const custom = sales.evaluateSalesTiming({
   userText: 'quero comprar sua calcinha',
@@ -42,11 +46,67 @@ const checkout = sales.evaluateSalesTiming({
   userText: 'fechou manda o pix',
   totalPaid: 80,
   recentMessages: [{ sender: 'bot', content: 'faço esse pedido personalizado por R$ 99,90', created_at: new Date().toISOString() }],
-  leadMemory: { metadata: { sales_nurture_product: 'custom_request', sales_nurture_updated_at: new Date().toISOString(), sales_custom_request_brief: 'calcinha conforme combinado' } },
+  leadMemory: { metadata: {
+    sales_nurture_product: 'custom_request',
+    sales_nurture_updated_at: new Date().toISOString(),
+    sales_custom_request_brief: 'calcinha conforme combinado',
+    sales_active_order: sales.buildSalesOrderSnapshot({
+      orderId: 'order:custom-request',
+      plan: { ...custom.offerPlan, requestBrief: 'calcinha conforme combinado' },
+      status: 'offered',
+    }),
+  } },
 });
 assert.equal(checkout.canGeneratePayment, true);
 assert.equal(checkout.offerPlan.value, 99.9);
 assert.match(checkout.customRequestBrief, /calcinha/i);
+
+const offeredAt = new Date();
+const firstVideoOrder = sales.buildSalesOrderSnapshot({
+  orderId: 'order:first-video',
+  plan: {
+    product: 'custom_video',
+    tier: 'core',
+    value: 19.9,
+    description: 'Video Personalizado Lari',
+    format: 'video combinado',
+    explicitBudget: null,
+    valueSource: 'standard',
+    requestBrief: null,
+  },
+  status: 'offered',
+  now: offeredAt,
+});
+const acceptedVideo = sales.evaluateSalesTiming({
+  userText: 'fechou, manda sua chave pix',
+  now: new Date(offeredAt.getTime() + 60_000),
+  recentMessages: [{ sender: 'bot', content: 'uma oferta antiga por R$ 29,90', created_at: offeredAt.toISOString() }],
+  leadMemory: { metadata: { sales_active_order: firstVideoOrder } },
+});
+assert.equal(acceptedVideo.activeProduct, 'custom_video');
+assert.equal(acceptedVideo.canGeneratePayment, true);
+assert.equal(acceptedVideo.offerPlan.value, 19.9);
+assert.equal(acceptedVideo.activeOrder.orderId, 'order:first-video');
+
+const paidOrderDoesNotReopen = sales.evaluateSalesTiming({
+  userText: 'manda o pix de novo',
+  recentMessages: [{ sender: 'bot', content: 'o video fica R$ 19,90', created_at: new Date().toISOString() }],
+  leadMemory: { metadata: {
+    sales_nurture_product: 'custom_video',
+    sales_nurture_updated_at: new Date().toISOString(),
+  } },
+});
+assert.equal(paidOrderDoesNotReopen.canGeneratePayment, false);
+
+const secondVideoOrder = sales.buildSalesOrderSnapshot({
+  orderId: 'order:second-video',
+  plan: acceptedVideo.offerPlan,
+  status: 'accepted',
+  previous: null,
+  now: new Date(offeredAt.getTime() + 2 * 24 * 60 * 60_000),
+});
+assert.notEqual(firstVideoOrder.orderId, secondVideoOrder.orderId);
+assert.equal(sales.canonicalizeSalesOfferMessages(['fica R$ 29,90'], 19.9)[0], 'fica R$ 19,90');
 
 const route = fs.readFileSync(path.join(root, 'src/app/api/process-message/route.ts'), 'utf8');
 const gateway = fs.readFileSync(path.join(root, 'src/lib/gemini.ts'), 'utf8');
@@ -55,6 +115,9 @@ const prompts = fs.readFileSync(path.join(root, 'src/lib/lariConversationPrompts
 const types = fs.readFileSync(path.join(root, 'src/types.ts'), 'utf8');
 const migration = fs.readFileSync(path.join(root, 'custom_orders_migration.sql'), 'utf8');
 assert.match(route, /recordCustomOrderSafe/);
+assert.match(route, /const idempotencyKey = `\$\{session\.id\}:\$\{orderId\}`/);
+assert.doesNotMatch(route, /aiResponse\.payment_details\?\.value \?\? inferredValue/);
+assert.match(route, /payment_data\?\.order_id/);
 assert.match(route, /sendMessageToGemini\(session\.id, finalUserMessage/);
 assert.doesNotMatch(route, /Primeiro contato via \/start: usando saudação inicial padrão sem IA/);
 assert.match(route, /const isActualFirstRelationshipTurn = !lastBotMsg/);
@@ -63,11 +126,12 @@ assert.match(gateway, /review\?\.approved === false \|\| reviewIssues\.length > 
 assert.match(prompts, /Aprovar significa preservar/);
 assert.doesNotMatch(gateway, /strategyCallPromise/);
 assert.match(prompts, /MASTER BRAIN ÚNICO DA LARI/);
-assert.match(prompts, /O padrão é dois balões curtos/);
+assert.match(prompts, /Responda sempre em 2 a 4 balões curtos/);
 assert.match(gateway, /thinking = \{ type: 'disabled' \}/);
 assert.doesNotMatch(gateway, /const isRetryable = gateway\.provider === 'bai'/);
 assert.match(gatewayRouter, /timeoutMs: 10_000/);
-assert.match(route, /aiSelectedVoice = aiResponse\.action === 'send_voice_reply'/);
+assert.match(route, /aiRequestedVoiceAction = aiResponse\.action === 'send_voice_reply'/);
+assert.match(route, /aiSelectedVoice = aiRequestedVoiceAction && conversionVoiceMoment/);
 assert.match(prompts, /FERRAMENTAS REAIS DO BACKEND/);
 assert.match(types, /"send_voice_reply"/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS custom_orders/i);

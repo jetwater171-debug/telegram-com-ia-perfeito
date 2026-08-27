@@ -1,6 +1,7 @@
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { formatRetrievedMemories, rankMemoryRows } from '@/lib/brain/memoryRetriever';
 import type { BrainRuntimeState, EpisodeState, LeadTwinState, RealityState, TemporalState } from '@/lib/brain/types';
+import { readActiveSalesOrder } from '@/lib/salesTiming';
 
 const asObject = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, any>
@@ -21,6 +22,7 @@ const fallbackReality = (session: any, recentMessages: any[]): RealityState => {
     const mediaRows = recentMessages.filter((message) => message?.sender === 'bot' && message?.media_url);
     const lastMedia = mediaRows.at(-1) || {};
     const pending = [...recentMessages].reverse().find((message) => message?.payment_data?.paid !== true && message?.payment_data?.paymentId)?.payment_data || {};
+    const activeOrder = readActiveSalesOrder(metadata.sales_active_order);
     return {
         adultVerified: metadata.adult_verified === true,
         payment: {
@@ -35,6 +37,14 @@ const fallbackReality = (session: any, recentMessages: any[]): RealityState => {
             sentPreviewIds: asList(metadata.sent_preview_ids, 50),
         },
         commercial: {
+            currentOrder: activeOrder ? {
+                orderId: activeOrder.orderId,
+                product: activeOrder.product,
+                amount: activeOrder.amount,
+                description: activeOrder.description,
+                status: activeOrder.status,
+                paymentId: activeOrder.paymentId,
+            } : null,
             lastProductBought: String(lastPaid.product || '').trim() || null,
             lastPurchaseAt: String(lastPaid.paid_at || paidRows.at(-1)?.created_at || '').trim() || null,
             postPurchaseCooldownUntil: String(metadata.post_purchase_cooldown_until || '').trim() || null,

@@ -5,8 +5,8 @@ import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode, sendTelegramVoice, type TelegramMediaProtection } from '@/lib/telegram';
 import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
-import { reconcilePendingPayments } from '@/lib/paymentReconciliation';
-import { calculateLeadScore, markLeadPaid, parseLeadScore, toStoredLeadScore } from '@/lib/leadScoring';
+import { reconcilePaymentMessage, reconcilePendingPayments } from '@/lib/paymentReconciliation';
+import { calculateLeadScore, parseLeadScore, toStoredLeadScore } from '@/lib/leadScoring';
 import { shapeConversationBubbles } from '@/lib/conversationBubbles';
 import { findLatestConversationStartAt } from '@/lib/conversationEpisode';
 import {
@@ -64,7 +64,14 @@ import {
     normalizePreviewMediaKey as normalizeMediaUrlKey,
     shouldDeliverRequestedMedia,
 } from '@/lib/previewDeliveryPolicy';
-import { evaluateSalesTiming, extractExplicitBudget, guardPrematureSaleMessages } from '@/lib/salesTiming';
+import {
+    buildSalesOrderSnapshot,
+    canonicalizeSalesOfferMessages,
+    evaluateSalesTiming,
+    guardPrematureSaleMessages,
+    readActiveSalesOrder,
+    type ActiveSalesOrder,
+} from '@/lib/salesTiming';
 import {
     addMem0LeadTurn,
     formatMem0LeadMemoryContext,
@@ -83,9 +90,9 @@ import {
     recordAiDecisionSafe,
 } from '@/lib/brain/eventStore';
 import { detectAdultDeclaration, validateMasterBrainResponse } from '@/lib/brain/hardValidator';
-import { applyPreviewBanditRanking, recordPreviewPurchaseSafe, recordPreviewReactionSafe, recordPreviewSentSafe } from '@/lib/brain/previewBandit';
-import { trackLeadResponseOutcomesSafe, trackPaymentOutcomeSafe } from '@/lib/brain/outcomeTracker';
-import { markCustomOrderPaidSafe, recordCustomOrderSafe } from '@/lib/customOrders';
+import { applyPreviewBanditRanking, recordPreviewReactionSafe, recordPreviewSentSafe } from '@/lib/brain/previewBandit';
+import { trackLeadResponseOutcomesSafe } from '@/lib/brain/outcomeTracker';
+import { markSessionSalesOrderPaidSafe, recordCustomOrderSafe } from '@/lib/customOrders';
 
 export const maxDuration = 120;
 
@@ -541,18 +548,6 @@ const extractPrices = (text: string) => {
     if (!text) return [];
     const matches = text.match(/\b\d{1,3}[.,]\d{2}\b/g) || [];
     return matches.map(m => Number(m.replace(',', '.'))).filter(n => !Number.isNaN(n));
-};
-
-const extractNegotiatedUserValue = (text: string) => {
-    return extractExplicitBudget(text);
-};
-
-const inferPixValue = (texts: string[]) => {
-    for (let i = texts.length - 1; i >= 0; i--) {
-        const prices = extractPrices(texts[i]);
-        if (prices.length > 0) return prices[prices.length - 1];
-    }
-    return null;
 };
 
 const PAID_STATUS_WORDS = new Set([
@@ -1373,6 +1368,9 @@ export async function POST(req: NextRequest) {
         `- Aquecimento neste desejo: ${salesTiming.nurtureTurns} turno(s).`,
         `- Pode apresentar preco agora: ${salesTiming.canPitchPrice ? 'sim' : 'nao'}.`,
         `- Pode gerar PIX agora: ${salesTiming.canGeneratePayment ? 'sim' : 'nao; falta aceite ou pedido direto de pagamento'}.`,
+        salesTiming.activeOrder
+            ? `- PEDIDO ATUAL AUTORITATIVO: ${salesTiming.activeOrder.orderId}, ${salesTiming.activeOrder.product}, R$ ${salesTiming.activeOrder.amount.toFixed(2).replace('.', ',')}, status ${salesTiming.activeOrder.status}. Nunca use o total historico pago para confirmar este pedido.`
+            : '- Nao existe pedido comercial atual. Pagamentos historicos pertencem a compras anteriores e nao autorizam entrega nem confirmam uma compra nova.',
         offerPlan
             ? `- Oferta indicada: ${offerPlan.format}, R$ ${offerPlan.value.toFixed(2).replace('.', ',')} (${offerPlan.description}).`
             : '- Ainda nao existe oferta definida; mantenha a conversa natural e deixe desejo/contexto aparecerem sem pergunta de qualificacao.',
@@ -1704,6 +1702,33 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             description: salesTiming.offerPlan.description,
         } : aiResponse.payment_details;
     }
+
+    // Cada venda recebe identidade propria. O modelo pode escrever a oferta,
+    // mas produto, valor aceito e PIX passam a pertencer ao mesmo orderId.
+    // Isso permite varias compras iguais, inclusive em dias diferentes, sem
+    // reaproveitar a cobranca ou o pagamento de um pedido anterior.
+    let activeSalesOrder: ActiveSalesOrder | null = salesTiming.activeOrder;
+    const responseHasPrice = extractPrices((Array.isArray(aiResponse.messages) ? aiResponse.messages : []).join('\n')).length > 0;
+    if (offerPlan && responseHasPrice) {
+        aiResponse.messages = canonicalizeSalesOfferMessages(aiResponse.messages || [], offerPlan.value);
+    }
+    if (offerPlan && (responseHasPrice || aiResponse.action === 'generate_pix_payment')) {
+        const nextOrderStatus = aiResponse.action === 'generate_pix_payment' ? 'accepted' : 'offered';
+        const orderSource = String(triggerMessageId || lastGroupedUserAt).replace(/[^a-zA-Z0-9:_-]/g, '').slice(0, 120);
+        activeSalesOrder = buildSalesOrderSnapshot({
+            orderId: `order:${session.id}:${orderSource}:${offerPlan.product}`,
+            plan: offerPlan,
+            status: nextOrderStatus,
+            previous: salesTiming.activeOrder,
+        });
+        aiResponse.offer_id = activeSalesOrder.orderId;
+        if (aiResponse.action === 'generate_pix_payment') {
+            aiResponse.payment_details = {
+                value: activeSalesOrder.amount,
+                description: activeSalesOrder.description,
+            };
+        }
+    }
     const recentConversationWindow = recentSalesHistory.slice(0, 12);
     const userReportsMissingMedia = /\b(?:vc|voce|você)?\s*(?:nao|não)\s+(?:mandou|enviou)\s+(?:nada|a foto|o video|o vídeo)|\b(?:nao|não)\s+(?:chegou|veio)|\bcad[eê]\s+(?:a foto|o video|o vídeo|ela)\b/i.test(userOnlyText);
     const lastBotAlreadyDeliveredMedia = Boolean(lastBotMsg?.media_url);
@@ -1738,15 +1763,21 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         canPitchPrice: salesTiming.canPitchPrice,
         adultVerified: brainRuntime.reality.adultVerified,
         offer: offerPlan ? {
-            id: `${salesTiming.activeProduct || 'offer'}:${Number(offerPlan.value).toFixed(2)}`,
+            id: activeSalesOrder?.orderId || `${salesTiming.activeProduct || 'offer'}:${Number(offerPlan.value).toFixed(2)}`,
             value: offerPlan.value,
             description: offerPlan.description,
         } : null,
         postPurchaseCooldownActive: Number.isFinite(cooldownUntil) && cooldownUntil > Date.now(),
+        pendingPaymentId: brainRuntime.reality.payment.pendingPaymentId,
     });
     aiResponse = hardValidation.response;
     if (hardValidation.corrections.length > 0) {
         console.log('[HARD VALIDATOR] decisão corrigida:', hardValidation.corrections);
+    }
+    if (activeSalesOrder?.status === 'accepted' && aiResponse.action !== 'generate_pix_payment') {
+        activeSalesOrder = responseHasPrice
+            ? { ...activeSalesOrder, status: 'offered', acceptedAt: null }
+            : salesTiming.activeOrder;
     }
 
     // O modelo descreve a relacao, mas nao tem autoridade para declarar compra,
@@ -2135,6 +2166,19 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             updated_at: new Date().toISOString(),
         };
     }
+    const hadStoredSalesOrder = Boolean(leadMemory.metadata?.sales_active_order);
+    const shouldReplaceStoredSalesOrder = Boolean(activeSalesOrder)
+        || (salesTiming.salesContextActive && hadStoredSalesOrder && !salesTiming.activeOrder);
+    if (shouldReplaceStoredSalesOrder) {
+        updatedLeadMemory = {
+            ...updatedLeadMemory,
+            metadata: {
+                ...(updatedLeadMemory.metadata || {}),
+                sales_active_order: activeSalesOrder,
+            },
+            updated_at: new Date().toISOString(),
+        };
+    }
 
     const updatePayload: any = {
         lead_score: aiResponse.lead_stats,
@@ -2164,6 +2208,31 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         }
     } else {
         console.log("✅ Stats Atualizados no DB com Sucesso:", updateResult.data);
+    }
+
+    if (activeSalesOrder && (activeSalesOrder.orderId !== salesTiming.activeOrder?.orderId
+        || activeSalesOrder.status !== salesTiming.activeOrder?.status)) {
+        const orderEventType = activeSalesOrder.status === 'accepted' ? 'offer_accepted' : 'offer_created';
+        await appendLeadEventSafe({
+            sessionId: String(session.id),
+            eventType: orderEventType,
+            source: 'backend',
+            sourceId: activeSalesOrder.orderId,
+            payload: {
+                order_id: activeSalesOrder.orderId,
+                product: activeSalesOrder.product,
+                amount: activeSalesOrder.amount,
+                description: activeSalesOrder.description,
+                request_brief: activeSalesOrder.requestBrief,
+                status: activeSalesOrder.status,
+            },
+            occurredAt: activeSalesOrder.offeredAt,
+        });
+    }
+    if (shouldReplaceStoredSalesOrder) {
+        await patchRealityStateSafe(String(session.id), {
+            commercial: { currentOrder: activeSalesOrder },
+        });
     }
 
     if (nextStep && previousStep !== nextStep) {
@@ -2385,14 +2454,28 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     let outgoingToSend = isMediaDeliveryTurn
         ? []
         : safeMessages.slice(0, 4);
-    if (aiResponse.action === 'generate_pix_payment') {
+    if (aiResponse.action === 'generate_pix_payment' || aiResponse.action === 'check_payment_status') {
         // O backend envia texto + codigo somente depois de o gateway confirmar
-        // a criacao. Isso elimina promessas falsas de PIX e pedido redundante
-        // de comprovante antes mesmo de existir uma cobranca.
+        // a criacao/consulta. Isso elimina promessas falsas de PIX confirmado e
+        // pedidos redundantes antes de existir uma resposta real do gateway.
         outgoingToSend = [];
     }
     let operationalLeadMemory = updatedLeadMemory;
     let paymentCreatedThisTurn = false;
+    const persistSalesOrderState = async (order: Record<string, unknown> | null) => {
+        operationalLeadMemory = {
+            ...operationalLeadMemory,
+            metadata: {
+                ...(operationalLeadMemory.metadata || {}),
+                sales_active_order: order,
+            },
+            updated_at: new Date().toISOString(),
+        };
+        const { error } = await supabase.from('sessions')
+            .update({ lead_memory: operationalLeadMemory })
+            .eq('id', session.id);
+        if (error) throw new Error(`sales_order_state_update: ${error.message}`);
+    };
     const persistMediaDeliveryStatus = async (
         status: 'delivered' | 'recovered' | 'failed',
         details: { mediaType?: string; mediaUrl?: string; protected?: boolean; caption?: string } = {},
@@ -2484,6 +2567,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         && aiResponse.action === 'none';
 
     if (aiRequestedVoiceAction && !aiSelectedVoice && !userWantsAudio) {
+        // A voz automatica e um recurso de conversao, nao um enfeite de conversa comum.
         aiResponse.action = 'none';
         outgoingToSend = outgoingToSend.filter((message: string) => !isElevenLabsDeliveryPromise(message));
         if (outgoingToSend.length === 0) outgoingToSend = buildRecoveryMessages();
@@ -2548,7 +2632,10 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         ? (() => {
             const emotionalContext = String(session.lead_memory?.emotional_context || '');
             const deterministicFallback = () => ({
-                spokenText: limitElevenLabsSpeechDuration(audioSpokenText, { maxChars: audioMaxChars, maxWords: audioMaxWords }),
+                spokenText: limitElevenLabsSpeechDuration(audioSpokenText, {
+                    maxChars: audioMaxChars,
+                    maxWords: audioMaxWords,
+                }),
                 elevenText: buildElevenV3Performance({
                     messageText: audioSpokenText,
                     userText: userOnlyText,
@@ -2909,239 +2996,133 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     break;
                 }
                 case 'check_payment_status':
-                // Verificar se o último pagamento foi pago
-                try {
-                    // Precisamos buscar o ID do último pagamento de algum lugar.
-                    // Por enquanto, vamos procurar a ÚLTIMA mensagem de sistema com dados PIX?
-                    // Ou mais limpo: O usuário diz "Paguei", verificamos o último pagamento criado para este usuário no WiinPay?
-                    // O Serviço WiinPay precisa suportar listagem ou armazenamos paymentId na sessão?
+                    try {
+                        const currentOrder = readActiveSalesOrder(operationalLeadMemory.metadata?.sales_active_order);
+                        const { data: paymentRows, error: paymentRowsError } = await supabase
+                            .from('messages')
+                            .select('id,session_id,content,payment_data,created_at')
+                            .eq('session_id', session.id)
+                            .eq('sender', 'system')
+                            .ilike('content', '%PIX GENERATED%')
+                            .order('created_at', { ascending: false })
+                            .limit(20);
+                        if (paymentRowsError) throw paymentRowsError;
+                        const rows = paymentRows || [];
+                        const lastPayMsg = (currentOrder
+                            ? rows.find((row: any) => String(row.payment_data?.order_id || '') === currentOrder.orderId)
+                            : null)
+                            || rows.find((row: any) => row.payment_data?.paid !== true)
+                            || rows[0];
 
-                    // SIMPLIFICAÇÃO: Vamos assumir que armazenamos o último PaymentID em mensagens ou sessão.
-                    // Vamos procurar a última mensagem de pagamento no DB
-                    const { data: lastPayMsg } = await supabase
-                        .from('messages')
-                        .select('id, content, payment_data')
-                        .eq('session_id', session.id)
-                        .eq('sender', 'system')
-                        .ilike('content', '%PIX GENERATED%')
-                        .order('created_at', { ascending: false })
-                        .limit(1)
-                        .single();
-
-                    if (lastPayMsg) {
-                        // Extrair Valor e ID
-                        // Formato esperado: "[SYSTEM: PIX GENERATED - 24.90 | ID: abc-123]"
-                        const content = lastPayMsg.content || '';
-                        const valueMatch = content.match(/PIX GENERATED - (\d+(\.\d+)?)/);
-                        const idMatch = content.match(/ID: ([a-zA-Z0-9\-_]+)/);
-
-                        const value = lastPayMsg.payment_data?.value ?? (valueMatch ? parseFloat(valueMatch[1]) : 0);
-                        const paymentId = lastPayMsg.payment_data?.paymentId ?? (idMatch ? idMatch[1] : null);
-                        const paymentProduct = String(lastPayMsg.payment_data?.product || '');
-                        const isSocialMeetupPayment = paymentProduct === 'social_meetup';
-                        const storedPaid = lastPayMsg.payment_data?.paid === true || isPaymentPaidPayload(lastPayMsg.payment_data);
-
-                        if (!paymentId) {
-                            await sendTelegramMessage(botToken, chatId, "amor nao achei o codigo da transação aqui, manda o comprovante?");
+                        if (!lastPayMsg) {
+                            await sendTelegramMessage(botToken, chatId, 'amor qual pix? nao achei uma cobranca aberta aqui');
                             break;
                         }
-
-                        console.log(`[PROCESSADOR] Verificando Pagamento ID: ${paymentId}`);
+                        const paymentData = lastPayMsg.payment_data || {};
+                        const paymentId = String(paymentData.paymentId || '');
+                        if (!paymentId) {
+                            await sendTelegramMessage(botToken, chatId, 'amor nao achei o codigo da transacao aqui, manda o comprovante?');
+                            break;
+                        }
+                        const storedPaid = paymentData.paid === true || isPaymentPaidPayload(paymentData);
                         const statusData = storedPaid
-                            ? { ok: true, status: lastPayMsg.payment_data?.status || 'paid', source: 'local_payment_data' }
-                            : shouldThrottlePushinpayStatusCheck(lastPayMsg.payment_data)
-                                ? {
-                                    ok: true,
-                                    status: lastPayMsg.payment_data?.status || 'pending',
-                                    gateway: 'pushinpay',
-                                    source: 'pushinpay_local_cooldown',
-                                    message: 'consulta direta da PushinPay respeita intervalo minimo de 1 minuto'
-                                }
-                                : await getPaymentStatusMultiGateway(paymentId, lastPayMsg.payment_data?.gateway);
-
-                        console.log(`[PROCESSADOR] Status pagamento:`, JSON.stringify(statusData));
-
-                        const status = findPaymentStatus(statusData) || normalizePaymentStatus(lastPayMsg.payment_data?.status) || 'pending';
+                            ? { ok: true, status: paymentData.status || 'paid', source: 'local_payment_data' }
+                            : shouldThrottlePushinpayStatusCheck(paymentData)
+                                ? { ok: true, status: paymentData.status || 'pending', gateway: 'pushinpay', source: 'pushinpay_local_cooldown' }
+                                : await getPaymentStatusMultiGateway(paymentId, paymentData.gateway);
+                        const status = findPaymentStatus(statusData) || normalizePaymentStatus(paymentData.status) || 'pending';
                         const isPaid = storedPaid || isPaymentPaidPayload(statusData);
 
                         if (isPaid) {
-                            // Incrementar LTV
-                            const currentTotal = Number(session.total_paid || 0);
-                            const alreadyCounted = lastPayMsg.payment_data?.counted === true;
-                            const newTotal = alreadyCounted ? currentTotal : currentTotal + Number(value || 0);
-
-                            await supabase.from('sessions').update({
-                                total_paid: newTotal,
-                                lead_score: markLeadPaid(session.lead_score),
-                            }).eq('id', session.id);
-
-                            // Notificar IA sobre sucesso (via Mensagem de Sistema oculta)
-                            await supabase.from('messages').insert({
-                                session_id: session.id,
-                                sender: 'system',
-                                content: `[SISTEMA: PAGAMENTO CONFIRMADO - ${lastPayMsg.payment_data?.description || paymentProduct || 'produto'} - R$ ${value}. TOTAL PAGO: R$ ${newTotal}]`
+                            const result = await reconcilePaymentMessage(lastPayMsg, {
+                                gateway: paymentData.gateway,
+                                notify: false,
+                                source: 'conversation_payment_check',
+                                statusPayload: statusData,
                             });
-
-                            await sendTelegramMessage(
-                                botToken,
-                                chatId,
-                                isSocialMeetupPayment
-                                    ? 'pagamento confirmado, agora vamos alinhar e confirmar os detalhes do nosso encontro'
-                                    : 'confirmado amor! obrigada, vou te mandar agora',
-                            );
-
-                            // Forçar IA a saber que pagou na proxima iteração se necessário, 
-                            // mas aqui ela já recebe o input de sistema acima.
-                            if (lastPayMsg.id) {
-                                const confirmedAt = lastPayMsg.payment_data?.paid_at || new Date().toISOString();
-                                await supabase.from('messages').update({
-                                    payment_data: {
-                                        ...(lastPayMsg.payment_data || {}),
-                                        paid: true,
-                                        counted: true,
-                                        status: status || 'paid',
-                                        fulfillment_status: isSocialMeetupPayment
-                                            ? 'paid_awaiting_scheduling'
-                                            : lastPayMsg.payment_data?.fulfillment_status || 'paid',
-                                        paid_at: confirmedAt,
-                                        last_checked_at: new Date().toISOString(),
-                                        last_status_payload: statusData
-                                    }
-                                }).eq('id', lastPayMsg.id);
-                                if (paymentProduct === 'custom_request') {
-                                    await markCustomOrderPaidSafe(String(paymentId), confirmedAt);
-                                }
-                            }
-                            const paymentOutcomeEventId = await appendLeadEventSafe({
+                            const paidAt = String(paymentData.paid_at || new Date().toISOString());
+                            await markSessionSalesOrderPaidSafe({
                                 sessionId: String(session.id),
-                                eventType: 'payment_confirmed',
-                                source: 'backend',
-                                sourceId: String(paymentId),
-                                payload: {
-                                    payment_id: paymentId,
-                                    product: paymentProduct || lastPayMsg.payment_data?.description || null,
-                                    amount: Number(value || 0),
-                                    total_confirmed: newTotal,
-                                    gateway: lastPayMsg.payment_data?.gateway || null,
-                                },
+                                orderId: String(paymentData.order_id || currentOrder?.orderId || ''),
+                                paymentId,
+                                paidAt,
                             });
-                            const paymentOutcome = await trackPaymentOutcomeSafe({
-                                sessionId: String(session.id),
-                                eventId: paymentOutcomeEventId,
-                                amount: Number(value || 0),
-                                product: String(paymentProduct || lastPayMsg.payment_data?.description || 'produto'),
-                            });
-                            if (paymentOutcome.previewId) await recordPreviewPurchaseSafe(paymentOutcome.previewId);
                             await patchRealityStateSafe(String(session.id), {
                                 payment: {
-                                    totalConfirmed: newTotal,
-                                    lastConfirmedValue: Number(value || 0),
+                                    totalConfirmed: Number(result.totalPaid ?? session.total_paid ?? 0),
+                                    lastConfirmedValue: Number(paymentData.value || 0),
+                                    lastConfirmedProduct: String(paymentData.product || ''),
                                     pendingPaymentId: null,
                                 },
                                 commercial: {
-                                    lastProductBought: paymentProduct || lastPayMsg.payment_data?.description || null,
-                                    lastPurchaseAt: new Date().toISOString(),
-                                    postPurchaseCooldownUntil: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
+                                    currentOrder: {
+                                        orderId: String(paymentData.order_id || currentOrder?.orderId || ''),
+                                        product: String(paymentData.product || ''),
+                                        amount: Number(paymentData.value || 0),
+                                        description: String(paymentData.description || paymentData.product || 'produto'),
+                                        status: 'paid',
+                                        paymentId,
+                                        paidAt,
+                                    },
                                 },
                             });
-                            try {
-                                await supabase.from('funnel_events').insert({
-                                    session_id: session.id,
-                                    step: 'PAYMENT_CONFIRMED',
-                                    source: 'system'
-                                });
-                            } catch (e: any) {
-                                console.warn("Falha ao registrar pagamento no funil:", e?.message || e);
-                            }
-
-                            try {
-                                const { data: lastAssign } = await supabase
-                                    .from('variant_assignments')
-                                    .select('id, variant_id')
-                                    .eq('session_id', session.id)
-                                    .is('success', null)
-                                    .order('created_at', { ascending: false })
-                                    .limit(1)
-                                    .single();
-                                if (lastAssign) {
-                                    await supabase.from('variant_assignments').update({ success: true }).eq('id', lastAssign.id);
-                                    const { data: variantRow } = await supabase
-                                        .from('prompt_variants')
-                                        .select('successes')
-                                        .eq('id', lastAssign.variant_id)
-                                        .single();
-                                    const successes = Number(variantRow?.successes || 0) + 1;
-                                    await supabase.from('prompt_variants').update({
-                                        successes,
-                                        updated_at: new Date().toISOString()
-                                    }).eq('id', lastAssign.variant_id);
-                                }
-                            } catch (e: any) {
-                                console.warn("Falha ao registrar sucesso da variacao no pagamento:", e?.message || e);
-                            }
+                            await sendTelegramMessage(
+                                botToken,
+                                chatId,
+                                String(paymentData.product || '') === 'social_meetup'
+                                    ? 'pagamento confirmado, agora vamos alinhar e confirmar os detalhes do nosso encontro'
+                                    : 'confirmado amor! obrigada, vou te mandar agora',
+                            );
+                            console.log('[PAGAMENTO] Pedido confirmado', {
+                                orderId: paymentData.order_id || null,
+                                paymentId,
+                                totalPaid: result.totalPaid,
+                            });
+                        } else if (statusData?.ok === false) {
+                            await reconcilePaymentMessage(lastPayMsg, {
+                                gateway: paymentData.gateway,
+                                notify: false,
+                                source: 'conversation_payment_check_error',
+                                statusPayload: statusData,
+                            });
+                            await sendTelegramMessage(botToken, chatId, 'amor nao consegui consultar o sistema agora, me manda o comprovante que eu confiro pra vc');
                         } else {
-                            if (statusData?.ok === false) {
-                                await supabase.from('messages').update({
-                                    payment_data: {
-                                        ...(lastPayMsg.payment_data || {}),
-                                        paid: false,
-                                        status: status || lastPayMsg.payment_data?.status || 'pending',
-                                        last_checked_at: new Date().toISOString(),
-                                        last_check_error: statusData.error || 'erro ao consultar pagamento',
-                                        last_status_payload: statusData
-                                    }
-                                }).eq('id', lastPayMsg.id);
-                                await sendTelegramMessage(botToken, chatId, "amor nao consegui consultar o sistema agora, me manda o comprovante que eu confiro pra vc");
-                                break;
-                            }
-                            await supabase.from('messages').update({
-                                payment_data: {
-                                    ...(lastPayMsg.payment_data || {}),
-                                    paid: false,
-                                    status: status || 'pending',
-                                    last_checked_at: new Date().toISOString(),
-                                    last_status_payload: statusData
-                                }
-                            }).eq('id', lastPayMsg.id);
-                            await sendTelegramMessage(botToken, chatId, "amor ainda não caiu aqui, tem certeza? (Status: " + status + ")");
+                            await reconcilePaymentMessage(lastPayMsg, {
+                                gateway: paymentData.gateway,
+                                notify: false,
+                                source: 'conversation_payment_check',
+                                statusPayload: statusData,
+                            });
+                            await sendTelegramMessage(botToken, chatId, `amor ainda nao caiu aqui, o status continua ${status}`);
                         }
-
-                    } else {
-                        await sendTelegramMessage(botToken, chatId, "amor qual pix? nao achei aqui");
-
-
+                    } catch (e: any) {
+                        console.error('Erro Verificacao Pagamento', e);
+                        await sendTelegramMessage(botToken, chatId, 'deu erro ao verificar amor, manda o comprovante?');
                     }
-                } catch (e: any) {
-                    console.error("Erro Verificação Pagamento", e);
-                    await sendTelegramMessage(botToken, chatId, "deu erro ao verificar amor, manda o comprovante?");
-                }
-                break;
+                    break;
 
             case 'generate_pix_payment':
                 try {
-                    const isSocialMeetup = salesTiming.activeProduct === 'social_meetup';
-                    const paymentProduct = isSocialMeetup ? 'social_meetup' : (salesTiming.activeProduct || 'custom_offer');
-                    const inferredValue = inferPixValue([
-                        ...(Array.isArray(aiResponse.messages) ? aiResponse.messages : []),
-                        combinedText,
-                        lastBotMsg?.content || ''
-                    ]);
-                    const negotiatedUserValue = extractNegotiatedUserValue(userOnlyText);
-                    // O backend, e nao apenas o modelo, garante o preco ja aceito/planejado.
-                    // Isso evita cobrar acima do limite declarado ou trocar o produto no fechamento.
-                    const value = isSocialMeetup
-                        ? 500
-                        : Number(salesTiming.offerPlan?.value ?? negotiatedUserValue ?? aiResponse.payment_details?.value ?? inferredValue ?? 19.90);
-                    const description = isSocialMeetup
-                        ? 'Encontro com Larissa Morais'
-                        : (salesTiming.offerPlan?.description || aiResponse.payment_details?.description || "Pack Exclusivo");
-                    const customRequestBrief = paymentProduct === 'custom_request'
-                        ? String(salesTiming.customRequestBrief || salesTiming.offerPlan?.requestBrief || aiResponse.payment_details?.description || 'pedido personalizado').trim().slice(0, 2_000)
-                        : null;
-                    const idempotencyKey = `${session.id}:${paymentProduct}:${value.toFixed(2)}`;
-                    // Idempotencia por sessao + produto + valor: uma nova tentativa
-                    // reenviara exatamente o mesmo PIX, mesmo se outro produto tiver
-                    // gerado uma cobranca mais recente na conversa.
+                    const authoritativeOrder = readActiveSalesOrder(operationalLeadMemory.metadata?.sales_active_order);
+                    if (!authoritativeOrder || !['accepted', 'payment_pending'].includes(authoritativeOrder.status)) {
+                        console.error('[VENDA] Geração de PIX bloqueada sem pedido aceito', {
+                            sessionId: session.id,
+                            action: aiResponse.action,
+                            product: salesTiming.activeProduct,
+                        });
+                        await sendTelegramMessage(botToken, chatId, 'me confirma qual pedido e o valor que vc quer fechar pra eu gerar certinho');
+                        break;
+                    }
+                    const paymentProduct = authoritativeOrder.product;
+                    const isSocialMeetup = paymentProduct === 'social_meetup';
+                    const value = authoritativeOrder.amount;
+                    const description = authoritativeOrder.description;
+                    const customRequestBrief = authoritativeOrder.requestBrief;
+                    const orderId = authoritativeOrder.orderId;
+                    const idempotencyKey = `${session.id}:${orderId}`;
+                    // Idempotência por pedido, não por produto/preço. Uma nova
+                    // compra igual cria outro PIX; repetir o mesmo pedido reenvia
+                    // exatamente a cobrança já criada.
                     const { data: lastPixMsg } = await supabase
                         .from('messages')
                         .select('id, payment_data, created_at')
@@ -3168,6 +3149,14 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     }
 
                     if (sameValue && sameProduct && sameGateway && notPaid && lastPixCode) {
+                        const pendingOrder = {
+                            ...authoritativeOrder,
+                            status: 'payment_pending',
+                            paymentId: String(lastPaymentId || authoritativeOrder.paymentId || '') || null,
+                            gateway: String(lastPaymentData.gateway || authoritativeOrder.gateway || '') || null,
+                            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+                        };
+                        await persistSalesOrderState(pendingOrder);
                         await sendTelegramMessage(botToken, chatId, "ta aqui o pix de novo amor");
                         await sendTelegramCopyableCode(botToken, chatId, lastPixCode);
 
@@ -3186,6 +3175,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                             source: 'backend',
                             sourceId: `${lastPaymentId || 'unknown'}:${triggerMessageId || lastGroupedUserAt}`,
                             payload: {
+                                order_id: orderId,
                                 payment_id: lastPaymentId || null,
                                 gateway: lastPaymentData.gateway || null,
                                 product: paymentProduct,
@@ -3195,6 +3185,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                         });
                         await patchRealityStateSafe(String(session.id), {
                             payment: { pendingPaymentId: String(lastPaymentId || '') || null },
+                            commercial: { currentOrder: pendingOrder },
                         });
                         paymentCreatedThisTurn = true;
                         break;
@@ -3209,6 +3200,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                         description: description,
                         metadata: {
                             session_id: session.id,
+                            order_id: orderId,
                             product: paymentProduct,
                             idempotency_key: idempotencyKey,
                             ...(customRequestBrief ? { custom_request_brief: customRequestBrief } : {}),
@@ -3239,6 +3231,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                                 gatewayLabel: payment.gatewayLabel,
                                 gatewayAttempts: payment.gatewayAttempts,
                                 value,
+                                order_id: orderId,
                                 description,
                                 product: paymentProduct,
                                 custom_request_brief: customRequestBrief,
@@ -3250,26 +3243,39 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                                 status: payment.status || 'pending'
                             }
                         });
-                        if (customRequestBrief) {
+                        const requiresAdminFulfillment = ['custom_photo', 'custom_video', 'custom_request', 'erotic_audio', 'evaluation', 'social_meetup'].includes(paymentProduct);
+                        if (requiresAdminFulfillment) {
                             await recordCustomOrderSafe({
                                 sessionId: String(session.id),
                                 paymentId: String(payment.paymentId),
                                 gateway: payment.gateway,
-                                requestBrief: customRequestBrief,
+                                requestBrief: customRequestBrief || description,
                                 amount: value,
+                                product: paymentProduct,
+                                orderId,
                                 paymentData: {
                                     description,
                                     product: paymentProduct,
+                                    order_id: orderId,
                                     idempotency_key: idempotencyKey,
                                 },
                             });
                         }
+                        const pendingOrder = {
+                            ...authoritativeOrder,
+                            status: 'payment_pending',
+                            paymentId: String(payment.paymentId),
+                            gateway: String(payment.gateway || '') || null,
+                            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+                        };
+                        await persistSalesOrderState(pendingOrder);
                         await appendLeadEventSafe({
                             sessionId: String(session.id),
                             eventType: 'payment_created',
                             source: 'backend',
                             sourceId: String(payment.paymentId),
                             payload: {
+                                order_id: orderId,
                                 payment_id: payment.paymentId,
                                 gateway: payment.gateway,
                                 product: paymentProduct,
@@ -3279,6 +3285,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                         });
                         await patchRealityStateSafe(String(session.id), {
                             payment: { pendingPaymentId: String(payment.paymentId) },
+                            commercial: { currentOrder: pendingOrder },
                         });
                         paymentCreatedThisTurn = true;
                     } else {

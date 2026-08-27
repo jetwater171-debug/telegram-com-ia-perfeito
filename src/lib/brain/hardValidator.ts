@@ -85,6 +85,7 @@ export const validateMasterBrainResponse = ({
     availablePreviewIds = [],
     offer,
     postPurchaseCooldownActive = false,
+    pendingPaymentId = null,
 }: {
     response: MasterBrainResponse;
     userText: string;
@@ -94,6 +95,7 @@ export const validateMasterBrainResponse = ({
     availablePreviewIds?: string[];
     offer?: { id?: string | null; value: number; description: string } | null;
     postPurchaseCooldownActive?: boolean;
+    pendingPaymentId?: string | null;
 }): HardValidatorResult => {
     const response: MasterBrainResponse = { ...input };
     const corrections: string[] = [];
@@ -137,7 +139,21 @@ export const validateMasterBrainResponse = ({
         response.offer_id = offer.id || response.offer_id || null;
     }
 
-    if (postPurchaseCooldownActive && ['MAKE_OFFER', 'CLOSE', 'GENERATE_PAYMENT'].includes(String(response.next_best_action))) {
+    const claimsCurrentPaymentConfirmed = response.messages.some((message) =>
+        /\b(?:pix|pagamento|transferencia|transferência)\b.{0,32}\b(?:caiu|confirmad[oa]|aprova[doa]|pago|recebi)|\b(?:recebi|caiu|confirmad[oa])\b.{0,32}\b(?:pix|pagamento|valor)\b/i.test(message)
+    );
+    if (pendingPaymentId && claimsCurrentPaymentConfirmed) {
+        response.action = 'check_payment_status';
+        response.payment_details = null;
+        response.next_best_action = 'CHECK_PAYMENT';
+        response.messages = ['vou conferir esse pagamento agora'];
+        corrections.push('unverified_current_payment_claim');
+    }
+
+    // Cooldown impede uma nova pressão comercial automática, mas nunca bloqueia
+    // um novo pedido que o próprio lead decidiu comprar.
+    if (postPurchaseCooldownActive && !canGeneratePayment
+        && ['MAKE_OFFER', 'CLOSE', 'GENERATE_PAYMENT'].includes(String(response.next_best_action))) {
         response.action = 'none';
         response.payment_details = null;
         response.next_best_action = 'POST_PURCHASE';

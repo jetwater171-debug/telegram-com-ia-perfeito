@@ -32,6 +32,10 @@ try {
     '@/lib/brain/eventStore': { appendLeadEventSafe: async () => null, patchRealityStateSafe: async () => true },
     '@/lib/brain/outcomeTracker': { trackPaymentOutcomeSafe: async () => ({}) },
     '@/lib/brain/previewBandit': { recordPreviewPurchaseSafe: async () => undefined },
+    '@/lib/customOrders': {
+      markCustomOrderPaidSafe: async () => undefined,
+      markSessionSalesOrderPaidSafe: async () => true,
+    },
   });
 
   assert.equal(payment.findPaymentStatus({ data: { payment: { status: 'APPROVED' } } }), 'approved');

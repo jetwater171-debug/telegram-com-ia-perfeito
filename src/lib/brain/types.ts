@@ -26,6 +26,14 @@ export type RealityState = {
         sentPreviewIds: string[];
     };
     commercial: {
+        currentOrder: {
+            orderId: string;
+            product: string;
+            amount: number;
+            description: string;
+            status: string;
+            paymentId: string | null;
+        } | null;
         lastProductBought: string | null;
         lastPurchaseAt: string | null;
         postPurchaseCooldownUntil: string | null;

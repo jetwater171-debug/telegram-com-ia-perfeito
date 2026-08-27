@@ -69,6 +69,18 @@ const payment = validator.validateMasterBrainResponse({
 assert.equal(payment.response.action, 'none');
 assert.equal(payment.response.payment_details, null);
 
+const falseConfirmation = validator.validateMasterBrainResponse({
+  response: { ...base, action: 'none', next_best_action: 'TALK', messages: ['seu pix ja caiu amor'] },
+  userText: 'tenho certeza que paguei',
+  canGeneratePayment: false,
+  canPitchPrice: true,
+  adultVerified: true,
+  pendingPaymentId: 'pending-payment',
+});
+assert.equal(falseConfirmation.response.action, 'check_payment_status');
+assert.equal(falseConfirmation.response.next_best_action, 'CHECK_PAYMENT');
+assert.equal(falseConfirmation.corrections.includes('unverified_current_payment_claim'), true);
+
 const candidates = [
   { asset: { id: 'champion', performance: { sent: 100, positive_reactions: 80, purchases: 20 } }, score: 10, moment: {} },
   { asset: { id: 'weak', performance: { sent: 100, positive_reactions: 5, purchases: 0 } }, score: 10, moment: {} },

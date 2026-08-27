@@ -13,6 +13,22 @@ export type AdaptiveOfferPlan = {
     requestBrief: string | null;
 };
 
+export type SalesOrderStatus = 'offered' | 'accepted' | 'payment_pending' | 'paid' | 'superseded' | 'expired';
+
+export type ActiveSalesOrder = {
+    orderId: string;
+    product: SalesProduct;
+    amount: number;
+    description: string;
+    requestBrief: string | null;
+    status: SalesOrderStatus;
+    offeredAt: string;
+    acceptedAt: string | null;
+    expiresAt: string;
+    paymentId: string | null;
+    gateway: string | null;
+};
+
 type SalesMessage = {
     sender?: string | null;
     content?: string | null;
@@ -30,6 +46,91 @@ const normalize = (value: unknown) => String(value || '')
     .replace(/\s+/g, ' ')
     .trim();
 
+const SALES_PRODUCTS = new Set<SalesProduct>([
+    'video_call', 'social_meetup', 'vip', 'custom_photo', 'custom_video',
+    'private_number', 'private_chat', 'erotic_audio', 'evaluation', 'gift', 'custom_request',
+]);
+const OPEN_ORDER_STATUSES = new Set<SalesOrderStatus>(['offered', 'accepted', 'payment_pending']);
+
+const money = (value: unknown) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : null;
+};
+
+export const readActiveSalesOrder = (value: unknown, now = new Date()): ActiveSalesOrder | null => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    const product = String(row.product || '') as SalesProduct;
+    const status = String(row.status || '') as SalesOrderStatus;
+    const amount = money(row.amount);
+    const expiresAt = String(row.expiresAt || row.expires_at || '');
+    const expiryMs = Date.parse(expiresAt);
+    if (!String(row.orderId || row.order_id || '').trim() || !SALES_PRODUCTS.has(product) || !amount) return null;
+    if (!OPEN_ORDER_STATUSES.has(status)) return null;
+    if (!Number.isFinite(expiryMs) || expiryMs <= now.getTime()) return null;
+    return {
+        orderId: String(row.orderId || row.order_id).trim().slice(0, 240),
+        product,
+        amount,
+        description: String(row.description || '').trim().slice(0, 200) || product,
+        requestBrief: String(row.requestBrief || row.request_brief || '').trim().slice(0, 2_000) || null,
+        status,
+        offeredAt: String(row.offeredAt || row.offered_at || now.toISOString()),
+        acceptedAt: String(row.acceptedAt || row.accepted_at || '').trim() || null,
+        expiresAt,
+        paymentId: String(row.paymentId || row.payment_id || '').trim() || null,
+        gateway: String(row.gateway || '').trim() || null,
+    };
+};
+
+export const buildSalesOrderSnapshot = ({
+    orderId,
+    plan,
+    status,
+    now = new Date(),
+    previous,
+}: {
+    orderId: string;
+    plan: AdaptiveOfferPlan;
+    status: Extract<SalesOrderStatus, 'offered' | 'accepted' | 'payment_pending'>;
+    now?: Date;
+    previous?: ActiveSalesOrder | null;
+}): ActiveSalesOrder => {
+    const canReuse = previous
+        && previous.product === plan.product
+        && Math.round(previous.amount * 100) === Math.round(plan.value * 100)
+        && normalize(previous.requestBrief || '') === normalize(plan.requestBrief || '')
+        && previous.status !== 'paid';
+    const base = canReuse ? previous : null;
+    const accepted = status === 'accepted' || status === 'payment_pending';
+    // A oferta dura um dia. Depois que existe PIX, preservamos o pedido por sete
+    // dias para que uma compra tardia ainda seja conciliada com o pedido certo.
+    const ttlMs = status === 'payment_pending' ? 7 * 24 * 60 * 60_000 : 24 * 60 * 60_000;
+    return {
+        orderId: base?.orderId || String(orderId).trim().slice(0, 240),
+        product: plan.product,
+        amount: Math.round(Number(plan.value) * 100) / 100,
+        description: String(plan.description || plan.product).trim().slice(0, 200),
+        requestBrief: plan.requestBrief ? String(plan.requestBrief).trim().slice(0, 2_000) : null,
+        status,
+        offeredAt: base?.offeredAt || now.toISOString(),
+        acceptedAt: accepted ? (base?.acceptedAt || now.toISOString()) : null,
+        expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+        paymentId: base?.paymentId || null,
+        gateway: base?.gateway || null,
+    };
+};
+
+const formatBrl = (value: number) => `R$ ${value.toFixed(2).replace('.', ',')}`;
+
+export const canonicalizeSalesOfferMessages = (messages: string[], amount: number) => {
+    const canonical = formatBrl(amount);
+    return (messages || []).map((message) => String(message || '').replace(
+        /R\$\s*\d{1,4}(?:[.,]\d{1,2})?/gi,
+        canonical,
+    ));
+};
+
 export const detectPaidProduct = (text: string): SalesProduct | null => {
     const value = normalize(text);
     if (/\b(ifood|lanche|janta|almoco|mimo|presente|agrado|ajudar vc|ajudar voce)\b/i.test(value)
@@ -39,6 +140,9 @@ export const detectPaidProduct = (text: string): SalesProduct | null => {
     if (/\b(vip|vitalicio|mensal|pack|acesso)\b/i.test(value)) return 'vip';
     if (/\b(foto personalizada|foto exclusiva|foto pelada|nude sem censura)\b/i.test(value)) return 'custom_photo';
     if (/\b(video personalizado|video completo|video exclusivo)\b/i.test(value)) return 'custom_video';
+    if (/\bvideo\b/i.test(value)
+        && (/\b(de quatro|mostrando|fazendo|gemendo|tirando a roupa|do jeito que eu pedir|do jeito que eu quero|pra mim|para mim)\b/i.test(value)
+            || /\b(?:grava|grave|faz|faca|manda|envia)\b.{0,24}\bvideo\b|\bvideo\b.{0,40}\b(?:de quatro|mostrando|fazendo|gemendo)\b/i.test(value))) return 'custom_video';
     if (/\b(?:pagar|pago|comprar|faz por|fecha por)\b.{0,30}\b(?:foto|nude)\b|\b(?:foto|nude)\b.{0,30}\b(?:pagar|reais|conto)\b/i.test(value)) return 'custom_photo';
     if (/\b(?:pagar|pago|comprar|faz por|fecha por)\b.{0,30}\bvideo\b|\bvideo\b.{0,30}\b(?:pagar|reais|conto)\b/i.test(value)) return 'custom_video';
     if (/\b(whatsapp|numero pessoal|seu numero|contato pessoal)\b/i.test(value)) return 'private_number';
@@ -348,10 +452,14 @@ export const evaluateSalesTiming = ({
     deviceType?: string | null;
 }) => {
     const detectedProduct = detectPaidProduct(userText);
+    const storedActiveOrder = readActiveSalesOrder(leadMemory?.metadata?.sales_active_order, now);
+    const compatibleActiveOrder = storedActiveOrder && (!detectedProduct || storedActiveOrder.product === detectedProduct)
+        ? storedActiveOrder
+        : null;
     const rememberedProduct = isRecent(leadMemory?.metadata?.sales_nurture_updated_at, 12 * 60 * 60_000, now)
         ? productFromMemory(leadMemory)
         : null;
-    const activeProduct = detectedProduct || rememberedProduct;
+    const activeProduct = detectedProduct || compatibleActiveOrder?.product || rememberedProduct;
     const rememberedCustomBrief = String(leadMemory?.metadata?.sales_custom_request_brief || '').trim();
     const customRequestBrief = activeProduct === 'custom_request'
         ? (detectedProduct === 'custom_request' ? buildCustomRequestBrief(userText) : rememberedCustomBrief)
@@ -365,7 +473,12 @@ export const evaluateSalesTiming = ({
         : 0;
     const directCheckout = isDirectCheckoutRequest(userText);
     const askedPrice = isPriceQuestion(userText);
-    const recentOfferDetails = findRecentOffer(recentMessages, now, activeProduct);
+    const storedOfferDetails = compatibleActiveOrder ? {
+        value: compatibleActiveOrder.amount,
+        product: compatibleActiveOrder.product,
+        createdAt: Date.parse(compatibleActiveOrder.offeredAt),
+    } : null;
+    const recentOfferDetails = storedOfferDetails || findRecentOffer(recentMessages, now, activeProduct);
     const recentOffer = Boolean(recentOfferDetails);
     const acceptedOffer = isOfferAcceptance(userText);
     const latestBotMessage = recentMessages
@@ -373,17 +486,23 @@ export const evaluateSalesTiming = ({
         .sort((left, right) => Date.parse(String(right.created_at)) - Date.parse(String(left.created_at)))[0];
     const latestBotText = String(latestBotMessage?.content || '');
     const acceptanceAnswersCurrentOffer = acceptedOffer
-        && Boolean(latestBotText)
-        && (isCheckoutMessage(latestBotText)
+        && (Boolean(compatibleActiveOrder)
+            || (Boolean(latestBotText) && (isCheckoutMessage(latestBotText)
             || isPricePitchMessage(latestBotText)
-            || (detectPaidProduct(latestBotText) === activeProduct && extractOfferValue(latestBotText) !== null));
+            || (detectPaidProduct(latestBotText) === activeProduct && extractOfferValue(latestBotText) !== null))));
     const salesContextActive = Boolean(detectedProduct || engagedContinuation || directCheckout || askedPrice || acceptedOffer || recentOffer);
     const canPitchPrice = true;
     const explicitBudget = extractExplicitBudget(userText);
     const fixedVipBudgetGap = activeProduct === 'vip'
         && explicitBudget !== null
         && explicitBudget < VIP_PRICE;
-    const canGeneratePayment = (directCheckout || acceptanceAnswersCurrentOffer) && !fixedVipBudgetGap;
+    // Cobrança exige o produto dito neste turno ou um pedido ativo persistido.
+    // Memória de produto e texto antigo ajudam a conversar, mas nunca reabrem
+    // sozinhos uma compra já paga.
+    const hasAuthoritativeOrderContext = Boolean(detectedProduct || compatibleActiveOrder);
+    const canGeneratePayment = (directCheckout || acceptanceAnswersCurrentOffer)
+        && hasAuthoritativeOrderContext
+        && !fixedVipBudgetGap;
     const offerPlan = createOfferPlan({
         product: activeProduct,
         explicitBudget,
@@ -398,6 +517,7 @@ export const evaluateSalesTiming = ({
 
     return {
         activeProduct,
+        activeOrder: compatibleActiveOrder,
         salesContextActive,
         nurtureTurns,
         directCheckout,

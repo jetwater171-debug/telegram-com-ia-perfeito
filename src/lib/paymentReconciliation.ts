@@ -11,7 +11,7 @@ import {
 import { appendLeadEventSafe, patchRealityStateSafe } from '@/lib/brain/eventStore';
 import { trackPaymentOutcomeSafe } from '@/lib/brain/outcomeTracker';
 import { recordPreviewPurchaseSafe } from '@/lib/brain/previewBandit';
-import { markCustomOrderPaidSafe } from '@/lib/customOrders';
+import { markCustomOrderPaidSafe, markSessionSalesOrderPaidSafe } from '@/lib/customOrders';
 
 type PaymentMessage = {
   id: string;
@@ -131,14 +131,21 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
   throwOnError(ledgerUpdate.error, 'payment_ledger_marker_update');
 
   const freshlyConfirmed = !wasCounted;
+  const confirmedAt = nextPaymentData.paid_at || checkedAt;
+  await Promise.all([
+    markCustomOrderPaidSafe(String(paymentData.paymentId || ''), confirmedAt),
+    markSessionSalesOrderPaidSafe({
+      sessionId: String(freshMessage.session_id),
+      orderId: String(paymentData.order_id || ''),
+      paymentId: String(paymentData.paymentId || ''),
+      paidAt: confirmedAt,
+    }),
+  ]);
   if (freshlyConfirmed) {
     const value = Number(paymentData.value || 0);
     const product = String(paymentData.product || 'produto');
     const description = String(paymentData.description || product);
     const isSocialMeetup = product === 'social_meetup';
-    if (product === 'custom_request') {
-      await markCustomOrderPaidSafe(String(paymentData.paymentId || ''), nextPaymentData.paid_at || checkedAt);
-    }
     await supabase.from('messages').insert({
       session_id: freshMessage.session_id,
       sender: 'system',
@@ -155,6 +162,7 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
       source: options.source || `${gateway}_reconciliation`,
       sourceId: String(paymentData.paymentId || freshMessage.id),
       payload: {
+        order_id: paymentData.order_id || null,
         payment_id: paymentData.paymentId || null,
         gateway,
         product,
@@ -162,7 +170,7 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
         amount: value,
         total_confirmed: totalPaid,
       },
-      occurredAt: nextPaymentData.paid_at || checkedAt,
+      occurredAt: confirmedAt,
     });
     const paymentOutcome = await trackPaymentOutcomeSafe({
       sessionId: String(freshMessage.session_id),
@@ -175,12 +183,22 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
       payment: {
         totalConfirmed: totalPaid,
         lastConfirmedValue: value,
+        lastConfirmedProduct: product,
         pendingPaymentId: null,
       },
       commercial: {
+        currentOrder: paymentData.order_id ? {
+          orderId: paymentData.order_id,
+          product,
+          amount: value,
+          description,
+          status: 'paid',
+          paymentId: paymentData.paymentId || null,
+          paidAt: confirmedAt,
+        } : null,
         lastProductBought: product,
-        lastPurchaseAt: nextPaymentData.paid_at || checkedAt,
-        postPurchaseCooldownUntil: new Date(Date.parse(nextPaymentData.paid_at || checkedAt) + 24 * 60 * 60_000).toISOString(),
+        lastPurchaseAt: confirmedAt,
+        postPurchaseCooldownUntil: new Date(Date.parse(confirmedAt) + 24 * 60 * 60_000).toISOString(),
       },
     });
 
