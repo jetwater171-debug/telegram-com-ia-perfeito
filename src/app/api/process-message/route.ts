@@ -28,16 +28,16 @@ import {
     normalizeLeadMemory,
 } from '@/lib/leadMemory';
 import {
-    buildExpressiveSpeech,
-    cleanTextForSpeech,
-    DEFAULT_FISH_AUDIO_SETTINGS,
-    generateFishAudio,
-    isUnsafeForVoice,
-    normalizeFishAudioSettings,
-    shouldUseFishAudio,
-    userAskedForAudio,
-} from '@/lib/fishAudio';
-import { prepareFishAudioScript } from '@/lib/fishAudioScriptAgent';
+    buildElevenV3Performance,
+    cleanTextForElevenLabsSpeech,
+    DEFAULT_ELEVENLABS_SETTINGS,
+    generateElevenLabsAudio,
+    isUnsafeForElevenLabsVoice,
+    normalizeElevenLabsSettings,
+    shouldUseElevenLabsAudio,
+    userAskedForElevenLabsAudio,
+} from '@/lib/elevenLabs';
+import { prepareElevenLabsScript } from '@/lib/elevenLabsScriptAgent';
 import { normalizeBaiModelName } from '@/lib/aiModels';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
@@ -842,6 +842,13 @@ export async function POST(req: NextRequest) {
                 'fish_audio_frequency_percent',
                 'fish_audio_cooldown_minutes',
                 'fish_audio_max_chars',
+                'elevenlabs_api_key',
+                'elevenlabs_enabled',
+                'elevenlabs_voice_id',
+                'elevenlabs_model',
+                'elevenlabs_frequency_percent',
+                'elevenlabs_cooldown_minutes',
+                'elevenlabs_max_chars',
                 'mem0_api_key',
                 'mem0_enabled',
                 'mem0_top_k',
@@ -860,14 +867,14 @@ export async function POST(req: NextRequest) {
     const botToken = botConfig.telegram_bot_token;
     if (!botToken) return NextResponse.json({ error: 'Sem token' });
     const chatId = session.telegram_chat_id;
-    const fishAudioSettings = normalizeFishAudioSettings({
-        apiKey: botConfig.fish_audio_api_key || process.env.FISH_AUDIO_API_KEY || '',
-        enabled: botConfig.fish_audio_enabled === 'true',
-        voiceId: botConfig.fish_audio_voice_id || DEFAULT_FISH_AUDIO_SETTINGS.voiceId,
-        model: botConfig.fish_audio_model || DEFAULT_FISH_AUDIO_SETTINGS.model,
-        frequencyPercent: Number(botConfig.fish_audio_frequency_percent || DEFAULT_FISH_AUDIO_SETTINGS.frequencyPercent),
-        cooldownMinutes: Number(botConfig.fish_audio_cooldown_minutes || DEFAULT_FISH_AUDIO_SETTINGS.cooldownMinutes),
-        maxChars: Number(botConfig.fish_audio_max_chars || DEFAULT_FISH_AUDIO_SETTINGS.maxChars),
+    const elevenLabsSettings = normalizeElevenLabsSettings({
+        apiKey: botConfig.elevenlabs_api_key || process.env.ELEVENLABS_API_KEY || botConfig.fish_audio_api_key || process.env.FISH_AUDIO_API_KEY || '',
+        enabled: (botConfig.elevenlabs_enabled || botConfig.fish_audio_enabled) === 'true',
+        voiceId: botConfig.elevenlabs_voice_id || botConfig.fish_audio_voice_id || DEFAULT_ELEVENLABS_SETTINGS.voiceId,
+        model: botConfig.elevenlabs_model || botConfig.fish_audio_model || DEFAULT_ELEVENLABS_SETTINGS.model,
+        frequencyPercent: Number(botConfig.elevenlabs_frequency_percent || botConfig.fish_audio_frequency_percent || DEFAULT_ELEVENLABS_SETTINGS.frequencyPercent),
+        cooldownMinutes: Number(botConfig.elevenlabs_cooldown_minutes || botConfig.fish_audio_cooldown_minutes || DEFAULT_ELEVENLABS_SETTINGS.cooldownMinutes),
+        maxChars: Number(botConfig.elevenlabs_max_chars || botConfig.fish_audio_max_chars || DEFAULT_ELEVENLABS_SETTINGS.maxChars),
     });
     const mem0Settings = normalizeMem0LeadMemorySettings({
         apiKey: botConfig.mem0_api_key || process.env.MEM0_API_KEY || '',
@@ -875,7 +882,7 @@ export async function POST(req: NextRequest) {
         topK: Number(botConfig.mem0_top_k || 8),
     });
     const mem0UserId = mem0LeadUserId(chatId);
-    const fishAudioScriptAgentSettings = {
+    const elevenLabsScriptAgentSettings = {
         apiKey: botConfig.bai_api_key || process.env.BAI_API_KEY || '',
         model: normalizeBaiModelName(botConfig.bai_model || process.env.BAI_MODEL),
         baseUrl: process.env.BAI_BASE_URL || 'https://api.b.ai/v1',
@@ -2394,8 +2401,8 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
             });
         }
     };
-    const audioCooldownSince = new Date(Date.now() - fishAudioSettings.cooldownMinutes * 60_000).toISOString();
-    const { data: recentAudio } = fishAudioSettings.enabled
+    const audioCooldownSince = new Date(Date.now() - elevenLabsSettings.cooldownMinutes * 60_000).toISOString();
+    const { data: recentAudio } = elevenLabsSettings.enabled
         ? await supabase
             .from('messages')
             .select('id')
@@ -2406,15 +2413,15 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
             .limit(1)
             .maybeSingle()
         : { data: null };
-    const userWantsAudio = userAskedForAudio(userOnlyText);
+    const userWantsAudio = userAskedForElevenLabsAudio(userOnlyText);
     const aiSelectedVoice = aiResponse.action === 'send_voice_reply';
     const shouldForceVoice = (userWantsAudio || aiSelectedVoice)
-        && fishAudioSettings.enabled
-        && Boolean(fishAudioSettings.apiKey)
-        && Boolean(fishAudioSettings.voiceId);
+        && elevenLabsSettings.enabled
+        && Boolean(elevenLabsSettings.apiKey)
+        && Boolean(elevenLabsSettings.voiceId);
     let preferredAudioIndex = shouldForceVoice ? outgoingToSend.findIndex((message: string) =>
-        shouldUseFishAudio({
-            settings: fishAudioSettings,
+        shouldUseElevenLabsAudio({
+            settings: elevenLabsSettings,
             seed: `${session.id}:${triggerMessageId || lastGroupedUserAt}:${message}`,
             userText: userOnlyText,
             messageText: message,
@@ -2430,7 +2437,7 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
     let audioSpokenText = '';
     if (shouldForceVoice) {
         const combined = outgoingToSend.join('. ');
-        if (combined.length >= 8 && !isUnsafeForVoice(combined)) {
+        if (combined.length >= 8 && !isUnsafeForElevenLabsVoice(combined)) {
             outgoingToSend = [combined];
             preferredAudioIndex = 0;
             audioSpokenText = combined;
@@ -2443,23 +2450,23 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
         ? (() => {
             const emotionalContext = String(session.lead_memory?.emotional_context || '');
             const deterministicFallback = () => ({
-                spokenText: cleanTextForSpeech(audioSpokenText, fishAudioSettings.maxChars),
-                fishText: buildExpressiveSpeech({
+                spokenText: cleanTextForElevenLabsSpeech(audioSpokenText, elevenLabsSettings.maxChars),
+                elevenText: buildElevenV3Performance({
                     messageText: audioSpokenText,
                     userText: userOnlyText,
                     emotionalContext,
-                    maxChars: fishAudioSettings.maxChars,
+                    maxChars: elevenLabsSettings.maxChars,
                 }),
                 delivery: 'deterministic',
                 reaction: '',
                 source: 'deterministic' as const,
             });
-            return prepareFishAudioScript({
-                settings: fishAudioScriptAgentSettings,
+            return prepareElevenLabsScript({
+                settings: elevenLabsScriptAgentSettings,
                 messageText: audioSpokenText,
                 userText: userOnlyText,
                 emotionalContext,
-                maxChars: fishAudioSettings.maxChars,
+                maxChars: elevenLabsSettings.maxChars,
                 // Um pedido explícito merece uma resposta criada para ser dita,
                 // não a mera leitura de uma bolha de texto já montada.
                 mode: userWantsAudio ? 'requested_audio' : 'voice_render',
@@ -2469,16 +2476,16 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
                     ...recentBotTexts.slice(-3),
                 ].filter(Boolean).join('\n').slice(-900),
             }).catch((error: any) => {
-                console.warn('[FISH AUDIO] Diretor DeepSeek indisponível; usando roteiro local:', error?.message || error);
+                console.warn('[ELEVENLABS] Diretora DeepSeek indisponível; usando roteiro local:', error?.message || error);
                 return deterministicFallback();
             }).then(async (script) => {
-                console.log('[FISH AUDIO] Roteiro preparado', {
+                console.log('[ELEVENLABS] Roteiro preparado', {
                     source: script.source,
                     delivery: script.delivery,
                     reaction: script.reaction || 'none',
                     spokenText: script.spokenText,
                 });
-                const audio = await generateFishAudio({ settings: fishAudioSettings, text: script.fishText });
+                const audio = await generateElevenLabsAudio({ settings: elevenLabsSettings, text: script.elevenText });
                 return { audio, script, error: null as unknown };
             }).catch((error: unknown) => ({ audio: null, script: deterministicFallback(), error }));
         })()
@@ -2516,11 +2523,11 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
                 });
                 continue;
             } catch (error: any) {
-                console.error('[FISH AUDIO] Falha, usando texto como fallback:', error?.message || error);
+                console.error('[ELEVENLABS] Falha, usando texto como fallback:', error?.message || error);
                 await supabase.from('messages').insert({
                     session_id: session.id,
                     sender: 'system',
-                    content: `[FISH AUDIO ERROR] ${String(error?.message || error).slice(0, 500)}`,
+                    content: `[ELEVENLABS ERROR] ${String(error?.message || error).slice(0, 500)}`,
                 });
             }
         }

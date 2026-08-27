@@ -69,8 +69,8 @@ const emptySettings: AiSettings = {
     geminiStrategyModel: DEFAULT_GEMINI_LITE_MODEL, geminiDraftModel: DEFAULT_GEMINI_MODEL, geminiReviewModel: DEFAULT_GEMINI_MODEL, geminiEvaluatorModel: DEFAULT_GEMINI_LITE_MODEL,
     baiModel: DEFAULT_BAI_MODEL, groqModel: "openai/gpt-oss-120b", groqStarterModel: "openai/gpt-oss-20b", nvidiaModel: "meta/llama-3.1-8b-instruct", mistralModel: "mistral-small-latest", cerebrasModel: "gpt-oss-120b", cloudflareModel: "@cf/openai/gpt-oss-20b",
     cloudflareAccountId: "", customBaseUrl: "", customModel: "auto", customTiers: "starter,buyer", customWeight: 5,
-    fishAudioEnabled: false, fishAudioVoiceId: "24522123b5804bf691a8450d9187f03e", fishAudioModel: "s2.1-pro-free",
-    fishAudioFrequencyPercent: 18, fishAudioCooldownMinutes: 30, fishAudioMaxChars: 240,
+    fishAudioEnabled: false, fishAudioVoiceId: "vcYWBf5QTtDLdbfB20xT", fishAudioModel: "eleven_v3",
+    fishAudioFrequencyPercent: 18, fishAudioCooldownMinutes: 30, fishAudioMaxChars: 300,
     mem0Enabled: false, mem0TopK: 8,
 };
 
@@ -433,14 +433,14 @@ export default function AdminAiPage() {
                         </div>
                     </Panel>
 
-                    <Panel title="Fish Audio">
+                    <Panel title="ElevenLabs · Voz da Lari">
                         <div className="space-y-3">
                             <StatusPill source={settings.fishAudioApiKeySource} />
                             <Field label="API Key de voz">
-                                <input type="password" value={secretDrafts.fish || ""} onChange={(event) => setSecretDrafts((current) => ({ ...current, fish: event.target.value }))} onBlur={() => { const value = String(secretDrafts.fish || "").trim(); if (value) void persist({ fishAudioApiKey: value }).then(() => setSecretDrafts((current) => ({ ...current, fish: "" }))); }} className={inputClass} placeholder={settings.fishAudioApiKeyMasked ? "Cole somente para trocar" : "Cole a chave Fish Audio"} />
+                                <input type="password" value={secretDrafts.fish || ""} onChange={(event) => setSecretDrafts((current) => ({ ...current, fish: event.target.value }))} onBlur={() => { const value = String(secretDrafts.fish || "").trim(); if (value) void persist({ fishAudioApiKey: value }).then(() => setSecretDrafts((current) => ({ ...current, fish: "" }))); }} className={inputClass} placeholder={settings.fishAudioApiKeyMasked ? "Cole somente para trocar" : "Cole a chave ElevenLabs"} />
                             </Field>
-                            <a href="https://fish.audio/app/api-keys/" target="_blank" rel="noreferrer" className="block rounded-xl border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-center text-sm font-semibold text-cyan-100">Pegar chave no Fish Audio ↗</a>
-                            <Toggle title="Enviar áudios" description="Mantém o modelo gratuito configurado." checked={settings.fishAudioEnabled} onChange={(value) => updateSetting("fishAudioEnabled", value)} />
+                            <a href="https://elevenlabs.io/app/developers/api-keys" target="_blank" rel="noreferrer" className="block rounded-xl border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-center text-sm font-semibold text-cyan-100">Abrir chaves da ElevenLabs ↗</a>
+                            <Toggle title="Enviar áudios" description="Eleven v3 com atuação emocional e tags naturais da Lari." checked={settings.fishAudioEnabled} onChange={(value) => updateSetting("fishAudioEnabled", value)} />
                             <Field label="Voice ID"><input value={settings.fishAudioVoiceId} onChange={(event) => updateSetting("fishAudioVoiceId", event.target.value)} className={inputClass} /></Field>
                             <button type="button" onClick={() => void testFishAudio()} disabled={testing.fish} className="w-full rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold hover:bg-white/5">{testing.fish ? "Gerando..." : "Gerar áudio de teste"}</button>
                             {testResults.fish && <p className="text-xs text-slate-400">{testResults.fish}</p>}
