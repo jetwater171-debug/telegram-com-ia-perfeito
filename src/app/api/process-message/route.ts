@@ -105,6 +105,15 @@ const normalizeTelegramImageMimeType = (contentType: string | null, filePath: st
 
 const randomBetween = (min: number, max: number) => Math.floor(min + Math.random() * (max - min + 1));
 
+const stablePercent = (value: string) => {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0) % 100;
+};
+
 const humanTextDelayMs = (text: string, bubbleIndex: number) => {
     const raw = String(text || '').trim();
     const length = raw.length;
@@ -1066,7 +1075,7 @@ export async function POST(req: NextRequest) {
     const [lastBotResult, lastOfferResult, recentSalesHistoryResult] = await Promise.all([
         supabase
             .from('messages')
-            .select('created_at, content')
+            .select('created_at, content, media_url, media_type')
             .eq('session_id', sessionId)
             .eq('sender', 'bot')
             .order('created_at', { ascending: false })
@@ -1082,7 +1091,7 @@ export async function POST(req: NextRequest) {
             .single(),
         supabase
             .from('messages')
-            .select('sender,content,created_at')
+            .select('sender,content,created_at,media_url,media_type')
             .eq('session_id', sessionId)
             .in('sender', ['user', 'bot'])
             .order('created_at', { ascending: false })
@@ -1637,19 +1646,13 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
             description: salesTiming.offerPlan.description,
         } : aiResponse.payment_details;
     }
-    const recentConversationWindow = recentSalesHistory.slice(0, 10);
+    const recentConversationWindow = recentSalesHistory.slice(0, 12);
     const userReportsMissingMedia = /\b(?:vc|voce|você)?\s*(?:nao|não)\s+(?:mandou|enviou)\s+(?:nada|a foto|o video|o vídeo)|\b(?:nao|não)\s+(?:chegou|veio)|\bcad[eê]\s+(?:a foto|o video|o vídeo|ela)\b/i.test(userOnlyText);
-    const recentMediaOpenLoop = recentConversationWindow.some((msg: any) => {
-        const content = String(msg.content || '');
-        return msg.sender === 'bot'
-            ? /\b(ver|v[eê]|foto|fotinha|fotos|video|vídeo|previa|prévia|olhar|mostrar|assim|esperando|toma|mandar|envio|separei)\b/i.test(content)
-            : /\b(foto|fotinha|fotos|video|vídeo|previa|prévia|nude|nudes|me mostra|quero ver|manda o que|manda oq)\b/i.test(content);
-    });
-    const userAffirmedMedia = /\b(sim|quero|quero ver|sim eu quero|manda|mandar|manda aí|manda ai|mostra|deixa ver|pode mandar|manda sim|solta|quero sim|claro|com certeza|bora|pode ser|kd|cade|cadê|agora vai)\b/i.test(userOnlyText)
-        && (
-            /\b(ver|v[eê]|foto|fotinha|fotos|video|vídeo|previa|prévia|olhar|mostrar|assim|esperando|toma|mandar|separei)\b/i.test(lastBotMsg?.content || '')
-            || recentMediaOpenLoop
-        );
+    const lastBotAlreadyDeliveredMedia = Boolean(lastBotMsg?.media_url);
+    const lastBotExplicitlyOfferedMedia = !lastBotAlreadyDeliveredMedia
+        && /\b(?:quer|quero que vc|posso|deixa eu)\b.{0,32}\b(?:ver|mostrar|mandar|enviar)\b.{0,20}\b(?:foto|fotinha|previa|prévia|video|vídeo|uma)|\b(?:quer|posso)\b.{0,20}\b(?:foto|fotinha|previa|prévia|video|vídeo)\b/i.test(String(lastBotMsg?.content || ''));
+    const userAffirmedMedia = /^\s*(?:sim|quero|eu quero|manda|manda ai|manda aí|pode mandar|manda sim|mostra|deixa ver|solta|quero sim|claro|com certeza|bora|pode ser)\s*[!?.]*\s*$/i.test(userOnlyText)
+        && lastBotExplicitlyOfferedMedia;
 
     const userMediaKind = classifyRequestedMediaLocally(userOnlyText);
     const userAskedPhoto = userMediaKind === 'photo' || (userAffirmedMedia && !/video/i.test(userOnlyText));
@@ -1658,7 +1661,8 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
         || userAffirmedMedia
         || /\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|video|vídeo|previa|prévia)\b/i.test(userOnlyText)
         || /\b(manda|mostra|envia|quero ver|deixa ver|solta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo|uma)\b/i.test(userOnlyText)
-        || /\b(quero te ver|qualquer foto|manda qualquer|manda (?:o que|oq) (?:vc|voce|você)?\s*(?:tem)?|me mostra vc|me mostra você|kd a foto|kd|cadê a foto|cade a foto)\b/i.test(userOnlyText)
+        || /\b(?:manda|mostra|tem|quero)\b.{0,14}\b(?:outra|mais uma|mais)\b/i.test(userOnlyText)
+        || /\b(quero te ver|qualquer foto|manda qualquer|manda (?:o que|oq) (?:vc|voce|você)?\s*(?:tem)?|me mostra vc|me mostra você|kd a foto|cadê a foto|cade a foto)\b/i.test(userOnlyText)
         || userReportsMissingMedia;
 
     const botMessagesPromiseMedia = (Array.isArray(aiResponse.messages) ? aiResponse.messages : []).some((msg: string) =>
@@ -1765,11 +1769,38 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
     };
 
     const modelAttemptedMedia = botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || ''));
-    let shouldDeliverMedia = shouldDeliverRequestedMedia({
+    const requestedMediaDelivery = shouldDeliverRequestedMedia({
         userAskedMedia,
         userAffirmedMedia,
         isInitialGreeting,
     });
+    const lastDeliveredMedia = recentConversationWindow.find((message: any) => message.sender === 'bot' && message.media_url);
+    const lastDeliveredMediaAt = Date.parse(String(lastDeliveredMedia?.created_at || ''));
+    const hoursSinceLastMedia = Number.isFinite(lastDeliveredMediaAt)
+        ? Math.max(0, (Date.now() - lastDeliveredMediaAt) / 3_600_000)
+        : Number.POSITIVE_INFINITY;
+    const currentLeadHeat = Number(aiResponse.lead_stats?.tarado || 0);
+    const currentAiStage = String(aiResponse.current_state || '').toUpperCase();
+    const currentTextIsHot = hasExplicitSexualFantasyTrigger(userOnlyText)
+        || /\b(tesao|tesão|safad|pelad|nua|buceta|peito|bunda|gozar|meter|chupar)\b/i.test(userOnlyText);
+    const enoughConversationForSurprise = recentSalesHistory.filter((message: any) => message.sender === 'user').length >= 6;
+    const leadMessageHasSubstance = userOnlyText.trim().split(/\s+/).filter(Boolean).length >= 3;
+    const blocksSurprise = /\b(nao|não|para|chega|trabalho|familia|família|triste|problema|doente|hospital|morreu|pix|pagar|caro|dinheiro)\b/i.test(userOnlyText);
+    const unsolicitedPreviewAllowed = modelAttemptedMedia
+        && !requestedMediaDelivery
+        && !lastBotAlreadyDeliveredMedia
+        && hoursSinceLastMedia >= 24
+        && enoughConversationForSurprise
+        && leadMessageHasSubstance
+        && !blocksSurprise
+        && currentTextIsHot
+        && ['HOT_TALK', 'PREVIEW'].includes(currentAiStage)
+        && currentLeadHeat >= 70
+        && stablePercent(`${session.id}:${triggerMessageId || lastGroupedUserAt}:unsolicited-preview`) < 8;
+    let shouldDeliverMedia = requestedMediaDelivery || unsolicitedPreviewAllowed;
+    if (unsolicitedPreviewAllowed) {
+        console.log('[PREVIAS] Surpresa rara autorizada por calor, profundidade e cooldown de 24h.');
+    }
 
     let generatedMessageIndex = 0;
     const insertGeneratedMessage = async (row: Record<string, unknown>) => {
