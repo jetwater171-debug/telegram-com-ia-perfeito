@@ -28,6 +28,11 @@ assert.equal(eleven.cleanTextForElevenLabsSpeech('vc é linda kkkkk rsrs'), 'Voc
 assert.match(eleven.buildElevenV3Performance({ messageText: 'vc me deixa doida', userText: 'fala safada comigo' }), /^\[seductively\]/);
 assert.equal(eleven.validateElevenLabsOpus(validOpus).bytes, validOpus.length);
 assert.throws(() => eleven.validateElevenLabsOpus(Buffer.alloc(2_000)), /OGG\/Opus/);
+assert.equal(eleven.userAskedForElevenLabsAudio('kd o audio? voce escreveu'), true);
+assert.equal(eleven.isElevenLabsConversionMoment({ stage: 'CONNECTION', leadHeat: 90 }), false);
+assert.equal(eleven.isElevenLabsConversionMoment({ stage: 'SALES_PITCH', leadHeat: 20 }), true);
+assert.equal(eleven.isElevenLabsDeliveryPromise('aqui ó, minha voz pra você agora'), true);
+assert.match(eleven.buildElevenLabsUnavailableReply({ language: 'pt', seed: 'teste' }), /n[aã]o (?:consigo|d[aá])|n[aã]o consigo/i);
 
 (async () => {
     const settings = { apiKey: 'bai-test', model: 'deepseek-v4-flash', baseUrl: 'https://api.b.ai/v1' };
@@ -123,8 +128,11 @@ assert.throws(() => eleven.validateElevenLabsOpus(Buffer.alloc(2_000)), /OGG\/Op
     assert.match(processSource, /content:\s*preparedAudio\.script\.spokenText/);
     assert.match(processSource, /ELEVENLABS_API_KEY/);
     assert.match(processSource, /mode: userWantsAudio \? 'requested_audio' : 'voice_render'/);
+    assert.match(processSource, /ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS/);
+    assert.match(processSource, /buildElevenLabsUnavailableReply/);
+    assert.match(processSource, /getElevenLabsSubscriptionForBudget/);
 
-    console.log('ELEVENLABS_VOICE_OK v3=1 cloned_voice=1 requested_audio_author=1 tags=1 guard=1 opus=1 telegram_pipeline=1');
+    console.log('ELEVENLABS_VOICE_OK v3=1 cloned_voice=1 requested_audio_author=1 tags=1 guard=1 opus=1 telegram_pipeline=1 short=1 conversion_only=1 natural_failure=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

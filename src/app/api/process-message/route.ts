@@ -5,7 +5,7 @@ import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini } from '@/lib/gemini';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode, sendTelegramVoice, type TelegramMediaProtection } from '@/lib/telegram';
 import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
-import { reconcilePendingPayments } from '@/lib/paymentReconciliation';
+import { reconcilePaymentMessage, reconcilePendingPayments } from '@/lib/paymentReconciliation';
 import { calculateLeadScore, markLeadPaid, parseLeadScore, toStoredLeadScore } from '@/lib/leadScoring';
 import { shapeConversationBubbles } from '@/lib/conversationBubbles';
 import { findLatestConversationStartAt } from '@/lib/conversationEpisode';
@@ -28,10 +28,15 @@ import {
     normalizeLeadMemory,
 } from '@/lib/leadMemory';
 import {
+    buildElevenLabsUnavailableReply,
     buildElevenV3Performance,
     cleanTextForElevenLabsSpeech,
     DEFAULT_ELEVENLABS_SETTINGS,
+    ELEVENLABS_CONVERSION_AUDIO_MAX_CHARS,
+    ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS,
     generateElevenLabsAudio,
+    isElevenLabsConversionMoment,
+    isElevenLabsDeliveryPromise,
     isUnsafeForElevenLabsVoice,
     normalizeElevenLabsSettings,
     shouldUseElevenLabsAudio,
@@ -41,7 +46,7 @@ import { prepareElevenLabsScript } from '@/lib/elevenLabsScriptAgent';
 import {
     buildLeadVoicePolicy,
     estimateElevenLabsCredits,
-    getElevenLabsSubscription,
+    getElevenLabsSubscriptionForBudget,
     normalizeElevenLabsBudgetConfig,
     releaseElevenLabsBudget,
     reserveElevenLabsBudget,
@@ -56,7 +61,15 @@ import {
     normalizePreviewMediaKey as normalizeMediaUrlKey,
     shouldDeliverRequestedMedia,
 } from '@/lib/previewDeliveryPolicy';
-import { evaluateSalesTiming, extractExplicitBudget, guardPrematureSaleMessages } from '@/lib/salesTiming';
+import {
+    buildSalesOrderSnapshot,
+    canonicalizeSalesOfferMessages,
+    evaluateSalesTiming,
+    extractExplicitBudget,
+    guardPrematureSaleMessages,
+    readActiveSalesOrder,
+    type ActiveSalesOrder,
+} from '@/lib/salesTiming';
 import {
     addMem0LeadTurn,
     formatMem0LeadMemoryContext,
@@ -77,7 +90,7 @@ import {
 import { detectAdultDeclaration, validateMasterBrainResponse } from '@/lib/brain/hardValidator';
 import { applyPreviewBanditRanking, recordPreviewPurchaseSafe, recordPreviewReactionSafe, recordPreviewSentSafe } from '@/lib/brain/previewBandit';
 import { trackLeadResponseOutcomesSafe, trackPaymentOutcomeSafe } from '@/lib/brain/outcomeTracker';
-import { markCustomOrderPaidSafe, recordCustomOrderSafe } from '@/lib/customOrders';
+import { markCustomOrderPaidSafe, markSessionSalesOrderPaidSafe, recordCustomOrderSafe } from '@/lib/customOrders';
 
 export const maxDuration = 120;
 
@@ -866,6 +879,8 @@ export async function POST(req: NextRequest) {
                 'elevenlabs_budget_free_lead_credits',
                 'elevenlabs_budget_unpaid_max_chars',
                 'elevenlabs_budget_buyer_max_chars',
+                'elevenlabs_budget_fallback_credits',
+                'elevenlabs_budget_cycle_key',
                 'mem0_api_key',
                 'mem0_enabled',
                 'mem0_top_k',
@@ -1491,7 +1506,8 @@ Responda primeiro e diretamente a ULTIMA MENSAGEM. Ela substitui pedido, hipotes
 Use o bloco anterior apenas como contexto; nunca deixe a ultima pergunta sem resposta.
 IDIOMA DO TURNO: ${conversationLanguage === 'en' ? 'English' : conversationLanguage === 'es' ? 'Español' : 'Português do Brasil'}. Responda somente nesse idioma, salvo se o lead pedir outro.
 Use de 2 a 4 baloes curtos. Em conversa normal, responda e depois conduza o assunto em 2 ou 3 baloes; nunca deixe o lead carregar a conversa sozinho.
-Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fantasia adulta reciproca, use 3 ou 4 para fazer a cena ou a decisao avancar.`;
+Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fantasia adulta reciproca, use 3 ou 4 para fazer a cena ou a decisao avancar.
+VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. Sem pedido explicito, use voz somente perto da conversao (PREVIEW, SALES_PITCH, NEGOTIATION ou CLOSING). Nunca escreva "aqui minha voz", "vou gravar" ou outra promessa de audio nos baloes; o backend confirma a entrega ou troca por uma desculpa natural.`;
     let mediaData = undefined;
 
     // Detectar Audio
@@ -1693,6 +1709,33 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
             description: salesTiming.offerPlan.description,
         } : aiResponse.payment_details;
     }
+
+    // Cada venda recebe identidade propria. O modelo pode escrever a oferta,
+    // mas produto, valor aceito e PIX passam a pertencer ao mesmo orderId.
+    // Isso permite varias compras iguais, inclusive em dias diferentes, sem
+    // reaproveitar a cobranca ou o pagamento de um pedido anterior.
+    let activeSalesOrder: ActiveSalesOrder | null = salesTiming.activeOrder;
+    const responseHasPrice = extractPrices((Array.isArray(aiResponse.messages) ? aiResponse.messages : []).join('\n')).length > 0;
+    if (offerPlan && responseHasPrice) {
+        aiResponse.messages = canonicalizeSalesOfferMessages(aiResponse.messages || [], offerPlan.value);
+    }
+    if (offerPlan && (responseHasPrice || aiResponse.action === 'generate_pix_payment')) {
+        const nextOrderStatus = aiResponse.action === 'generate_pix_payment' ? 'accepted' : 'offered';
+        const orderSource = String(triggerMessageId || lastGroupedUserAt).replace(/[^a-zA-Z0-9:_-]/g, '').slice(0, 120);
+        activeSalesOrder = buildSalesOrderSnapshot({
+            orderId: `order:${session.id}:${orderSource}:${offerPlan.product}`,
+            plan: offerPlan,
+            status: nextOrderStatus,
+            previous: salesTiming.activeOrder,
+        });
+        aiResponse.offer_id = activeSalesOrder.orderId;
+        if (aiResponse.action === 'generate_pix_payment') {
+            aiResponse.payment_details = {
+                value: activeSalesOrder.amount,
+                description: activeSalesOrder.description,
+            };
+        }
+    }
     const recentConversationWindow = recentSalesHistory.slice(0, 12);
     const userReportsMissingMedia = /\b(?:vc|voce|você)?\s*(?:nao|não)\s+(?:mandou|enviou)\s+(?:nada|a foto|o video|o vídeo)|\b(?:nao|não)\s+(?:chegou|veio)|\bcad[eê]\s+(?:a foto|o video|o vídeo|ela)\b/i.test(userOnlyText);
     const lastBotAlreadyDeliveredMedia = Boolean(lastBotMsg?.media_url);
@@ -1727,11 +1770,12 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
         canPitchPrice: salesTiming.canPitchPrice,
         adultVerified: brainRuntime.reality.adultVerified,
         offer: offerPlan ? {
-            id: `${salesTiming.activeProduct || 'offer'}:${Number(offerPlan.value).toFixed(2)}`,
+            id: activeSalesOrder?.orderId || `${salesTiming.activeProduct || 'offer'}:${Number(offerPlan.value).toFixed(2)}`,
             value: offerPlan.value,
             description: offerPlan.description,
         } : null,
         postPurchaseCooldownActive: Number.isFinite(cooldownUntil) && cooldownUntil > Date.now(),
+        pendingPaymentId: brainRuntime.reality.payment.pendingPaymentId,
     });
     aiResponse = hardValidation.response;
     if (hardValidation.corrections.length > 0) {
@@ -2454,12 +2498,38 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
             .maybeSingle()
         : { data: null };
     const userWantsAudio = userAskedForElevenLabsAudio(userOnlyText);
-    const aiSelectedVoice = aiResponse.action === 'send_voice_reply';
-    const shouldForceVoice = (userWantsAudio || aiSelectedVoice)
-        && elevenLabsSettings.enabled
+    const voiceReady = elevenLabsSettings.enabled
         && Boolean(elevenLabsSettings.apiKey)
         && Boolean(elevenLabsSettings.voiceId);
-    let preferredAudioIndex = shouldForceVoice ? outgoingToSend.findIndex((message: string) =>
+    const aiRequestedVoiceAction = aiResponse.action === 'send_voice_reply';
+    const conversionVoiceMoment = isElevenLabsConversionMoment({
+        stage,
+        canPitchPrice: salesTiming.canPitchPrice,
+        leadHeat: currentLeadHeat,
+    });
+    const aiSelectedVoice = aiRequestedVoiceAction && conversionVoiceMoment;
+    const shouldForceVoice = (userWantsAudio || aiSelectedVoice) && voiceReady;
+    const automaticConversionVoice = !userWantsAudio
+        && !aiRequestedVoiceAction
+        && conversionVoiceMoment
+        && voiceReady
+        && !recentAudio
+        && aiResponse.action === 'none';
+
+    if (aiRequestedVoiceAction && !aiSelectedVoice && !userWantsAudio) {
+        // A voz automatica e um recurso de conversao, nao um enfeite de conversa comum.
+        aiResponse.action = 'none';
+        outgoingToSend = outgoingToSend.filter((message: string) => !isElevenLabsDeliveryPromise(message));
+        if (outgoingToSend.length === 0) outgoingToSend = buildRecoveryMessages();
+    }
+    if (userWantsAudio && !voiceReady) {
+        outgoingToSend = [buildElevenLabsUnavailableReply({
+            language: conversationLanguage,
+            seed: `${session.id}:${triggerMessageId || lastGroupedUserAt}:voice-unavailable`,
+        })];
+    }
+
+    let preferredAudioIndex = (shouldForceVoice || automaticConversionVoice) ? outgoingToSend.findIndex((message: string) =>
         shouldUseElevenLabsAudio({
             settings: elevenLabsSettings,
             seed: `${session.id}:${triggerMessageId || lastGroupedUserAt}:${message}`,
@@ -2475,8 +2545,12 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
     }
 
     let audioSpokenText = '';
+    const audioMaxChars = Math.min(
+        elevenLabsSettings.maxChars,
+        userWantsAudio ? ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS : ELEVENLABS_CONVERSION_AUDIO_MAX_CHARS,
+    );
     if (shouldForceVoice) {
-        const combined = outgoingToSend.join('. ');
+        const combined = outgoingToSend.slice(0, userWantsAudio ? 2 : 1).join('. ');
         if (combined.length >= 8 && !isUnsafeForElevenLabsVoice(combined)) {
             outgoingToSend = [combined];
             preferredAudioIndex = 0;
@@ -2490,12 +2564,12 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
         ? (() => {
             const emotionalContext = String(session.lead_memory?.emotional_context || '');
             const deterministicFallback = () => ({
-                spokenText: cleanTextForElevenLabsSpeech(audioSpokenText, elevenLabsSettings.maxChars),
+                spokenText: cleanTextForElevenLabsSpeech(audioSpokenText, audioMaxChars),
                 elevenText: buildElevenV3Performance({
                     messageText: audioSpokenText,
                     userText: userOnlyText,
                     emotionalContext,
-                    maxChars: elevenLabsSettings.maxChars,
+                    maxChars: audioMaxChars,
                 }),
                 delivery: 'deterministic',
                 reaction: '',
@@ -2506,7 +2580,7 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
                 messageText: audioSpokenText,
                 userText: userOnlyText,
                 emotionalContext,
-                maxChars: elevenLabsSettings.maxChars,
+                maxChars: audioMaxChars,
                 // Um pedido explícito merece uma resposta criada para ser dita,
                 // não a mera leitura de uma bolha de texto já montada.
                 mode: userWantsAudio ? 'requested_audio' : 'voice_render',
@@ -2551,7 +2625,13 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
                     reaction: script.reaction || 'none',
                     spokenText: script.spokenText,
                 });
-                const subscription = await getElevenLabsSubscription(elevenLabsSettings.apiKey);
+                const subscription = await getElevenLabsSubscriptionForBudget({
+                    apiKey: elevenLabsSettings.apiKey,
+                    fallback: {
+                        remainingCredits: Number(botConfig.elevenlabs_budget_fallback_credits || 40_000),
+                        cycleKey: botConfig.elevenlabs_budget_cycle_key || 'manual:2026-08-27:40000',
+                    },
+                });
                 const estimatedCredits = estimateElevenLabsCredits(script.elevenText);
                 const source = userWantsAudio
                     ? 'requested' as const
@@ -2603,6 +2683,7 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
 
     for (let i = 0; i < outgoingToSend.length; i++) {
         const msgText = outgoingToSend[i];
+        let textToSend = msgText;
 
         const newerUserMsg = await findNewerUserMessage();
 
@@ -2639,13 +2720,19 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
                     sender: 'system',
                     content: `[ELEVENLABS ERROR] ${String(error?.message || error).slice(0, 500)}`,
                 });
+                if (userWantsAudio || aiSelectedVoice || isElevenLabsDeliveryPromise(msgText)) {
+                    textToSend = buildElevenLabsUnavailableReply({
+                        language: conversationLanguage,
+                        seed: `${session.id}:${triggerMessageId || lastGroupedUserAt}:voice-failed`,
+                    });
+                }
             }
         }
 
         const modelDurationMs = Number(aiResponse.ai_debug?.duration_ms || 0);
         const messageDelayMs = i === 0 && modelDurationMs >= 8_000
             ? 150
-            : humanTextDelayMs(msgText, i);
+            : humanTextDelayMs(textToSend, i);
         await waitWithChatAction('typing', messageDelayMs);
         const interruptedDuringTyping = await findNewerUserMessage();
         if (interruptedDuringTyping) {
@@ -2656,10 +2743,10 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
         await insertGeneratedMessage({
             session_id: session.id,
             sender: 'bot',
-            content: msgText
+            content: textToSend
         });
 
-        await sendTelegramMessage(botToken, chatId, msgText);
+        await sendTelegramMessage(botToken, chatId, textToSend);
     }
 
     if (mem0Settings.enabled && mem0Settings.apiKey && userOnlyText.trim()) {

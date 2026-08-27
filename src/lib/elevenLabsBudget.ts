@@ -17,6 +17,12 @@ export type ElevenLabsSubscriptionSnapshot = {
     remainingCredits: number;
     resetAt: string | null;
     cycleKey: string;
+    source?: 'live' | 'local_ledger';
+};
+
+export type ElevenLabsSubscriptionFallback = {
+    remainingCredits: number;
+    cycleKey: string;
 };
 
 export type VoiceBudgetReservation = {
@@ -163,7 +169,39 @@ export const getElevenLabsSubscription = async (
         remainingCredits: Math.max(0, limitCredits - usedCredits),
         resetAt,
         cycleKey: resetAt || `calendar:${new Date().toISOString().slice(0, 7)}:limit:${limitCredits}`,
+        source: 'live',
     };
+};
+
+export const getElevenLabsSubscriptionForBudget = async ({
+    apiKey,
+    fallback,
+    fetcher = fetch,
+}: {
+    apiKey: string;
+    fallback: ElevenLabsSubscriptionFallback;
+    fetcher?: typeof fetch;
+}): Promise<ElevenLabsSubscriptionSnapshot> => {
+    try {
+        return await getElevenLabsSubscription(apiKey, fetcher);
+    } catch (error: any) {
+        const message = String(error?.message || error);
+        const restrictedBalanceRead = /missing_permissions|user_read|saldo\s+401/i.test(message);
+        if (!restrictedBalanceRead) throw error;
+
+        const remainingCredits = Math.floor(finite(fallback.remainingCredits, 0));
+        if (remainingCredits <= 0 || !String(fallback.cycleKey || '').trim()) throw error;
+        return {
+            tier: 'restricted_key',
+            status: 'local_ledger',
+            usedCredits: 0,
+            limitCredits: remainingCredits,
+            remainingCredits,
+            resetAt: null,
+            cycleKey: String(fallback.cycleKey).trim(),
+            source: 'local_ledger',
+        };
+    }
 };
 
 const rpcObject = (data: any) => Array.isArray(data) ? (data[0] || {}) : (data || {});
@@ -264,15 +302,21 @@ export const loadElevenLabsBudgetDashboard = async ({
     supabase,
     apiKey,
     config,
+    fallback,
 }: {
     supabase: any;
     apiKey: string;
     config: ElevenLabsBudgetConfig;
+    fallback?: ElevenLabsSubscriptionFallback;
 }) => {
     let subscription: ElevenLabsSubscriptionSnapshot | null = null;
     let subscriptionError = '';
     if (apiKey) {
-        try { subscription = await getElevenLabsSubscription(apiKey); }
+        try {
+            subscription = fallback
+                ? await getElevenLabsSubscriptionForBudget({ apiKey, fallback })
+                : await getElevenLabsSubscription(apiKey);
+        }
         catch (error: any) { subscriptionError = String(error?.message || error); }
     }
 

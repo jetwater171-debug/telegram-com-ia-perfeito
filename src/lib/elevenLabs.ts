@@ -42,7 +42,53 @@ const deterministicPercent = (seed: string) => {
 };
 
 export const userAskedForElevenLabsAudio = (text: string) =>
-    /\b(?:manda|envia|grava|responde|fala|quero|solta)(?:\s+um|\s+uma|\s+em)?\s+(?:audio|áudio|voz|voice)|\b(?:audio|áudio)\s+(?:seu|sua|pra mim|para mim|falando)\b|\b(?:ouvir|escutar)\s+(?:sua\s+)?(?:voz|audio|áudio)\b|\bfala\s+(?:o\s+)?meu\s+nome\b|\bfalando\s+meu\s+nome\b/iu.test(text || '');
+    /\b(?:manda|envia|grava|responde|fala|quero|solta)(?:\s+um|\s+uma|\s+em)?\s+(?:audio|áudio|voz|voice)|\b(?:audio|áudio)\s+(?:seu|sua|pra mim|para mim|falando)\b|\b(?:ouvir|escutar)\s+(?:sua\s+)?(?:voz|audio|áudio)\b|\bfala\s+(?:o\s+)?meu\s+nome\b|\bfalando\s+meu\s+nome\b|\b(?:cad[eê]|kd)\s+(?:o\s+)?(?:audio|áudio|voz)\b|\b(?:audio|áudio|voz)\b.{0,28}\b(?:n[aã]o\s+veio|faltou|sumiu|voc[eê]\s+escreveu)\b/iu.test(text || '');
+
+export const ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS = 110;
+export const ELEVENLABS_CONVERSION_AUDIO_MAX_CHARS = 90;
+
+export const isElevenLabsConversionMoment = ({
+    stage,
+    canPitchPrice = false,
+    leadHeat = 0,
+}: {
+    stage: string;
+    canPitchPrice?: boolean;
+    leadHeat?: number;
+}) => {
+    const normalizedStage = String(stage || '').trim().toUpperCase();
+    if (['SALES_PITCH', 'NEGOTIATION', 'CLOSING'].includes(normalizedStage)) return true;
+    if (normalizedStage === 'PREVIEW') return canPitchPrice || Number(leadHeat) >= 55;
+    return normalizedStage === 'TRIGGER_PHASE' && canPitchPrice && Number(leadHeat) >= 65;
+};
+
+export const isElevenLabsDeliveryPromise = (text: string) =>
+    /\b(?:aqui|agora|j[aá]|pera|espera|s[oó]\s+um\s+momento)\b.{0,55}\b(?:minha\s+voz|meu\s+[aá]udio|[aá]udio\s+pra|[aá]udio\s+para|gravar|mandar\s+(?:o\s+)?[aá]udio)\b|\b(?:minha\s+voz|meu\s+[aá]udio)\b.{0,45}\b(?:agora|pra\s+voc[eê]|para\s+voc[eê]|aqui)\b/iu.test(text || '');
+
+export const buildElevenLabsUnavailableReply = ({
+    language = 'pt',
+    seed = '',
+}: {
+    language?: 'pt' | 'en' | 'es' | string;
+    seed?: string;
+}) => {
+    const replies = language === 'en'
+        ? [
+            "I can't record right now, babe... I'm out and it's way too noisy 😅",
+            "there are people close to me right now, babe... I can't record properly 😅",
+        ]
+        : language === 'es'
+            ? [
+                'ahora no puedo grabar, amor... estoy fuera y hay demasiado ruido 😅',
+                'hay gente cerca de mí ahora, amor... no puedo grabar tranquila 😅',
+            ]
+            : [
+                'agora não consigo gravar, amor... tô fora de casa e tá barulhento demais 😅',
+                'tem gente aqui perto agora, amor... não consigo gravar sem ficar estranho 😅',
+                'tô na rua agora e não dá pra gravar direito, amor... te mando quando eu puder',
+            ];
+    return replies[deterministicPercent(seed) % replies.length];
+};
 
 export const isUnsafeForElevenLabsVoice = (text: string) =>
     /(?:https?:\/\/|www\.|pix|copia\s*e\s*cola|código|codigo|r\$|pagamento|comprovante)/iu.test(text || '');
@@ -69,7 +115,9 @@ export const shouldUseElevenLabsAudio = ({
     if (userAskedForElevenLabsAudio(userText)) return true;
     if (hasRecentAudio) return false;
     if (!messageText.trim() || messageText.length > settings.maxChars || messageText.length < 15) return false;
-    if (action !== 'none' || /^(PAYMENT_CHECK|CLOSING)$/i.test(stage)) return false;
+    if (action !== 'none' && action !== 'send_voice_reply') return false;
+    if (/^PAYMENT_CHECK$/i.test(stage)) return false;
+    if (!isElevenLabsConversionMoment({ stage })) return false;
     return deterministicPercent(seed) < settings.frequencyPercent;
 };
 

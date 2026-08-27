@@ -40,6 +40,15 @@ assert.equal(budget.estimateElevenLabsCredits('x'.repeat(100)), 105);
     assert.equal(subscription.remainingCredits, 40_000);
     assert.match(subscription.cycleKey, /^2027-/);
 
+    const restricted = await budget.getElevenLabsSubscriptionForBudget({
+        apiKey: 'restricted',
+        fallback: { remainingCredits: 40_000, cycleKey: 'manual:test:40000' },
+        fetcher: async () => new Response(JSON.stringify({ detail: { code: 'unauthorized', status: 'missing_permissions', message: 'missing user_read' } }), { status: 401 }),
+    });
+    assert.equal(restricted.source, 'local_ledger');
+    assert.equal(restricted.remainingCredits, 40_000);
+    assert.equal(restricted.cycleKey, 'manual:test:40000');
+
     let rpcName = '';
     let rpcArgs = null;
     const reservation = await budget.reserveElevenLabsBudget({

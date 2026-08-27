@@ -215,6 +215,10 @@ export async function GET() {
         const voiceBudget = await loadElevenLabsBudgetDashboard({
             supabase,
             apiKey: readSecret(map.elevenlabs_api_key) || readSecret(process.env.ELEVENLABS_API_KEY),
+            fallback: {
+                remainingCredits: Number(map.elevenlabs_budget_fallback_credits || process.env.ELEVENLABS_BUDGET_FALLBACK_CREDITS || 40_000),
+                cycleKey: map.elevenlabs_budget_cycle_key || process.env.ELEVENLABS_BUDGET_CYCLE_KEY || 'manual:2026-08-27:40000',
+            },
             config: normalizeElevenLabsBudgetConfig({
                 enabled: settings.fishAudioBudgetEnabled,
                 reservePercent: settings.fishAudioReservePercent,
