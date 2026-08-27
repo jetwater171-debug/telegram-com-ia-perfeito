@@ -44,10 +44,10 @@ const deterministicPercent = (seed: string) => {
 export const userAskedForElevenLabsAudio = (text: string) =>
     /\b(?:manda|envia|grava|responde|fala|quero|solta)(?:\s+um|\s+uma|\s+em)?\s+(?:audio|áudio|voz|voice)|\b(?:audio|áudio)\s+(?:seu|sua|pra mim|para mim|falando)\b|\b(?:ouvir|escutar)\s+(?:sua\s+)?(?:voz|audio|áudio)\b|\bfala\s+(?:o\s+)?meu\s+nome\b|\bfalando\s+meu\s+nome\b|\b(?:cad[eê]|kd)\s+(?:o\s+)?(?:audio|áudio|voz)\b|\b(?:audio|áudio|voz)\b.{0,28}\b(?:n[aã]o\s+veio|faltou|sumiu|voc[eê]\s+escreveu)\b/iu.test(text || '');
 
-export const ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS = 110;
-export const ELEVENLABS_CONVERSION_AUDIO_MAX_CHARS = 90;
-export const ELEVENLABS_REQUESTED_AUDIO_MAX_WORDS = 18;
-export const ELEVENLABS_CONVERSION_AUDIO_MAX_WORDS = 14;
+export const ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS = 85;
+export const ELEVENLABS_CONVERSION_AUDIO_MAX_CHARS = 70;
+export const ELEVENLABS_REQUESTED_AUDIO_MAX_WORDS = 14;
+export const ELEVENLABS_CONVERSION_AUDIO_MAX_WORDS = 11;
 
 export const isElevenLabsConversionMoment = ({
     stage,
