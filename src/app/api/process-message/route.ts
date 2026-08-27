@@ -868,13 +868,13 @@ export async function POST(req: NextRequest) {
     if (!botToken) return NextResponse.json({ error: 'Sem token' });
     const chatId = session.telegram_chat_id;
     const elevenLabsSettings = normalizeElevenLabsSettings({
-        apiKey: botConfig.elevenlabs_api_key || process.env.ELEVENLABS_API_KEY || botConfig.fish_audio_api_key || process.env.FISH_AUDIO_API_KEY || '',
-        enabled: (botConfig.elevenlabs_enabled || botConfig.fish_audio_enabled) === 'true',
-        voiceId: botConfig.elevenlabs_voice_id || botConfig.fish_audio_voice_id || DEFAULT_ELEVENLABS_SETTINGS.voiceId,
-        model: botConfig.elevenlabs_model || botConfig.fish_audio_model || DEFAULT_ELEVENLABS_SETTINGS.model,
-        frequencyPercent: Number(botConfig.elevenlabs_frequency_percent || botConfig.fish_audio_frequency_percent || DEFAULT_ELEVENLABS_SETTINGS.frequencyPercent),
-        cooldownMinutes: Number(botConfig.elevenlabs_cooldown_minutes || botConfig.fish_audio_cooldown_minutes || DEFAULT_ELEVENLABS_SETTINGS.cooldownMinutes),
-        maxChars: Number(botConfig.elevenlabs_max_chars || botConfig.fish_audio_max_chars || DEFAULT_ELEVENLABS_SETTINGS.maxChars),
+        apiKey: botConfig.elevenlabs_api_key || process.env.ELEVENLABS_API_KEY || '',
+        enabled: (botConfig.elevenlabs_enabled || process.env.ELEVENLABS_ENABLED) === 'true',
+        voiceId: botConfig.elevenlabs_voice_id || process.env.ELEVENLABS_VOICE_ID || DEFAULT_ELEVENLABS_SETTINGS.voiceId,
+        model: botConfig.elevenlabs_model || process.env.ELEVENLABS_MODEL || DEFAULT_ELEVENLABS_SETTINGS.model,
+        frequencyPercent: Number(botConfig.elevenlabs_frequency_percent || process.env.ELEVENLABS_FREQUENCY_PERCENT || DEFAULT_ELEVENLABS_SETTINGS.frequencyPercent),
+        cooldownMinutes: Number(botConfig.elevenlabs_cooldown_minutes || process.env.ELEVENLABS_COOLDOWN_MINUTES || DEFAULT_ELEVENLABS_SETTINGS.cooldownMinutes),
+        maxChars: Number(botConfig.elevenlabs_max_chars || process.env.ELEVENLABS_MAX_CHARS || DEFAULT_ELEVENLABS_SETTINGS.maxChars),
     });
     const mem0Settings = normalizeMem0LeadMemorySettings({
         apiKey: botConfig.mem0_api_key || process.env.MEM0_API_KEY || '',

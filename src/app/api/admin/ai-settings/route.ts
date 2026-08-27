@@ -120,7 +120,6 @@ const buildSettings = (map: Record<string, string>) => {
     const cloudflare = secretState(map, "cloudflare_ai_api_token", "CLOUDFLARE_AI_API_TOKEN");
     const custom = secretState(map, "ai_custom_gateway_api_key", "AI_CUSTOM_GATEWAY_API_KEY");
     const elevenLabs = secretState(map, "elevenlabs_api_key", "ELEVENLABS_API_KEY");
-    const legacyFish = secretState(map, "fish_audio_api_key", "FISH_AUDIO_API_KEY");
     const mem0 = secretState(map, "mem0_api_key", "MEM0_API_KEY");
 
     return {
@@ -133,9 +132,9 @@ const buildSettings = (map: Record<string, string>) => {
         cerebrasApiKeyMasked: cerebras.masked, cerebrasApiKeySaved: cerebras.saved, cerebrasApiKeySource: cerebras.source,
         cloudflareApiTokenMasked: cloudflare.masked, cloudflareApiTokenSaved: cloudflare.saved, cloudflareApiTokenSource: cloudflare.source,
         customApiKeyMasked: custom.masked, customApiKeySaved: custom.saved, customApiKeySource: custom.source,
-        fishAudioApiKeyMasked: elevenLabs.masked || legacyFish.masked,
-        fishAudioApiKeySaved: elevenLabs.saved || legacyFish.saved,
-        fishAudioApiKeySource: elevenLabs.source !== "missing" ? elevenLabs.source : legacyFish.source,
+        fishAudioApiKeyMasked: elevenLabs.masked,
+        fishAudioApiKeySaved: elevenLabs.saved,
+        fishAudioApiKeySource: elevenLabs.source,
         mem0ApiKeyMasked: mem0.masked, mem0ApiKeySaved: mem0.saved, mem0ApiKeySource: mem0.source,
         openrouterBaseUrl: map.openrouter_base_url || DEFAULTS.openrouter_base_url,
         openrouterReferer: map.openrouter_referer || DEFAULTS.openrouter_referer,
@@ -170,12 +169,12 @@ const buildSettings = (map: Record<string, string>) => {
         geminiDraftModel: normalizeGeminiModelName(map.gemini_draft_model, DEFAULTS.gemini_draft_model),
         geminiReviewModel: normalizeGeminiModelName(map.gemini_review_model, DEFAULTS.gemini_review_model),
         geminiEvaluatorModel: normalizeGeminiModelName(map.gemini_evaluator_model, DEFAULTS.gemini_evaluator_model),
-        fishAudioEnabled: (map.elevenlabs_enabled || map.fish_audio_enabled) === "true",
-        fishAudioVoiceId: map.elevenlabs_voice_id || map.fish_audio_voice_id || DEFAULT_ELEVENLABS_SETTINGS.voiceId,
-        fishAudioModel: normalizeElevenLabsModel(map.elevenlabs_model || map.fish_audio_model || DEFAULT_ELEVENLABS_SETTINGS.model),
-        fishAudioFrequencyPercent: Number(map.elevenlabs_frequency_percent || map.fish_audio_frequency_percent || DEFAULT_ELEVENLABS_SETTINGS.frequencyPercent),
-        fishAudioCooldownMinutes: Number(map.elevenlabs_cooldown_minutes || map.fish_audio_cooldown_minutes || DEFAULT_ELEVENLABS_SETTINGS.cooldownMinutes),
-        fishAudioMaxChars: Math.min(500, Math.max(60, Number(map.elevenlabs_max_chars || map.fish_audio_max_chars) || DEFAULT_ELEVENLABS_SETTINGS.maxChars)),
+        fishAudioEnabled: (map.elevenlabs_enabled || process.env.ELEVENLABS_ENABLED) === "true",
+        fishAudioVoiceId: map.elevenlabs_voice_id || process.env.ELEVENLABS_VOICE_ID || DEFAULT_ELEVENLABS_SETTINGS.voiceId,
+        fishAudioModel: normalizeElevenLabsModel(map.elevenlabs_model || process.env.ELEVENLABS_MODEL || DEFAULT_ELEVENLABS_SETTINGS.model),
+        fishAudioFrequencyPercent: Number(map.elevenlabs_frequency_percent || process.env.ELEVENLABS_FREQUENCY_PERCENT || DEFAULT_ELEVENLABS_SETTINGS.frequencyPercent),
+        fishAudioCooldownMinutes: Number(map.elevenlabs_cooldown_minutes || process.env.ELEVENLABS_COOLDOWN_MINUTES || DEFAULT_ELEVENLABS_SETTINGS.cooldownMinutes),
+        fishAudioMaxChars: Math.min(500, Math.max(60, Number(map.elevenlabs_max_chars || process.env.ELEVENLABS_MAX_CHARS) || DEFAULT_ELEVENLABS_SETTINGS.maxChars)),
         mem0Enabled: map.mem0_enabled === "true",
         mem0TopK: Math.min(12, Math.max(3, Number(map.mem0_top_k) || 8)),
     };
