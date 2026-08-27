@@ -147,7 +147,10 @@ export const detectPaidProduct = (text: string): SalesProduct | null => {
     if (/\b(?:pagar|pago|comprar|faz por|fecha por)\b.{0,30}\bvideo\b|\bvideo\b.{0,30}\b(?:pagar|reais|conto)\b/i.test(value)) return 'custom_video';
     if (/\b(whatsapp|numero pessoal|seu numero|contato pessoal)\b/i.test(value)) return 'private_number';
     if (/\b(chat privado|atencao exclusiva|companhia exclusiva|conversar no privado|namoradinha virtual)\b/i.test(value)) return 'private_chat';
-    if (/\b(audio erotico|audio gemendo|gemido em audio)\b/i.test(value)) return 'erotic_audio';
+    if (/\b(?:audio|voz)\b.{0,50}\b(?:erotico|safado|gemendo|gemido|gozando|personalizado)\b/i.test(value)
+        || /\b(?:erotico|safado|gemendo|gemido|gozando)\b.{0,50}\b(?:audio|voz)\b/i.test(value)
+        || /\b(?:geme|gemendo|gemido)\b.{0,35}\b(?:meu nome|o meu nome|me chama pelo nome)\b/i.test(value)
+        || /\b(?:fala|diz|chama)\b.{0,30}\b(?:meu nome|o meu nome)\b.{0,30}\b(?:gemendo|com gemido)\b/i.test(value)) return 'erotic_audio';
     if (/\b(avaliacao|avaliar meu pau|avalia meu pau)\b/i.test(value)) return 'evaluation';
     const mentionsCustomItem = /\b(calcinha|sutia|lingerie usada|roupa usada|presente personalizado|objeto pessoal)\b/i.test(value);
     const explicitCustomCommerce = /\b(?:vendo|vende|vender|compro|comprar|te pago|pago pra|pagaria|quanto cobra|quanto vc quer|faz por|fecha por)\b/i.test(value);
@@ -428,7 +431,7 @@ const createOfferPlan = ({
         format: selected[2],
         explicitBudget,
         valueSource,
-        requestBrief: product === 'custom_request' ? customRequestBrief || null : null,
+        requestBrief: product === 'custom_request' || product === 'erotic_audio' ? customRequestBrief || null : null,
     };
 };
 
@@ -461,8 +464,9 @@ export const evaluateSalesTiming = ({
         : null;
     const activeProduct = detectedProduct || compatibleActiveOrder?.product || rememberedProduct;
     const rememberedCustomBrief = String(leadMemory?.metadata?.sales_custom_request_brief || '').trim();
-    const customRequestBrief = activeProduct === 'custom_request'
-        ? (detectedProduct === 'custom_request' ? buildCustomRequestBrief(userText) : rememberedCustomBrief)
+    const isBriefedProduct = activeProduct === 'custom_request' || activeProduct === 'erotic_audio';
+    const customRequestBrief = isBriefedProduct
+        ? (detectedProduct === activeProduct ? buildCustomRequestBrief(userText) : rememberedCustomBrief)
         : null;
     const sameProduct = Boolean(activeProduct && activeProduct === rememberedProduct);
     const previousTurns = sameProduct ? Math.max(0, Number(leadMemory?.metadata?.sales_nurture_turns || 0)) : 0;

@@ -107,6 +107,8 @@ const secondVideoOrder = sales.buildSalesOrderSnapshot({
 });
 assert.notEqual(firstVideoOrder.orderId, secondVideoOrder.orderId);
 assert.equal(sales.canonicalizeSalesOfferMessages(['fica R$ 29,90'], 19.9)[0], 'fica R$ 19,90');
+assert.equal(sales.detectPaidProduct('manda um áudio gemendo meu nome'), 'erotic_audio');
+assert.equal(sales.detectPaidProduct('geme o meu nome bem baixinho'), 'erotic_audio');
 
 const route = fs.readFileSync(path.join(root, 'src/app/api/process-message/route.ts'), 'utf8');
 const gateway = fs.readFileSync(path.join(root, 'src/lib/gemini.ts'), 'utf8');

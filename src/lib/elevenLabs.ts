@@ -44,6 +44,18 @@ const deterministicPercent = (seed: string) => {
 export const userAskedForElevenLabsAudio = (text: string) =>
     /\b(?:manda|envia|grava|responde|fala|quero|solta)(?:\s+um|\s+uma|\s+em)?\s+(?:audio|áudio|voz|voice)|\b(?:audio|áudio)\s+(?:seu|sua|pra mim|para mim|falando)\b|\b(?:ouvir|escutar)\s+(?:sua\s+)?(?:voz|audio|áudio)\b|\bfala\s+(?:o\s+)?meu\s+nome\b|\bfalando\s+meu\s+nome\b|\b(?:cad[eê]|kd)\s+(?:o\s+)?(?:audio|áudio|voz)\b|\b(?:audio|áudio|voz)\b.{0,28}\b(?:n[aã]o\s+veio|faltou|sumiu|voc[eê]\s+escreveu)\b/iu.test(text || '');
 
+// Atuação erótica sob medida é um produto, não um áudio casual. Esta regra
+// fica no backend para uma escolha errada do modelo nunca liberar de graça um
+// gemido personalizado com o nome do lead.
+export const isPaidPersonalizedEroticAudioRequest = (text: string) => {
+    const value = String(text || '');
+    const mentionsVoice = /\b(?:audio|áudio|voz|grava|gravar|manda|envia|fala|diz)\b/iu.test(value);
+    const requestsMoan = /\b(?:geme|gemendo|gemido|gemidos|gozando|moan|moaning)\b/iu.test(value);
+    const requestsName = /\b(?:meu\s+nome|o\s+meu\s+nome|me\s+chama\s+pelo\s+nome|falando\s+(?:o\s+)?meu\s+nome)\b/iu.test(value);
+    const eroticCustomVoice = /\b(?:audio|áudio|voz)\b.{0,50}\b(?:er[oó]tic[oa]|safad[oa]|gemendo|gemido|gozando|personalizad[oa])\b|\b(?:er[oó]tic[oa]|safad[oa]|gemendo|gemido|gozando)\b.{0,50}\b(?:audio|áudio|voz)\b/iu.test(value);
+    return eroticCustomVoice || (requestsMoan && (mentionsVoice || requestsName));
+};
+
 export const ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS = 85;
 export const ELEVENLABS_CONVERSION_AUDIO_MAX_CHARS = 70;
 export const ELEVENLABS_REQUESTED_AUDIO_MAX_WORDS = 14;

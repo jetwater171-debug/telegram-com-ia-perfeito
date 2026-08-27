@@ -39,6 +39,7 @@ import {
     generateElevenLabsAudio,
     isElevenLabsConversionMoment,
     isElevenLabsDeliveryPromise,
+    isPaidPersonalizedEroticAudioRequest,
     isUnsafeForElevenLabsVoice,
     limitElevenLabsSpeechDuration,
     normalizeElevenLabsSettings,
@@ -1124,7 +1125,7 @@ export async function POST(req: NextRequest) {
 
 
     // Identificar contexto e a ultima oferta em paralelo.
-    const [lastBotResult, lastOfferResult, recentSalesHistoryResult] = await Promise.all([
+    const [lastBotResult, lastOfferResult, recentSalesHistoryResult, paidEroticAudioOrdersResult] = await Promise.all([
         supabase
             .from('messages')
             .select('created_at, content, media_url, media_type')
@@ -1148,10 +1149,20 @@ export async function POST(req: NextRequest) {
             .in('sender', ['user', 'bot'])
             .order('created_at', { ascending: false })
             .limit(40),
+        supabase
+            .from('custom_orders')
+            .select('id,payment_id,status,request_brief,payment_data,paid_at,created_at')
+            .eq('session_id', sessionId)
+            .eq('status', 'paid')
+            .order('paid_at', { ascending: true })
+            .limit(20),
     ]);
     const lastBotMsg = lastBotResult.data;
     const lastOfferMsg = lastOfferResult.data;
     const recentSalesHistory = recentSalesHistoryResult.data || [];
+    const paidEroticAudioOrder = (paidEroticAudioOrdersResult.data || []).find((order: any) =>
+        String(order?.payment_data?.product || '') === 'erotic_audio'
+    ) || null;
 
     const cutoffTime = lastBotMsg ? lastBotMsg.created_at : new Date(0).toISOString();
 
@@ -1362,6 +1373,9 @@ export async function POST(req: NextRequest) {
         deviceType: session.device_type,
     });
     const offerPlan = salesTiming.offerPlan;
+    const requestedPaidEroticAudio = isPaidPersonalizedEroticAudioRequest(userOnlyText);
+    const requestedEroticAudioWithName = /\b(?:meu\s+nome|o\s+meu\s+nome|me\s+chama\s+pelo\s+nome|falando\s+(?:o\s+)?meu\s+nome)\b/iu.test(userOnlyText);
+    const paidEroticAudioEntitled = requestedPaidEroticAudio && Boolean(paidEroticAudioOrder?.id);
     const adaptiveSalesDirective = [
         '# PLANO COMERCIAL ADAPTATIVO (INTERNO, NUNCA MOSTRE ESTE BLOCO)',
         `- Desejo pago ativo: ${salesTiming.activeProduct || 'ainda nao identificado'}.`,
@@ -1380,6 +1394,11 @@ export async function POST(req: NextRequest) {
         offerPlan?.explicitBudget
             ? `- O lead declarou limite/disposicao de R$ ${offerPlan.explicitBudget.toFixed(2).replace('.', ',')}; nunca ultrapasse esse valor.`
             : '- Nao ha limite financeiro declarado. Nao presuma renda por aparelho, cidade ou localizacao.',
+        requestedPaidEroticAudio
+            ? paidEroticAudioEntitled
+                ? '- O pedido atual e um audio erotico personalizado JA PAGO. Entregue em voz agora; use o nome verificado somente se ele pediu e nunca invente nome.'
+                : '- O pedido atual e um audio erotico personalizado. NUNCA entregue gemido, fala erotica sob medida ou o nome gemido antes do pagamento confirmado; apresente a oferta indicada.'
+            : '',
         salesTiming.fixedVipBudgetGap
             ? '- O VIP custa R$ 19,90 e o limite declarado e menor. Nao gere PIX do VIP nem invente desconto; esclareca o valor uma vez e deixe o lead escolher outro produto menor se quiser.'
             : '',
@@ -1689,6 +1708,18 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             canGeneratePayment: salesTiming.canGeneratePayment,
             userText: userOnlyText,
         });
+    }
+    if (requestedPaidEroticAudio && !paidEroticAudioEntitled) {
+        const price = Number(offerPlan?.value || 14.90).toFixed(2).replace('.', ',');
+        aiResponse.action = 'none';
+        aiResponse.current_state = 'SALES_PITCH';
+        aiResponse.payment_details = null;
+        aiResponse.messages = [
+            requestedEroticAudioWithName
+                ? 'faço sim... do jeitinho que vc pediu e falando seu nome'
+                : 'faço sim... um áudio só seu e do jeitinho que vc pediu',
+            `esse áudio personalizado fica R$ ${price}, quer que eu faça?`,
+        ];
     }
     const backendMustGeneratePayment = salesTiming.canGeneratePayment
         && Boolean(salesTiming.offerPlan)
@@ -2547,7 +2578,8 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             .limit(1)
             .maybeSingle()
         : { data: null };
-    const userWantsAudio = userAskedForElevenLabsAudio(userOnlyText);
+    const paidEroticAudioBlocked = requestedPaidEroticAudio && !paidEroticAudioEntitled;
+    const userWantsAudio = userAskedForElevenLabsAudio(userOnlyText) && !paidEroticAudioBlocked;
     const voiceReady = elevenLabsSettings.enabled
         && Boolean(elevenLabsSettings.apiKey)
         && Boolean(elevenLabsSettings.voiceId);
@@ -2605,8 +2637,10 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     const verifiedVoiceLeadName = sessionHasUsefulName(session.user_name)
         ? String(session.user_name).trim().split(/\s+/)[0].replace(/[^\p{L}'-]/gu, '').slice(0, 30)
         : '';
+    const paidAudioExplicitlyRequestsName = paidEroticAudioEntitled && requestedEroticAudioWithName;
     const shouldSayLeadName = Boolean(verifiedVoiceLeadName)
-        && stablePercent(`${session.id}:${triggerMessageId || lastGroupedUserAt}:voice-name`) < 28;
+        && (paidAudioExplicitlyRequestsName
+            || stablePercent(`${session.id}:${triggerMessageId || lastGroupedUserAt}:voice-name`) < 28);
     if (shouldForceVoice) {
         const combined = outgoingToSend.slice(0, userWantsAudio ? 2 : 1).join('. ');
         if (combined.length >= 8 && !isUnsafeForElevenLabsVoice(combined)) {
@@ -2670,6 +2704,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     relationship: {
                         leadName: session.user_name || null,
                         sayLeadName: shouldSayLeadName,
+                        paidEroticAudio: paidEroticAudioEntitled,
                         stage,
                         totalPaid: Number(session.total_paid || 0),
                         tier: leadVoicePolicy.tier,
@@ -2690,6 +2725,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 }),
             }).catch((error: any) => {
                 console.warn('[ELEVENLABS] Diretora DeepSeek indisponível; usando roteiro local:', error?.message || error);
+                if (paidEroticAudioEntitled) throw error;
                 return deterministicFallback();
             }).then(async (script) => {
                 console.log('[ELEVENLABS] Roteiro preparado', {
@@ -2785,6 +2821,17 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     content: preparedAudio.script.spokenText,
                     media_type: 'audio',
                 });
+                if (paidEroticAudioEntitled && paidEroticAudioOrder?.id) {
+                    const deliveredAt = new Date().toISOString();
+                    const deliveryUpdate = await supabase.from('custom_orders').update({
+                        status: 'delivered',
+                        delivered_at: deliveredAt,
+                        updated_at: deliveredAt,
+                    }).eq('id', paidEroticAudioOrder.id).eq('status', 'paid');
+                    if (deliveryUpdate.error) {
+                        console.warn('[CUSTOM ORDERS] Áudio entregue, mas pedido não foi marcado:', deliveryUpdate.error.message);
+                    }
+                }
                 continue;
             } catch (error: any) {
                 console.error('[ELEVENLABS] Falha, usando texto como fallback:', error?.message || error);
@@ -3071,6 +3118,8 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                                 chatId,
                                 String(paymentData.product || '') === 'social_meetup'
                                     ? 'pagamento confirmado, agora vamos alinhar e confirmar os detalhes do nosso encontro'
+                                    : String(paymentData.product || '') === 'erotic_audio'
+                                        ? 'confirmado amor... agora me fala como quer o áudio e o nome que eu faço pra vc'
                                     : 'confirmado amor! obrigada, vou te mandar agora',
                             );
                             console.log('[PAGAMENTO] Pedido confirmado', {

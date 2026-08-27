@@ -210,6 +210,8 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
           session.telegram_chat_id,
           isSocialMeetup
             ? 'pagamento confirmado, agora vamos alinhar e confirmar os detalhes do nosso encontro'
+            : product === 'erotic_audio'
+              ? 'confirmado amor... agora me fala como quer o áudio e o nome que eu faço pra vc'
             : 'confirmado amor! obrigada... vou te mandar agora',
         );
       }
