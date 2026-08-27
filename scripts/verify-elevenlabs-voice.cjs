@@ -37,6 +37,7 @@ assert.throws(() => eleven.validateElevenLabsOpus(Buffer.alloc(2_000)), /OGG\/Op
         messageText: 'vc me deixa doida kkkkk, to aqui pensando em vc',
         userText: 'fala safada comigo',
         emotionalContext: 'conversa adulta recíproca',
+        lariIdentityContext: 'Larissa, relação engajada, lead adulto e conversa íntima.',
         fetcher: async (url, init) => {
             deepSeekCalls.push({ url, body: JSON.parse(init.body) });
             return new Response(JSON.stringify({
@@ -55,6 +56,18 @@ assert.throws(() => eleven.validateElevenLabsOpus(Buffer.alloc(2_000)), /OGG\/Op
     assert.match(script.elevenText, /\[whispers\]/);
     assert.doesNotMatch(script.elevenText, /kkkk|\brs\b/i);
     assert.equal(deepSeekCalls[0].body.max_tokens, 650);
+    assert.match(deepSeekCalls[0].body.messages[0].content, /DIRETORA DE VOZ PRIVADA/);
+    assert.match(deepSeekCalls[0].body.messages[1].content, /relação engajada/);
+
+    const neutralGuard = await agent.prepareElevenLabsScript({
+        settings,
+        messageText: 'Hoje eu acordei cedo e fui tomar café.',
+        userText: 'bom dia, dormiu bem?',
+        fetcher: async () => new Response(JSON.stringify({
+            choices: [{ message: { content: '{"spoken_text":"Hoje eu acordei cedo e fui tomar café.","performance_script":"[moans] Hoje eu acordei cedo [gasps] e fui tomar café. [moans softly]","delivery":"neutral","reaction":"none"}' } }],
+        }), { status: 200 }),
+    });
+    assert.doesNotMatch(neutralGuard.elevenText, /moans|gasps/i);
 
     const guarded = await agent.prepareElevenLabsScript({
         settings,
@@ -84,19 +97,22 @@ assert.throws(() => eleven.validateElevenLabsOpus(Buffer.alloc(2_000)), /OGG\/Op
     global.fetch = async (url, init) => {
         requestUrl = String(url);
         requestBody = JSON.parse(init.body);
-        return new Response(validOpus, { status: 200, headers: { 'content-type': 'audio/opus' } });
+        return new Response(validOpus, { status: 200, headers: { 'content-type': 'audio/opus', 'character-cost': '81', 'request-id': 'req-test' } });
     };
     try {
         const audio = await eleven.generateElevenLabsAudio({
             settings: { apiKey: 'eleven-test', enabled: true, voiceId: 'voice-clone', model: 'eleven_v3', frequencyPercent: 18, cooldownMinutes: 30, maxChars: 300 },
             text: script.elevenText,
         });
-        assert.equal(audio.length, validOpus.length);
+        assert.equal(audio.audio.length, validOpus.length);
+        assert.equal(audio.usage.actualCredits, 81);
+        assert.equal(audio.usage.requestId, 'req-test');
         assert.match(requestUrl, /voice-clone\?output_format=opus_48000_64$/);
         assert.equal(requestBody.model_id, 'eleven_v3');
         assert.equal(requestBody.voice_settings.stability, 0.5);
         assert.equal(requestBody.voice_settings.similarity_boost, 0.9);
         assert.equal(requestBody.voice_settings.style, 0.65);
+        assert.equal(requestBody.voice_settings.speed, 0.92);
     } finally {
         global.fetch = originalFetch;
     }

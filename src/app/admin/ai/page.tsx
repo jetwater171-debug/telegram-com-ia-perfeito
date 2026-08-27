@@ -29,12 +29,22 @@ type AiSettings = {
     cloudflareAccountId: string; customBaseUrl: string; customModel: string; customTiers: string; customWeight: number;
     fishAudioEnabled: boolean; fishAudioVoiceId: string; fishAudioModel: string;
     fishAudioFrequencyPercent: number; fishAudioCooldownMinutes: number; fishAudioMaxChars: number;
+    fishAudioBudgetEnabled: boolean; fishAudioReservePercent: number; fishAudioAcquisitionPercent: number;
+    fishAudioRevenueSharePercent: number; fishAudioCreditsPerBrl: number; fishAudioFreeLeadCredits: number;
+    fishAudioUnpaidMaxChars: number; fishAudioBuyerMaxChars: number;
     mem0Enabled: boolean; mem0TopK: number;
 };
 
 type AiEvent = { at: string; role: string; provider: string; model: string; status: string; message?: string; durationMs?: number };
 type AiStat = { role: string; provider: string; model: string; success?: number; error?: number; skipped?: number };
 type RouterSnapshot = { key: string; inFlight: number; minuteRequests: number; minuteTokens: number; successes: number; failures: number; cooldownMs: number; ewmaLatencyMs: number; lastFailureKind?: string | null };
+type VoiceBudgetMetrics = {
+    ready: boolean;
+    error?: string;
+    subscription?: { tier: string; status: string; usedCredits: number; limitCredits: number; remainingCredits: number; resetAt: string | null } | null;
+    subscriptionError?: string;
+    totals: { charged: number; reserved: number; released: number; acquisition: number; buyers: number; leads: number };
+};
 
 const PROVIDER_ORDER: ProviderKey[] = ["bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"];
 const PROVIDER_INFO: Record<ProviderKey, { label: string; short: string; description: string; keyUrl: string; keyLabel: string; color: string }> = {
@@ -71,6 +81,9 @@ const emptySettings: AiSettings = {
     cloudflareAccountId: "", customBaseUrl: "", customModel: "auto", customTiers: "starter,buyer", customWeight: 5,
     fishAudioEnabled: false, fishAudioVoiceId: "vcYWBf5QTtDLdbfB20xT", fishAudioModel: "eleven_v3",
     fishAudioFrequencyPercent: 18, fishAudioCooldownMinutes: 30, fishAudioMaxChars: 300,
+    fishAudioBudgetEnabled: true, fishAudioReservePercent: 20, fishAudioAcquisitionPercent: 10,
+    fishAudioRevenueSharePercent: 5, fishAudioCreditsPerBrl: 1800, fishAudioFreeLeadCredits: 180,
+    fishAudioUnpaidMaxChars: 140, fishAudioBuyerMaxChars: 300,
     mem0Enabled: false, mem0TopK: 8,
 };
 
@@ -117,6 +130,10 @@ export default function AdminAiPage() {
     const [testing, setTesting] = useState<Record<string, boolean>>({});
     const [testResults, setTestResults] = useState<Record<string, string>>({});
     const [fishTestUrl, setFishTestUrl] = useState("");
+    const [voiceBudget, setVoiceBudget] = useState<VoiceBudgetMetrics>({
+        ready: false,
+        totals: { charged: 0, reserved: 0, released: 0, acquisition: 0, buyers: 0, leads: 0 },
+    });
     const initializedRef = useRef(false);
     const lastQueuedRef = useRef("");
     const saveChainRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -143,6 +160,7 @@ export default function AdminAiPage() {
         setStats(Array.isArray(data.stats) ? data.stats : []);
         setRecentEvents(Array.isArray(data.recentEvents) ? data.recentEvents : []);
         setRouterSnapshot(Array.isArray(data.routerSnapshot) ? data.routerSnapshot : []);
+        if (data.voiceBudget) setVoiceBudget(data.voiceBudget as VoiceBudgetMetrics);
         lastQueuedRef.current = JSON.stringify({ settings: next, order: nextOrder });
         initializedRef.current = true;
         setSaveState("idle");
@@ -265,9 +283,10 @@ export default function AdminAiPage() {
             });
             if (!response.ok) throw new Error((await response.json().catch(() => ({})))?.error || `HTTP ${response.status}`);
             const blob = await response.blob();
+            const credits = response.headers.get("X-ElevenLabs-Credits");
             if (fishTestUrl) URL.revokeObjectURL(fishTestUrl);
             setFishTestUrl(URL.createObjectURL(blob));
-            setTestResults((current) => ({ ...current, fish: "Áudio pronto. Dê play abaixo." }));
+            setTestResults((current) => ({ ...current, fish: `Áudio pronto${credits ? ` · ${credits} créditos` : ""}. Dê play abaixo.` }));
         } catch (error: any) {
             setTestResults((current) => ({ ...current, fish: `Falhou: ${error?.message || error}` }));
         } finally {
@@ -441,7 +460,25 @@ export default function AdminAiPage() {
                             </Field>
                             <a href="https://elevenlabs.io/app/developers/api-keys" target="_blank" rel="noreferrer" className="block rounded-xl border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-center text-sm font-semibold text-cyan-100">Abrir chaves da ElevenLabs ↗</a>
                             <Toggle title="Enviar áudios" description="Eleven v3 com atuação emocional e tags naturais da Lari." checked={settings.fishAudioEnabled} onChange={(value) => updateSetting("fishAudioEnabled", value)} />
+                            <Toggle title="Proteger orçamento" description="Reserva créditos antes da geração e aumenta o limite somente com pagamentos confirmados." checked={settings.fishAudioBudgetEnabled} onChange={(value) => updateSetting("fishAudioBudgetEnabled", value)} />
                             <Field label="Voice ID"><input value={settings.fishAudioVoiceId} onChange={(event) => updateSetting("fishAudioVoiceId", event.target.value)} className={inputClass} /></Field>
+                            <div className="grid grid-cols-2 gap-2">
+                                <Metric value={voiceBudget.subscription ? voiceBudget.subscription.remainingCredits.toLocaleString("pt-BR") : "—"} label="Saldo ElevenLabs" />
+                                <Metric value={voiceBudget.totals.charged.toLocaleString("pt-BR")} label="Créditos consumidos" />
+                                <Metric value={voiceBudget.totals.acquisition.toLocaleString("pt-BR")} label="Aquisição" />
+                                <Metric value={voiceBudget.totals.buyers.toLocaleString("pt-BR")} label="Compradores" />
+                            </div>
+                            {!voiceBudget.ready && <p className="rounded-xl border border-amber-300/20 bg-amber-300/[0.06] p-3 text-xs leading-5 text-amber-100">Controle financeiro aguardando configuração: {voiceBudget.error || voiceBudget.subscriptionError || "saldo indisponível"}.</p>}
+                            <div className="grid grid-cols-2 gap-3">
+                                <Field label="Reserva global %"><input type="number" min={5} max={50} value={settings.fishAudioReservePercent} onChange={(event) => updateSetting("fishAudioReservePercent", Number(event.target.value))} className={inputClass} /></Field>
+                                <Field label="Aquisição %"><input type="number" min={0} max={50} value={settings.fishAudioAcquisitionPercent} onChange={(event) => updateSetting("fishAudioAcquisitionPercent", Number(event.target.value))} className={inputClass} /></Field>
+                                <Field label="Receita para voz %"><input type="number" min={0.5} max={20} step={0.5} value={settings.fishAudioRevenueSharePercent} onChange={(event) => updateSetting("fishAudioRevenueSharePercent", Number(event.target.value))} className={inputClass} /></Field>
+                                <Field label="Créditos por R$"><input type="number" min={1} max={100000} value={settings.fishAudioCreditsPerBrl} onChange={(event) => updateSetting("fishAudioCreditsPerBrl", Number(event.target.value))} className={inputClass} /></Field>
+                                <Field label="Cortesia por lead"><input type="number" min={0} max={2000} value={settings.fishAudioFreeLeadCredits} onChange={(event) => updateSetting("fishAudioFreeLeadCredits", Number(event.target.value))} className={inputClass} /></Field>
+                                <Field label="Máx. lead grátis"><input type="number" min={60} max={220} value={settings.fishAudioUnpaidMaxChars} onChange={(event) => updateSetting("fishAudioUnpaidMaxChars", Number(event.target.value))} className={inputClass} /></Field>
+                                <Field label="Máx. comprador"><input type="number" min={100} max={500} value={settings.fishAudioBuyerMaxChars} onChange={(event) => updateSetting("fishAudioBuyerMaxChars", Number(event.target.value))} className={inputClass} /></Field>
+                            </div>
+                            <p className="text-xs leading-5 text-slate-500">Padrão: 20% intocável, 10% para aquisição e 5% da receita líquida de cada comprador convertida em voz. Sem orçamento, a Lari responde em texto.</p>
                             <button type="button" onClick={() => void testFishAudio()} disabled={testing.fish} className="w-full rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold hover:bg-white/5">{testing.fish ? "Gerando..." : "Gerar áudio de teste"}</button>
                             {testResults.fish && <p className="text-xs text-slate-400">{testResults.fish}</p>}
                             {fishTestUrl && <audio controls src={fishTestUrl} className="w-full" />}

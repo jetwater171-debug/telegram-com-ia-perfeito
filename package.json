@@ -11,6 +11,7 @@
     "eval:brain-v2": "node scripts/eval-master-brain-v2.cjs",
     "verify:three-brain": "node scripts/verify-three-brain-commerce.cjs",
     "verify:elevenlabs-voice": "node scripts/verify-elevenlabs-voice.cjs",
+    "verify:elevenlabs-budget": "node scripts/verify-elevenlabs-budget.cjs",
     "verify:master-brain": "node scripts/verify-three-brain-commerce.cjs"
   },
   "dependencies": {

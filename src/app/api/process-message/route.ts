@@ -38,6 +38,15 @@ import {
     userAskedForElevenLabsAudio,
 } from '@/lib/elevenLabs';
 import { prepareElevenLabsScript } from '@/lib/elevenLabsScriptAgent';
+import {
+    buildLeadVoicePolicy,
+    estimateElevenLabsCredits,
+    getElevenLabsSubscription,
+    normalizeElevenLabsBudgetConfig,
+    releaseElevenLabsBudget,
+    reserveElevenLabsBudget,
+    settleElevenLabsBudget,
+} from '@/lib/elevenLabsBudget';
 import { normalizeBaiModelName } from '@/lib/aiModels';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
@@ -849,6 +858,14 @@ export async function POST(req: NextRequest) {
                 'elevenlabs_frequency_percent',
                 'elevenlabs_cooldown_minutes',
                 'elevenlabs_max_chars',
+                'elevenlabs_budget_enabled',
+                'elevenlabs_budget_reserve_percent',
+                'elevenlabs_budget_acquisition_percent',
+                'elevenlabs_budget_revenue_share_percent',
+                'elevenlabs_budget_credits_per_brl',
+                'elevenlabs_budget_free_lead_credits',
+                'elevenlabs_budget_unpaid_max_chars',
+                'elevenlabs_budget_buyer_max_chars',
                 'mem0_api_key',
                 'mem0_enabled',
                 'mem0_top_k',
@@ -867,7 +884,7 @@ export async function POST(req: NextRequest) {
     const botToken = botConfig.telegram_bot_token;
     if (!botToken) return NextResponse.json({ error: 'Sem token' });
     const chatId = session.telegram_chat_id;
-    const elevenLabsSettings = normalizeElevenLabsSettings({
+    const baseElevenLabsSettings = normalizeElevenLabsSettings({
         apiKey: botConfig.elevenlabs_api_key || process.env.ELEVENLABS_API_KEY || '',
         enabled: (botConfig.elevenlabs_enabled || process.env.ELEVENLABS_ENABLED) === 'true',
         voiceId: botConfig.elevenlabs_voice_id || process.env.ELEVENLABS_VOICE_ID || DEFAULT_ELEVENLABS_SETTINGS.voiceId,
@@ -876,6 +893,29 @@ export async function POST(req: NextRequest) {
         cooldownMinutes: Number(botConfig.elevenlabs_cooldown_minutes || process.env.ELEVENLABS_COOLDOWN_MINUTES || DEFAULT_ELEVENLABS_SETTINGS.cooldownMinutes),
         maxChars: Number(botConfig.elevenlabs_max_chars || process.env.ELEVENLABS_MAX_CHARS || DEFAULT_ELEVENLABS_SETTINGS.maxChars),
     });
+    const elevenLabsBudgetConfig = normalizeElevenLabsBudgetConfig({
+        enabled: (botConfig.elevenlabs_budget_enabled || process.env.ELEVENLABS_BUDGET_ENABLED) !== 'false',
+        reservePercent: Number(botConfig.elevenlabs_budget_reserve_percent || process.env.ELEVENLABS_BUDGET_RESERVE_PERCENT),
+        acquisitionPercent: Number(botConfig.elevenlabs_budget_acquisition_percent || process.env.ELEVENLABS_BUDGET_ACQUISITION_PERCENT),
+        revenueSharePercent: Number(botConfig.elevenlabs_budget_revenue_share_percent || process.env.ELEVENLABS_BUDGET_REVENUE_SHARE_PERCENT),
+        creditsPerBrl: Number(botConfig.elevenlabs_budget_credits_per_brl || process.env.ELEVENLABS_BUDGET_CREDITS_PER_BRL),
+        freeLeadCredits: Number(botConfig.elevenlabs_budget_free_lead_credits || process.env.ELEVENLABS_BUDGET_FREE_LEAD_CREDITS),
+        unpaidMaxChars: Number(botConfig.elevenlabs_budget_unpaid_max_chars || process.env.ELEVENLABS_BUDGET_UNPAID_MAX_CHARS),
+        buyerMaxChars: Number(botConfig.elevenlabs_budget_buyer_max_chars || process.env.ELEVENLABS_BUDGET_BUYER_MAX_CHARS),
+    });
+    const leadVoicePolicy = buildLeadVoicePolicy({
+        totalPaid: Number(session.total_paid || 0),
+        configuredFrequencyPercent: baseElevenLabsSettings.frequencyPercent,
+        configuredCooldownMinutes: baseElevenLabsSettings.cooldownMinutes,
+        configuredMaxChars: baseElevenLabsSettings.maxChars,
+        config: elevenLabsBudgetConfig,
+    });
+    const elevenLabsSettings = {
+        ...baseElevenLabsSettings,
+        frequencyPercent: leadVoicePolicy.frequencyPercent,
+        cooldownMinutes: leadVoicePolicy.cooldownMinutes,
+        maxChars: leadVoicePolicy.maxChars,
+    };
     const mem0Settings = normalizeMem0LeadMemorySettings({
         apiKey: botConfig.mem0_api_key || process.env.MEM0_API_KEY || '',
         enabled: botConfig.mem0_enabled === 'true',
@@ -2475,6 +2515,32 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
                     ...recentUserTexts.slice(-3),
                     ...recentBotTexts.slice(-3),
                 ].filter(Boolean).join('\n').slice(-900),
+                lariIdentityContext: JSON.stringify({
+                    lari: {
+                        name: 'Larissa Morais',
+                        age: 19,
+                        voice: 'brasileira jovem, íntima, espontânea, provocante quando o contexto permite',
+                    },
+                    relationship: {
+                        leadName: session.user_name || null,
+                        stage,
+                        totalPaid: Number(session.total_paid || 0),
+                        tier: leadVoicePolicy.tier,
+                        scores: aiResponse.lead_stats || {},
+                        memory: {
+                            relationshipStage: operationalLeadMemory.relationship_stage || null,
+                            emotionalContext: operationalLeadMemory.emotional_context || null,
+                            knownFacts: operationalLeadMemory.known_facts || [],
+                            desires: operationalLeadMemory.desires || [],
+                            fetishes: operationalLeadMemory.fetiches || [],
+                            objections: operationalLeadMemory.objections || [],
+                            wantedProducts: operationalLeadMemory.wanted_products || [],
+                            rejectedProducts: operationalLeadMemory.rejected_products || [],
+                            conversationHooks: operationalLeadMemory.conversation_hooks || [],
+                            notes: operationalLeadMemory.notes || [],
+                        },
+                    },
+                }),
             }).catch((error: any) => {
                 console.warn('[ELEVENLABS] Diretora DeepSeek indisponível; usando roteiro local:', error?.message || error);
                 return deterministicFallback();
@@ -2485,8 +2551,52 @@ Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fa
                     reaction: script.reaction || 'none',
                     spokenText: script.spokenText,
                 });
-                const audio = await generateElevenLabsAudio({ settings: elevenLabsSettings, text: script.elevenText });
-                return { audio, script, error: null as unknown };
+                const subscription = await getElevenLabsSubscription(elevenLabsSettings.apiKey);
+                const estimatedCredits = estimateElevenLabsCredits(script.elevenText);
+                const source = userWantsAudio
+                    ? 'requested' as const
+                    : aiSelectedVoice ? 'ai_selected' as const : 'spontaneous' as const;
+                const reservation = await reserveElevenLabsBudget({
+                    supabase,
+                    sessionId: String(session.id),
+                    idempotencyKey: `${session.id}:${triggerMessageId || lastGroupedUserAt}:voice:${preferredAudioIndex}`,
+                    source,
+                    estimatedCredits,
+                    subscription,
+                    config: elevenLabsBudgetConfig,
+                });
+                if (!reservation.allowed) {
+                    console.log('[ELEVENLABS BUDGET] Áudio convertido em texto', {
+                        reason: reservation.reason,
+                        tier: leadVoicePolicy.tier,
+                        estimatedCredits,
+                    });
+                    throw new Error(`voice_budget:${reservation.reason}`);
+                }
+
+                try {
+                    const generated = await generateElevenLabsAudio({ settings: elevenLabsSettings, text: script.elevenText });
+                    await settleElevenLabsBudget({
+                        supabase,
+                        reservationId: reservation.reservationId,
+                        actualCredits: generated.usage.actualCredits,
+                        requestId: generated.usage.requestId,
+                        spokenChars: generated.usage.spokenChars,
+                        taggedChars: generated.usage.taggedChars,
+                    }).catch((error: any) => {
+                        // O provedor já cobrou neste ponto. Mantemos a reserva como
+                        // proteção conservadora e não impedimos a entrega ao lead.
+                        console.error('[ELEVENLABS BUDGET] Cobrança real não persistida:', error?.message || error);
+                    });
+                    return { audio: generated.audio, script, error: null as unknown };
+                } catch (error: any) {
+                    await releaseElevenLabsBudget({
+                        supabase,
+                        reservationId: reservation.reservationId,
+                        reason: String(error?.message || error),
+                    });
+                    throw error;
+                }
             }).catch((error: unknown) => ({ audio: null, script: deterministicFallback(), error }));
         })()
         : null;

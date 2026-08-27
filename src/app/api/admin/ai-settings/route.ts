@@ -13,6 +13,11 @@ import {
     normalizeOpenRouterPrimaryModel,
 } from "@/lib/aiModels";
 import { DEFAULT_ELEVENLABS_SETTINGS, normalizeElevenLabsModel } from "@/lib/elevenLabs";
+import {
+    DEFAULT_ELEVENLABS_BUDGET,
+    loadElevenLabsBudgetDashboard,
+    normalizeElevenLabsBudgetConfig,
+} from "@/lib/elevenLabsBudget";
 import { aiGatewayRouter } from "@/lib/aiGatewayRouter";
 
 const PROVIDERS = ["bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"] as const;
@@ -34,6 +39,9 @@ const CONFIG_KEYS = [
     "fish_audio_frequency_percent", "fish_audio_cooldown_minutes", "fish_audio_max_chars",
     "elevenlabs_api_key", "elevenlabs_enabled", "elevenlabs_voice_id", "elevenlabs_model",
     "elevenlabs_frequency_percent", "elevenlabs_cooldown_minutes", "elevenlabs_max_chars",
+    "elevenlabs_budget_enabled", "elevenlabs_budget_reserve_percent", "elevenlabs_budget_acquisition_percent",
+    "elevenlabs_budget_revenue_share_percent", "elevenlabs_budget_credits_per_brl",
+    "elevenlabs_budget_free_lead_credits", "elevenlabs_budget_unpaid_max_chars", "elevenlabs_budget_buyer_max_chars",
     "mem0_api_key", "mem0_enabled", "mem0_top_k",
 ];
 
@@ -121,6 +129,16 @@ const buildSettings = (map: Record<string, string>) => {
     const custom = secretState(map, "ai_custom_gateway_api_key", "AI_CUSTOM_GATEWAY_API_KEY");
     const elevenLabs = secretState(map, "elevenlabs_api_key", "ELEVENLABS_API_KEY");
     const mem0 = secretState(map, "mem0_api_key", "MEM0_API_KEY");
+    const voiceBudget = normalizeElevenLabsBudgetConfig({
+        enabled: (map.elevenlabs_budget_enabled || process.env.ELEVENLABS_BUDGET_ENABLED) !== "false",
+        reservePercent: Number(map.elevenlabs_budget_reserve_percent || process.env.ELEVENLABS_BUDGET_RESERVE_PERCENT),
+        acquisitionPercent: Number(map.elevenlabs_budget_acquisition_percent || process.env.ELEVENLABS_BUDGET_ACQUISITION_PERCENT),
+        revenueSharePercent: Number(map.elevenlabs_budget_revenue_share_percent || process.env.ELEVENLABS_BUDGET_REVENUE_SHARE_PERCENT),
+        creditsPerBrl: Number(map.elevenlabs_budget_credits_per_brl || process.env.ELEVENLABS_BUDGET_CREDITS_PER_BRL),
+        freeLeadCredits: Number(map.elevenlabs_budget_free_lead_credits || process.env.ELEVENLABS_BUDGET_FREE_LEAD_CREDITS),
+        unpaidMaxChars: Number(map.elevenlabs_budget_unpaid_max_chars || process.env.ELEVENLABS_BUDGET_UNPAID_MAX_CHARS),
+        buyerMaxChars: Number(map.elevenlabs_budget_buyer_max_chars || process.env.ELEVENLABS_BUDGET_BUYER_MAX_CHARS),
+    });
 
     return {
         baiApiKeyMasked: bai.masked, baiApiKeySaved: bai.saved, baiApiKeySource: bai.source,
@@ -175,6 +193,14 @@ const buildSettings = (map: Record<string, string>) => {
         fishAudioFrequencyPercent: Number(map.elevenlabs_frequency_percent || process.env.ELEVENLABS_FREQUENCY_PERCENT || DEFAULT_ELEVENLABS_SETTINGS.frequencyPercent),
         fishAudioCooldownMinutes: Number(map.elevenlabs_cooldown_minutes || process.env.ELEVENLABS_COOLDOWN_MINUTES || DEFAULT_ELEVENLABS_SETTINGS.cooldownMinutes),
         fishAudioMaxChars: Math.min(500, Math.max(60, Number(map.elevenlabs_max_chars || process.env.ELEVENLABS_MAX_CHARS) || DEFAULT_ELEVENLABS_SETTINGS.maxChars)),
+        fishAudioBudgetEnabled: voiceBudget.enabled,
+        fishAudioReservePercent: voiceBudget.reservePercent,
+        fishAudioAcquisitionPercent: voiceBudget.acquisitionPercent,
+        fishAudioRevenueSharePercent: voiceBudget.revenueSharePercent,
+        fishAudioCreditsPerBrl: voiceBudget.creditsPerBrl,
+        fishAudioFreeLeadCredits: voiceBudget.freeLeadCredits,
+        fishAudioUnpaidMaxChars: voiceBudget.unpaidMaxChars,
+        fishAudioBuyerMaxChars: voiceBudget.buyerMaxChars,
         mem0Enabled: map.mem0_enabled === "true",
         mem0TopK: Math.min(12, Math.max(3, Number(map.mem0_top_k) || 8)),
     };
@@ -185,7 +211,22 @@ export async function GET() {
         const map = await loadMap();
         const statsMap = parseJson(map.ai_gateway_stats || "{}", {});
         const stats = Object.values(statsMap).sort((a: any, b: any) => Number(b.error || 0) - Number(a.error || 0));
-        return NextResponse.json({ settings: buildSettings(map), recentEvents: parseJson(map.ai_gateway_recent_events || "[]", []), stats, routerSnapshot: aiGatewayRouter.snapshot() });
+        const settings = buildSettings(map);
+        const voiceBudget = await loadElevenLabsBudgetDashboard({
+            supabase,
+            apiKey: readSecret(map.elevenlabs_api_key) || readSecret(process.env.ELEVENLABS_API_KEY),
+            config: normalizeElevenLabsBudgetConfig({
+                enabled: settings.fishAudioBudgetEnabled,
+                reservePercent: settings.fishAudioReservePercent,
+                acquisitionPercent: settings.fishAudioAcquisitionPercent,
+                revenueSharePercent: settings.fishAudioRevenueSharePercent,
+                creditsPerBrl: settings.fishAudioCreditsPerBrl,
+                freeLeadCredits: settings.fishAudioFreeLeadCredits,
+                unpaidMaxChars: settings.fishAudioUnpaidMaxChars,
+                buyerMaxChars: settings.fishAudioBuyerMaxChars,
+            }),
+        });
+        return NextResponse.json({ settings, voiceBudget, recentEvents: parseJson(map.ai_gateway_recent_events || "[]", []), stats, routerSnapshot: aiGatewayRouter.snapshot() });
     } catch (error: any) {
         return NextResponse.json({ error: error?.message || "erro" }, { status: 500 });
     }
@@ -234,6 +275,14 @@ export async function POST(req: NextRequest) {
             { key: "elevenlabs_frequency_percent", value: String(clampNumber(body.fishAudioFrequencyPercent, 1, 100, DEFAULT_ELEVENLABS_SETTINGS.frequencyPercent)) },
             { key: "elevenlabs_cooldown_minutes", value: String(clampNumber(body.fishAudioCooldownMinutes, 1, 1440, DEFAULT_ELEVENLABS_SETTINGS.cooldownMinutes)) },
             { key: "elevenlabs_max_chars", value: String(clampNumber(body.fishAudioMaxChars, 60, 500, DEFAULT_ELEVENLABS_SETTINGS.maxChars)) },
+            { key: "elevenlabs_budget_enabled", value: body.fishAudioBudgetEnabled === false ? "false" : "true" },
+            { key: "elevenlabs_budget_reserve_percent", value: String(clampNumber(body.fishAudioReservePercent, 5, 50, DEFAULT_ELEVENLABS_BUDGET.reservePercent)) },
+            { key: "elevenlabs_budget_acquisition_percent", value: String(clampNumber(body.fishAudioAcquisitionPercent, 0, 50, DEFAULT_ELEVENLABS_BUDGET.acquisitionPercent)) },
+            { key: "elevenlabs_budget_revenue_share_percent", value: String(clampNumber(body.fishAudioRevenueSharePercent, 0.5, 20, DEFAULT_ELEVENLABS_BUDGET.revenueSharePercent)) },
+            { key: "elevenlabs_budget_credits_per_brl", value: String(clampNumber(body.fishAudioCreditsPerBrl, 1, 100000, DEFAULT_ELEVENLABS_BUDGET.creditsPerBrl)) },
+            { key: "elevenlabs_budget_free_lead_credits", value: String(clampNumber(body.fishAudioFreeLeadCredits, 0, 2000, DEFAULT_ELEVENLABS_BUDGET.freeLeadCredits)) },
+            { key: "elevenlabs_budget_unpaid_max_chars", value: String(clampNumber(body.fishAudioUnpaidMaxChars, 60, 220, DEFAULT_ELEVENLABS_BUDGET.unpaidMaxChars)) },
+            { key: "elevenlabs_budget_buyer_max_chars", value: String(clampNumber(body.fishAudioBuyerMaxChars, 100, 500, DEFAULT_ELEVENLABS_BUDGET.buyerMaxChars)) },
             { key: "mem0_enabled", value: body.mem0Enabled === true ? "true" : "false" },
             { key: "mem0_top_k", value: String(clampNumber(body.mem0TopK, 3, 12, 8)) },
         ];

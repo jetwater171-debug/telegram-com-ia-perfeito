@@ -34,13 +34,14 @@ export async function POST(req: NextRequest) {
         });
         const plainText = String(body.text || "Oi amor… passei rapidinho pra falar baixinho com você. Como você tá?");
         const expressiveText = buildElevenV3Performance({ messageText: plainText, userText: plainText, maxChars: 300 });
-        const audio = await generateElevenLabsAudio({ settings, text: expressiveText });
+        const generated = await generateElevenLabsAudio({ settings, text: expressiveText });
 
-        return new NextResponse(new Uint8Array(audio), {
+        return new NextResponse(new Uint8Array(generated.audio), {
             headers: {
                 "Content-Type": "audio/ogg",
                 "Cache-Control": "no-store",
                 "Content-Disposition": "inline; filename=teste-lari.ogg",
+                "X-ElevenLabs-Credits": String(generated.usage.actualCredits),
             },
         });
     } catch (error: any) {

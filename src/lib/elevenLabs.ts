@@ -170,7 +170,10 @@ export const generateElevenLabsAudio = async ({
 }: {
     settings: ElevenLabsSettings;
     text: string;
-}): Promise<Buffer> => {
+}): Promise<{
+    audio: Buffer;
+    usage: { actualCredits: number; requestId: string; spokenChars: number; taggedChars: number };
+}> => {
     const normalized = normalizeElevenLabsSettings(settings);
     if (!normalized.apiKey) throw new Error('ElevenLabs sem API key');
     if (!normalized.voiceId) throw new Error('ElevenLabs sem Voice ID');
@@ -192,6 +195,7 @@ export const generateElevenLabsAudio = async ({
                 similarity_boost: 0.9,
                 style: 0.65,
                 use_speaker_boost: true,
+                speed: 0.92,
             },
         }),
         signal: AbortSignal.timeout(30_000),
@@ -205,13 +209,22 @@ export const generateElevenLabsAudio = async ({
 
     const audio = Buffer.from(await response.arrayBuffer());
     const opus = validateElevenLabsOpus(audio);
+    const headerCost = Number(response.headers.get('character-cost'));
+    const actualCredits = Number.isFinite(headerCost) && headerCost >= 0
+        ? Math.ceil(headerCost)
+        : text.length;
+    const requestId = response.headers.get('request-id') || response.headers.get('x-request-id') || '';
     console.log('[ELEVENLABS] Áudio gerado', {
         model: normalized.model,
         voiceId: normalized.voiceId,
         spokenChars: spokenText.length,
         taggedChars: text.length,
+        actualCredits,
         bytes: opus.bytes,
         format: 'opus_48000_64',
     });
-    return audio;
+    return {
+        audio,
+        usage: { actualCredits, requestId, spokenChars: spokenText.length, taggedChars: text.length },
+    };
 };
