@@ -146,8 +146,8 @@ export const enforceLatestIntentMessages = (messages: string[], options: {
     const reportsRobotLikeConversation = /\b(robo|robô|bot|inteligencia artificial|inteligência artificial)\b|\b(?:e|é|parece)\s+(?:uma\s+)?ia\b/i.test(latest);
     if (reportsRobotLikeConversation) {
         return [
-            'minha resposta ficou sem sentido mesmo',
-            'eu me confundi e inverti o assunto',
+            'sou a assistente virtual da Lari aqui no Telegram',
+            'posso continuar te ajudando por aqui sem enrolar vc',
         ];
     }
 
@@ -160,8 +160,8 @@ export const enforceLatestIntentMessages = (messages: string[], options: {
     }
 
     const asksHowToSubscribe = /\b(como (?:eu )?(?:assino|assinar|compro|comprar)|quero assinar|como ter acesso)\b/i.test(latest);
-    if (asksHowToSubscribe && !/\b(vip|19[,.]90|pix|acesso)\b/i.test(combined)) {
-        return ['o vip é 19,90. se quiser fechar, eu já gero o pix pra vc'];
+    if (asksHowToSubscribe && !/\b(vip|29[,.]90|49[,.]90|79[,.]90|pix|acesso)\b/i.test(combined)) {
+        return ['te mostro as três opções do VIP pra vc escolher certinho'];
     }
 
     const saysMediaDidNotArrive = /\b(nao chegou|não chegou|nao apareceu|não apareceu|nao vi|não vi|cade a foto|cadê a foto|kd a foto)\b/i.test(latest);

@@ -50,6 +50,135 @@ export const appendLeadEventSafe = async ({
     }
 };
 
+export type LeadEventClaimResult = 'claimed' | 'duplicate' | 'reserved' | 'unavailable';
+export type LeadEventReservationResult = 'reserved' | 'lost' | 'unavailable';
+
+/**
+ * Reserva uma consequencia externa exatamente uma vez usando o indice unico do
+ * Event Store. Diferente de appendLeadEventSafe, distingue duplicidade de
+ * indisponibilidade para o chamador decidir um fallback consciente.
+ */
+export const claimLeadEventSafe = async ({
+    sessionId,
+    eventType,
+    sourceId,
+    source = 'backend',
+    payload = {},
+    staleAfterMs = 0,
+}: {
+    sessionId: string;
+    eventType: string;
+    sourceId: string;
+    source?: string;
+    payload?: Record<string, unknown>;
+    staleAfterMs?: number;
+}): Promise<LeadEventClaimResult> => {
+    const row = {
+        session_id: sessionId,
+        event_type: String(eventType).trim().slice(0, 120),
+        source: String(source).trim().slice(0, 80) || 'backend',
+        source_id: String(sourceId).slice(0, 240),
+        payload,
+        occurred_at: new Date().toISOString(),
+    };
+    try {
+        const { error } = await supabase.from('lead_events').insert(row);
+        if (!error) return 'claimed';
+        if (String(error.code || '') === '23505' || /duplicate key|unique constraint/i.test(String(error.message || ''))) {
+            if (staleAfterMs > 0) {
+                const existing = await supabase.from('lead_events')
+                    .select('id,occurred_at,payload')
+                    .eq('session_id', sessionId)
+                    .eq('event_type', row.event_type)
+                    .eq('source_id', row.source_id)
+                    .maybeSingle();
+                if (String(existing.data?.payload?.phase || '') === 'notification_reserved') return 'reserved';
+                const occurredAtMs = Date.parse(String(existing.data?.occurred_at || ''));
+                if (!existing.error && existing.data?.id && Number.isFinite(occurredAtMs)
+                    && Date.now() - occurredAtMs >= staleAfterMs) {
+                    const reclaimed = await supabase.from('lead_events').update({
+                        source: row.source,
+                        payload: { ...payload, reclaimed: true },
+                        occurred_at: row.occurred_at,
+                    }).eq('id', existing.data.id)
+                        .eq('occurred_at', existing.data.occurred_at)
+                        .select('id')
+                        .maybeSingle();
+                    if (!reclaimed.error && reclaimed.data?.id) return 'claimed';
+                }
+            }
+            return 'duplicate';
+        }
+        if (!missingArchitectureRelation(error)) console.warn('[EVENT STORE] claim falhou:', error.message);
+        return 'unavailable';
+    } catch (error: any) {
+        if (!missingArchitectureRelation(error)) console.warn('[EVENT STORE] claim indisponivel:', error?.message || error);
+        return 'unavailable';
+    }
+};
+
+/**
+ * Converte um lease de processamento na reserva irreversível da consequência
+ * externa. O CAS por occurred_at + claim_token garante que um worker que perdeu
+ * o lease nunca consiga enviar depois do novo dono.
+ */
+export const reserveLeadEventClaimSafe = async ({
+    sessionId,
+    eventType,
+    sourceId,
+    claimToken,
+    payload = {},
+}: {
+    sessionId: string;
+    eventType: string;
+    sourceId: string;
+    claimToken: string;
+    payload?: Record<string, unknown>;
+}): Promise<LeadEventReservationResult> => {
+    try {
+        const existing = await supabase.from('lead_events')
+            .select('id,occurred_at,payload')
+            .eq('session_id', sessionId)
+            .eq('event_type', String(eventType).trim().slice(0, 120))
+            .eq('source_id', String(sourceId).slice(0, 240))
+            .maybeSingle();
+        if (existing.error) {
+            if (!missingArchitectureRelation(existing.error)) console.warn('[EVENT STORE] reserva indisponivel:', existing.error.message);
+            return 'unavailable';
+        }
+        if (!existing.data?.id) return 'lost';
+        const existingPayload = existing.data.payload && typeof existing.data.payload === 'object'
+            ? existing.data.payload as Record<string, unknown>
+            : {};
+        if (String(existingPayload.claim_token || '') !== String(claimToken || '')) return 'lost';
+        if (String(existingPayload.phase || '') === 'notification_reserved') return 'reserved';
+
+        const reservedAt = new Date().toISOString();
+        const reserved = await supabase.from('lead_events').update({
+            payload: {
+                ...existingPayload,
+                ...payload,
+                claim_token: claimToken,
+                phase: 'notification_reserved',
+                notification_reserved_at: reservedAt,
+            },
+            occurred_at: reservedAt,
+        })
+            .eq('id', existing.data.id)
+            .eq('occurred_at', existing.data.occurred_at)
+            .select('id')
+            .maybeSingle();
+        if (reserved.error) {
+            if (!missingArchitectureRelation(reserved.error)) console.warn('[EVENT STORE] reserva falhou:', reserved.error.message);
+            return 'unavailable';
+        }
+        return reserved.data?.id ? 'reserved' : 'lost';
+    } catch (error: any) {
+        if (!missingArchitectureRelation(error)) console.warn('[EVENT STORE] reserva indisponivel:', error?.message || error);
+        return 'unavailable';
+    }
+};
+
 export const persistMemoryUpdatesSafe = async ({
     sessionId,
     updates,
@@ -272,12 +401,13 @@ export const persistBrainProjectionsSafe = async ({
 };
 
 export const patchRealityStateSafe = async (sessionId: string, patch: {
+    adultVerified?: boolean;
     payment?: Record<string, unknown>;
     media?: Record<string, unknown>;
     commercial?: Record<string, unknown>;
 }) => {
     try {
-        const { data } = await supabase.from('lead_reality_states').select('payment,media,commercial').eq('session_id', sessionId).maybeSingle();
+        const { data } = await supabase.from('lead_reality_states').select('adult_verified,payment,media,commercial').eq('session_id', sessionId).maybeSingle();
         const current = (data || {}) as {
             payment?: Record<string, unknown>;
             media?: Record<string, unknown>;
@@ -285,6 +415,7 @@ export const patchRealityStateSafe = async (sessionId: string, patch: {
         };
         const { error } = await supabase.from('lead_reality_states').upsert({
             session_id: sessionId,
+            adult_verified: patch.adultVerified ?? (data as any)?.adult_verified ?? false,
             payment: { ...(current.payment || {}), ...(patch.payment || {}) },
             media: { ...(current.media || {}), ...(patch.media || {}) },
             commercial: { ...(current.commercial || {}), ...(patch.commercial || {}) },

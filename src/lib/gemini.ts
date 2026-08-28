@@ -36,6 +36,8 @@ import {
     type GatewayRouteCandidate,
 } from '@/lib/aiGatewayRouter';
 import { VIP_PRICE } from '@/lib/salesTiming';
+import { renderVipMenuMessages } from '@/lib/commercialCatalog';
+import { isExplicitSexualContext } from '@/lib/brain/hardValidator';
 import {
     buildLariCorePrompt,
     buildLariDraftPrompt,
@@ -1714,7 +1716,7 @@ const makeFallbackStrategy = (message: string, leadMemory?: any) => {
     const wantsPayment = /\b(manda|passa|gera|pode gerar)\b.{0,18}\b(pix|chave)\b|\b(vou pagar|quero pagar|como pago)\b/i.test(text);
     const asksPrice = /\b(quanto custa|qual (?:o )?valor|qual (?:o )?pre[cç]o|fica quanto)\b/i.test(text);
     const asksProduct = /\b(vip|chamada|call|whats(?:app)?|personalizad[oa]|encontro|avalia[cç][aã]o)\b/i.test(text);
-    const isSexual = /\b(nude|pelad[ao]|bunda|peito|pau|buceta|gozar|tes[aã]o|safad[ao]|putaria|comer|chupar|meter)\b/i.test(text);
+    const isSexual = isExplicitSexualContext(text);
     const isStart = /^\s*\/start(?:\s+\S+)?\s*$/i.test(literalText);
     const shouldSellNow = wantsPayment || asksPrice || asksProduct;
     const intent = isStart ? 'primeiro contato'
@@ -1812,7 +1814,7 @@ const makeLocalFallbackResponse = (
     const wantsMedia = /\b(foto|fotinha|fotos|selfie|nude|nudes|pr[eé]via|v[ií]deo)\b/i.test(text);
     const wantsCheckout = !wantsMedia && /\b(manda|passa|gera|pode gerar)\b.{0,18}\b(pix|chave)\b|\b(vou pagar|quero pagar|como pago)\b/i.test(text);
     const wantsVipPrice = /\bvip\b/i.test(text) && /\b(quanto|valor|pre[cç]o|custa)\b/i.test(text);
-    const isSexual = /\b(nude|nudes|pelad[ao]|bunda|peito|pau|buceta|gozar|tes[aã]o|safad[ao]|putaria|comer|chupar|meter)\b/i.test(text);
+    const isSexual = isExplicitSexualContext(text);
     const relationshipStage = String(context?.leadMemory?.relationship_stage || 'new').trim().toLowerCase();
     const isNewRelationship = !relationshipStage || relationshipStage === 'new' || relationshipStage === 'unknown';
     const base = {
@@ -1847,10 +1849,10 @@ const makeLocalFallbackResponse = (
         return { ...base, internal_thought: 'Fallback: mídia pedida, entregar sem cobrar.', lead_classification: 'curioso', current_state: 'PREVIEW', messages: ['vou escolher uma que combine com o que vc pediu'], action: 'send_custom_preview' };
     }
     if (wantsVipPrice) {
-        return { ...base, internal_thought: 'Fallback: informar preço sem gerar PIX.', lead_classification: 'curioso', current_state: 'SALES_PITCH', messages: [`o vip é R$ ${VIP_PRICE.toFixed(2).replace('.', ',')}`, 'quer que eu te explique o que tem nele?'], action: 'none' };
+        return { ...base, internal_thought: 'Fallback: apresentar o catálogo VIP sem gerar PIX.', lead_classification: 'curioso', current_state: 'SALES_PITCH', messages: renderVipMenuMessages(), action: 'none' };
     }
     if (wantsCheckout && /\bvip\b/i.test(text + ' ' + String(context?.leadMemory?.last_offer || ''))) {
-        return { ...base, internal_thought: 'Fallback: aceite explícito do VIP.', lead_classification: 'curioso', current_state: 'PAYMENT_CHECK', messages: ['fechou, vou gerar o pix do vip'], action: 'generate_pix_payment', payment_details: { value: VIP_PRICE, description: 'VIP Lari' } };
+        return { ...base, internal_thought: 'Fallback: modalidade do VIP ainda precisa ser inequívoca.', lead_classification: 'curioso', current_state: 'SALES_PITCH', messages: renderVipMenuMessages(), action: 'none' };
     }
     if (isSexual) {
         return { ...base, internal_thought: 'Fallback: acompanhar conversa adulta sem vender.', lead_classification: 'tarado', current_state: 'HOT_TALK', messages: ['vc é bem direto hein kkk', 'gostei de saber o que passou na sua cabeça'], action: 'none' };
@@ -2159,7 +2161,11 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
                 output: toSerializableDebugValue(draftResult.data),
             };
 
-            console.log(`AI Gateway Draft (${draftResult.gateway.label}) Attempt ${attempt + 1}:`, responseText);
+            console.log('[AI Gateway] Rascunho recebido', {
+                gateway: draftResult.gateway.label,
+                attempt: attempt + 1,
+                responseChars: responseText.length,
+            });
 
             const jsonResponse = draftResult.data;
             if (!jsonResponse || typeof jsonResponse !== 'object') {

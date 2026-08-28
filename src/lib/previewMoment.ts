@@ -403,3 +403,8 @@ export const buildDeliveredPreviewCaption = ({
         'tirei essa aqui agora pensando em vc amor',
     ]);
 };
+
+export const isPreviewAssetExplicitForUnverifiedLead = (asset: PreviewMomentAsset) => {
+    const level = inferAssetSensuality(asset);
+    return level === 'hot' || level === 'explicit';
+};

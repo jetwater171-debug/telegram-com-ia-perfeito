@@ -76,6 +76,15 @@ export const sendTelegramPhoto = async (
     }
 };
 
+// Confirmações financeiras não podem engolir falhas: o reconciliador precisa
+// manter o estado reservado para revisão/retry consciente se o Telegram não
+// confirmar o request.
+export const sendTelegramMessageStrict = async (token: string, chatId: string, text: string) => {
+    if (!token) throw new Error('Telegram sem token');
+    const bot = new Telegraf(token);
+    await bot.telegram.sendMessage(chatId, text);
+};
+
 export const sendTelegramVideo = async (
     token: string,
     chatId: string,

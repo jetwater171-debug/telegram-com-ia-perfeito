@@ -1,3 +1,5 @@
+import { isExplicitSexualContext } from '@/lib/brain/hardValidator';
+
 export type ElevenLabsSettings = {
     apiKey: string;
     enabled: boolean;
@@ -60,6 +62,41 @@ export const ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS = 85;
 export const ELEVENLABS_CONVERSION_AUDIO_MAX_CHARS = 70;
 export const ELEVENLABS_REQUESTED_AUDIO_MAX_WORDS = 14;
 export const ELEVENLABS_CONVERSION_AUDIO_MAX_WORDS = 11;
+
+// Direções auditadas para o Eleven v3. Mantemos as tags em inglês porque é o
+// formato interpretado pelo provider: pausa, sussurro, risada e gemido são,
+// respectivamente, [pause], [whispers], [giggles]/[laughs] e [moans].
+// A lista é deliberadamente pequena para que a atuação continue natural e
+// seja simples de revisar antes de qualquer chamada paga ao provider.
+export const ELEVEN_V3_AUDITED_TAGS = [
+    'pause', 'softly', 'playfully', 'mischievously', 'curious', 'excited', 'sad', 'surprised',
+    'whispers', 'giggles', 'laughs', 'laughs softly', 'sighs', 'exhales', 'breathes softly',
+    'seductively', 'breathes heavily', 'gasps', 'moans', 'moans softly',
+] as const;
+
+export const ELEVEN_V3_SEXUAL_PERFORMANCE_TAGS = [
+    'seductively', 'breathes softly', 'breathes heavily', 'gasps', 'moans', 'moans softly',
+] as const;
+
+export const isElevenLabsAdultSexualPerformanceContext = ({
+    adultVerified,
+    userText = '',
+    messageText = '',
+    emotionalContext = '',
+    conversationContext = '',
+}: {
+    adultVerified: boolean;
+    userText?: string;
+    messageText?: string;
+    emotionalContext?: string;
+    conversationContext?: string;
+}) => {
+    if (!adultVerified) return false;
+    const context = `${userText} ${messageText} ${emotionalContext} ${conversationContext}`.toLowerCase();
+    const hasExplicitSexualContext = isExplicitSexualContext(context);
+    const hasReciprocalContext = /\b(?:rec[ií]proc|consens|entre\s+n[oó]s|n[oó]s\s+dois|a\s+gente|os\s+dois|quero\s+tamb[eé]m|tamb[eé]m\s+quero|com\s+voc[eê]|comigo|meu\s+nome|me\s+chama)\b/iu.test(context);
+    return hasExplicitSexualContext && hasReciprocalContext;
+};
 
 export const isElevenLabsConversionMoment = ({
     stage,
@@ -206,30 +243,43 @@ export const buildElevenV3Performance = ({
     messageText,
     userText = '',
     emotionalContext = '',
+    conversationContext = '',
+    adultVerified,
     maxChars = 500,
 }: {
     messageText: string;
     userText?: string;
     emotionalContext?: string;
+    conversationContext?: string;
+    adultVerified: boolean;
     maxChars?: number;
 }) => {
     const speech = cleanTextForElevenLabsSpeech(messageText, maxChars);
     const context = `${userText} ${emotionalContext} ${messageText}`.toLowerCase();
     if (!speech) return '';
 
-    if (/(putaria|goz|tes[aã]o|fud|met|chup|safad|pelad|nude|molhad|calcinha|peit|bunda|pau|gostos|gemid)/iu.test(context)) {
+    // Tags sexuais nunca são produzidas sem uma confirmação booleana explícita
+    // do backend. Contexto textual ou um pedido do lead não substituem esse gate.
+    const hasAdultSexualContext = isElevenLabsAdultSexualPerformanceContext({
+        adultVerified,
+        userText,
+        messageText,
+        emotionalContext,
+        conversationContext,
+    });
+    if (hasAdultSexualContext) {
         return `[seductively] ${speech} [breathes softly]`;
     }
     if (/(segredo|ningu[eé]m|escondid|só nosso|noite|cama|baixinho)/iu.test(context)) {
-        return `[seductively] [whispers] ${speech}`;
+        return `[softly] [whispers] ${speech}`;
     }
     if (/(kkk|haha|engraç|rir|brinc|provoc)/iu.test(context)) {
-        return `[seductively] ${speech} [giggles]`;
+        return `[playfully] ${speech} [giggles]`;
     }
     if (/(triste|sozinh|carente|carinho|abraç|chamego|dengo|saudade)/iu.test(context)) {
         return `[softly] ${speech} [sighs]`;
     }
-    return `[seductively] ${speech}`;
+    return `[softly] ${speech}`;
 };
 
 export const validateElevenLabsOpus = (audio: Buffer) => {

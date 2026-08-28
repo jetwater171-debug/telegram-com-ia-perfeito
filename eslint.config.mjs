@@ -23,6 +23,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    ".codex-artifacts/**",
+    "redirecionador-netlify/**",
+    "scripts/__pycache__/**",
   ]),
 ]);
 

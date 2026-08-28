@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { timingSafeEqual } from 'node:crypto';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { normalizePaymentGatewayId } from '@/lib/paymentGatewayService';
 import { findPaymentMessageForWebhook, reconcilePaymentMessage } from '@/lib/paymentReconciliation';
@@ -11,9 +12,11 @@ const loadSetting = async (key: string) => {
 
 const validateWebhookToken = async (req: NextRequest) => {
   const expected = await loadSetting('payment_webhook_token');
-  if (!expected) return true;
+  if (!expected) return process.env.NODE_ENV !== 'production';
   const received = req.nextUrl.searchParams.get('token') || req.headers.get('x-webhook-token') || req.headers.get('x-pushinpay-token') || '';
-  return received === expected;
+  const expectedBytes = Buffer.from(expected);
+  const receivedBytes = Buffer.from(received);
+  return expectedBytes.length === receivedBytes.length && timingSafeEqual(expectedBytes, receivedBytes);
 };
 
 async function POST(req: NextRequest) {
@@ -48,7 +51,7 @@ async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, transactionId, status: result.status, paid: result.paid, counted: result.counted });
   } catch (error: any) {
     console.error('Payment webhook error:', error);
-    return NextResponse.json({ error: error?.message || 'erro' }, { status: 500 });
+    return NextResponse.json({ error: 'payment_webhook_failed' }, { status: 500 });
   }
 }
 

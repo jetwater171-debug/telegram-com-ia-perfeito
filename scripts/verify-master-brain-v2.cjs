@@ -64,7 +64,7 @@ const payment = validator.validateMasterBrainResponse({
   canGeneratePayment: false,
   canPitchPrice: true,
   adultVerified: true,
-  offer: { id: 'vip:19.90', value: 19.9, description: 'VIP Lari' },
+  offer: { id: 'vip_monthly', value: 29.9, description: 'VIP Mensal Lari' },
 });
 assert.equal(payment.response.action, 'none');
 assert.equal(payment.response.payment_details, null);

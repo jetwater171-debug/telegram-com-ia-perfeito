@@ -200,14 +200,12 @@ export async function POST(req: NextRequest) {
                     device_type: "Unknown",
                     user_name: senderName,
                     status: 'active',
-                    // O Telegram e aberto somente depois do presell +18. O
-                    // payload profundo melhora atribuicao, mas nao e requisito
-                    // para preservar a verificacao ja feita na admissao.
+                    // Abrir o Telegram ou possuir um chat id não comprova idade.
+                    // A confirmação só é persistida depois de evidência explícita.
                     lead_memory: {
                         metadata: {
-                            adult_verified: true,
-                            adult_verification_source: 'presell_admission',
-                            adult_verified_at: new Date().toISOString(),
+                            adult_verified: false,
+                            adult_verification_source: 'unverified',
                         },
                         updated_at: new Date().toISOString(),
                     },
@@ -232,7 +230,12 @@ export async function POST(req: NextRequest) {
             if (redirectRow) {
                 const city = redirectRow.city ? String(redirectRow.city) : null;
                 const deviceType = detectDeviceType(redirectRow.user_agent);
+                const redirectAdultConfirmed = redirectRow.metadata?.adult_confirmed === true;
                 const currentMemory = normalizeLeadMemory(session.lead_memory);
+                const priorAdultSource = String(currentMemory.metadata?.adult_verification_source || '');
+                const priorTrustedAdultVerification = currentMemory.metadata?.adult_verified === true
+                    && ['lead_self_declaration', 'presell_explicit_confirmation'].includes(priorAdultSource);
+                const adultVerified = redirectAdultConfirmed || priorTrustedAdultVerification;
                 const sourceBits = [
                     redirectRow.utm?.utm_source ? `origem ${redirectRow.utm.utm_source}` : '',
                     redirectRow.utm?.utm_campaign ? `campanha ${redirectRow.utm.utm_campaign}` : '',
@@ -261,9 +264,15 @@ export async function POST(req: NextRequest) {
                         redirect_timezone: redirectRow.timezone || '',
                         redirect_accept_language: redirectRow.metadata?.accept_language || '',
                         redirect_user_agent: redirectRow.user_agent || '',
-                        adult_verified: true,
-                        adult_verification_source: 'presell_redirect',
-                        adult_verified_at: redirectRow.clicked_at || redirectRow.created_at || new Date().toISOString(),
+                        adult_verified: adultVerified,
+                        adult_verification_source: redirectAdultConfirmed
+                            ? 'presell_explicit_confirmation'
+                            : priorTrustedAdultVerification ? priorAdultSource : 'unverified',
+                        ...(redirectAdultConfirmed ? {
+                            adult_verified_at: redirectRow.clicked_at || redirectRow.created_at || new Date().toISOString(),
+                        } : priorTrustedAdultVerification && currentMemory.metadata?.adult_verified_at ? {
+                            adult_verified_at: currentMemory.metadata.adult_verified_at,
+                        } : {}),
                     },
                     updated_at: new Date().toISOString()
                 };
@@ -284,18 +293,20 @@ export async function POST(req: NextRequest) {
                     session = { ...session, ...sessionPatch };
                 }
 
-                const adultVerifiedAt = redirectRow.clicked_at || redirectRow.created_at || new Date().toISOString();
-                await Promise.all([
-                    markAdultVerificationSafe(String(session.id), adultVerifiedAt),
-                    appendLeadEventSafe({
-                        sessionId: String(session.id),
-                        eventType: 'adult_verified',
-                        source: 'presell',
-                        sourceId: `presell:${leadRedirectCode}`,
-                        payload: { method: 'presell_confirmation', redirect_code: leadRedirectCode },
-                        occurredAt: adultVerifiedAt,
-                    }),
-                ]);
+                if (redirectAdultConfirmed) {
+                    const adultVerifiedAt = redirectRow.clicked_at || redirectRow.created_at || new Date().toISOString();
+                    await Promise.all([
+                        markAdultVerificationSafe(String(session.id), adultVerifiedAt),
+                        appendLeadEventSafe({
+                            sessionId: String(session.id),
+                            eventType: 'adult_verified',
+                            source: 'presell',
+                            sourceId: `presell:${leadRedirectCode}`,
+                            payload: { method: 'presell_explicit_confirmation', redirect_code: leadRedirectCode },
+                            occurredAt: adultVerifiedAt,
+                        }),
+                    ]);
+                }
 
                 await supabase
                     .from('lead_redirects')

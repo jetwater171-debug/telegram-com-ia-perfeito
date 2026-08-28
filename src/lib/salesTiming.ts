@@ -1,9 +1,22 @@
+import {
+    COMMERCIAL_CATALOG,
+    VIP_MONTHLY_PRICE,
+    VIP_OFFERS,
+    detectCommercialSku,
+    getCommercialOffer,
+    isVipMenuRequest,
+    type CommercialSku,
+} from '@/lib/commercialCatalog';
+
 export type SalesProduct = 'video_call' | 'social_meetup' | 'vip' | 'custom_photo' | 'custom_video' | 'private_number' | 'private_chat' | 'erotic_audio' | 'evaluation' | 'gift' | 'custom_request';
 
-export const VIP_PRICE = 19.90;
+// Alias mantido para integrações antigas. Toda nova lógica deve usar o SKU.
+export const VIP_PRICE = VIP_MONTHLY_PRICE;
+export type SalesSku = CommercialSku | `${Exclude<SalesProduct, 'vip' | 'video_call'>}_${'entry' | 'core' | 'premium' | 'voluntary'}`;
 
 export type AdaptiveOfferPlan = {
     product: SalesProduct;
+    sku: SalesSku;
     tier: 'entry' | 'core' | 'premium' | 'voluntary';
     value: number;
     description: string;
@@ -18,7 +31,9 @@ export type SalesOrderStatus = 'offered' | 'accepted' | 'payment_pending' | 'pai
 export type ActiveSalesOrder = {
     orderId: string;
     product: SalesProduct;
+    sku: SalesSku;
     amount: number;
+    amountCents: number;
     description: string;
     requestBrief: string | null;
     status: SalesOrderStatus;
@@ -37,6 +52,8 @@ type SalesMessage = {
 
 type LeadMemoryLike = {
     metadata?: Record<string, unknown> | null;
+    rejected_products?: string[] | null;
+    objections?: string[] | null;
 };
 
 const normalize = (value: unknown) => String(value || '')
@@ -61,17 +78,27 @@ export const readActiveSalesOrder = (value: unknown, now = new Date()): ActiveSa
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const row = value as Record<string, unknown>;
     const product = String(row.product || '') as SalesProduct;
+    const sku = String(row.sku || '') as SalesSku;
     const status = String(row.status || '') as SalesOrderStatus;
-    const amount = money(row.amount);
+    const amount = money(row.amount ?? (Number(row.amountCents || row.amount_cents) / 100));
+    const amountCents = Math.round(Number(row.amountCents || row.amount_cents || (Number(amount || 0) * 100)));
     const expiresAt = String(row.expiresAt || row.expires_at || '');
     const expiryMs = Date.parse(expiresAt);
     if (!String(row.orderId || row.order_id || '').trim() || !SALES_PRODUCTS.has(product) || !amount) return null;
     if (!OPEN_ORDER_STATUSES.has(status)) return null;
     if (!Number.isFinite(expiryMs) || expiryMs <= now.getTime()) return null;
+    const fixedOffer = getCommercialOffer(sku as CommercialSku);
+    if (product === 'vip' || product === 'video_call') {
+        if (!fixedOffer || fixedOffer.product !== product) return null;
+        if (fixedOffer.amountCents !== amountCents) return null;
+    }
+    const resolvedSku = fixedOffer?.sku || (sku || `${product}_core`) as SalesSku;
     return {
         orderId: String(row.orderId || row.order_id).trim().slice(0, 240),
         product,
+        sku: resolvedSku,
         amount,
+        amountCents,
         description: String(row.description || '').trim().slice(0, 200) || product,
         requestBrief: String(row.requestBrief || row.request_brief || '').trim().slice(0, 2_000) || null,
         status,
@@ -98,6 +125,7 @@ export const buildSalesOrderSnapshot = ({
 }): ActiveSalesOrder => {
     const canReuse = previous
         && previous.product === plan.product
+        && previous.sku === plan.sku
         && Math.round(previous.amount * 100) === Math.round(plan.value * 100)
         && normalize(previous.requestBrief || '') === normalize(plan.requestBrief || '')
         && previous.status !== 'paid';
@@ -109,7 +137,9 @@ export const buildSalesOrderSnapshot = ({
     return {
         orderId: base?.orderId || String(orderId).trim().slice(0, 240),
         product: plan.product,
+        sku: plan.sku,
         amount: Math.round(Number(plan.value) * 100) / 100,
+        amountCents: Math.round(Number(plan.value) * 100),
         description: String(plan.description || plan.product).trim().slice(0, 200),
         requestBrief: plan.requestBrief ? String(plan.requestBrief).trim().slice(0, 2_000) : null,
         status,
@@ -135,9 +165,6 @@ export const detectPaidProduct = (text: string): SalesProduct | null => {
     const value = normalize(text);
     if (/\b(ifood|lanche|janta|almoco|mimo|presente|agrado|ajudar vc|ajudar voce)\b/i.test(value)
         || /\b(?:te|pra vc|para voce)\s+(?:mando|mandar|dar)\b.{0,24}\b(?:pix|reais|conto)\b/i.test(value)) return 'gift';
-    if (/\b(?:encontro presencial|marcar (?:um )?encontro|marcar (?:de )?sair|vamos sair|sair comigo|sair com (?:vc|voce)|te encontrar|me encontra|a gente se encontr(?:ar|ando)|quando a gente se encontrar|vc vem|voce vem|vem aqui|vem me ver|eu te busco|vou te buscar|me busca|passar um tempo (?:com|juntos))\b/i.test(value)) return 'social_meetup';
-    if (/\b(chamada|video chamada|videochamada|call|facetime)\b/i.test(value)) return 'video_call';
-    if (/\b(vip|vitalicio|mensal|pack|acesso)\b/i.test(value)) return 'vip';
     if (/\b(foto personalizada|foto exclusiva|foto pelada|nude sem censura)\b/i.test(value)) return 'custom_photo';
     if (/\b(video personalizado|video completo|video exclusivo)\b/i.test(value)) return 'custom_video';
     if (/\bvideo\b/i.test(value)
@@ -152,6 +179,12 @@ export const detectPaidProduct = (text: string): SalesProduct | null => {
         || /\b(?:geme|gemendo|gemido)\b.{0,35}\b(?:meu nome|o meu nome|me chama pelo nome)\b/i.test(value)
         || /\b(?:fala|diz|chama)\b.{0,30}\b(?:meu nome|o meu nome)\b.{0,30}\b(?:gemendo|com gemido)\b/i.test(value)) return 'erotic_audio';
     if (/\b(avaliacao|avaliar meu pau|avalia meu pau)\b/i.test(value)) return 'evaluation';
+    const fixedSku = detectCommercialSku(value);
+    if (fixedSku === 'video_call_standalone') return 'video_call';
+    if (fixedSku?.startsWith('vip_')) return 'vip';
+    if (/\b(?:encontro presencial|marcar (?:um )?encontro|marcar (?:de )?sair|vamos sair|sair comigo|sair com (?:vc|voce)|te encontrar|me encontra|a gente se encontr(?:ar|ando)|quando a gente se encontrar|vc vem|voce vem|vem aqui|vem me ver|eu te busco|vou te buscar|me busca|passar um tempo (?:com|juntos))\b/i.test(value)) return 'social_meetup';
+    if (/\b(vip|vitalicio|mensal|pack|acesso|assinar|assinatura)\b/i.test(value)) return 'vip';
+    if (/\b(chamada|video chamada|videochamada|call|facetime)\b/i.test(value)) return 'video_call';
     const mentionsCustomItem = /\b(calcinha|sutia|lingerie usada|roupa usada|presente personalizado|objeto pessoal)\b/i.test(value);
     const explicitCustomCommerce = /\b(?:vendo|vende|vender|compro|comprar|te pago|pago pra|pagaria|quanto cobra|quanto vc quer|faz por|fecha por)\b/i.test(value);
     const requestedPaidAction = /(?:se eu (?:te )?pagar|por dinheiro|em troca de|te mando um pix)/i.test(value)
@@ -194,6 +227,7 @@ const isOfferAcceptance = (text: string) => {
     const value = normalize(text).replace(/[.!?]+$/g, '').trim();
     return /^(sim|quero|eu quero|pode ser|fechado|bora|vamos|aceito|combinado|ta bom|tá bom|beleza|manda|manda aí|manda ai|manda o link|manda o pix|passa o pix|gera|faz|pode mandar|quero sim|claro|com certeza|vitalicio|vitalício|mensal|quero o vip|quero o mensal|quero o vitalicio|topo|partiu|fechou)$/i.test(value)
         || /\b(fecha|fechado|fechou|aceito|pode ser esse|quero esse|quero essa|vamos fazer|manda o link|manda o pix|manda a chave|passa o pix|passa a chave|gera o pix|vou pagar|quero pagar|pode gerar|pode mandar o pix|passa a chave pix)\b/i.test(value)
+        || /\bquero\s+(?:o|a)?\s*(?:de\s+)?(?:r\$\s*)?\d{1,4}(?:[.,]\d{1,2})?\b/i.test(value)
         || /\b(?:nao quero|sem)\s+(?:o )?(?:extra|avaliacao)\b/i.test(value)
         || /\bso\s+(?:o|a)\s+(?:vip|chamada|encontro|foto|video|numero|audio|avaliacao|chat)\b/i.test(value);
 };
@@ -256,9 +290,9 @@ const PRODUCT_OFFERS: Record<Exclude<SalesProduct, 'gift'>, {
     premium: [number, string, string];
 }> = {
     video_call: {
-        entry: [19.90, 'Chamada de Video Curta', 'uma chamada curta e exclusiva'],
-        core: [29.90, 'Chamada de Video Exclusiva', 'uma chamada exclusiva no sigilo'],
-        premium: [49.90, 'Chamada de Video Premium', 'uma chamada mais longa e personalizada'],
+        entry: [50, 'Chamada Intima Avulsa Lari', 'uma chamada intima avulsa e exclusiva'],
+        core: [50, 'Chamada Intima Avulsa Lari', 'uma chamada intima avulsa e exclusiva'],
+        premium: [50, 'Chamada Intima Avulsa Lari', 'uma chamada intima avulsa e exclusiva'],
     },
     social_meetup: {
         entry: [350, 'Encontro Curto com a Lari', 'um encontro curto de ate uma hora, sujeito a confirmacao de disponibilidade'],
@@ -266,9 +300,9 @@ const PRODUCT_OFFERS: Record<Exclude<SalesProduct, 'gift'>, {
         premium: [750, 'Encontro Estendido com a Lari', 'um encontro estendido de ate quatro horas, sujeito a confirmacao de disponibilidade'],
     },
     vip: {
-        entry: [VIP_PRICE, 'VIP Lari', 'acesso ao VIP da Lari'],
-        core: [VIP_PRICE, 'VIP Lari', 'acesso ao VIP da Lari'],
-        premium: [VIP_PRICE, 'VIP Lari', 'acesso ao VIP da Lari'],
+        entry: [COMMERCIAL_CATALOG.vip_monthly.value, COMMERCIAL_CATALOG.vip_monthly.description, COMMERCIAL_CATALOG.vip_monthly.format],
+        core: [COMMERCIAL_CATALOG.vip_lifetime.value, COMMERCIAL_CATALOG.vip_lifetime.description, COMMERCIAL_CATALOG.vip_lifetime.format],
+        premium: [COMMERCIAL_CATALOG.vip_lifetime_call.value, COMMERCIAL_CATALOG.vip_lifetime_call.description, COMMERCIAL_CATALOG.vip_lifetime_call.format],
     },
     custom_photo: {
         entry: [9.90, 'Foto Personalizada Simples', 'uma foto personalizada simples'],
@@ -322,6 +356,7 @@ export type LeadScoreInput = {
 
 const createOfferPlan = ({
     product,
+    selectedSku,
     explicitBudget,
     acceptedOfferValue,
     totalPaid,
@@ -332,6 +367,7 @@ const createOfferPlan = ({
     customRequestBrief,
 }: {
     product: SalesProduct | null;
+    selectedSku?: CommercialSku | null;
     explicitBudget: number | null;
     acceptedOfferValue: number | null;
     totalPaid: number;
@@ -347,6 +383,7 @@ const createOfferPlan = ({
         if (!voluntaryValue) return null;
         return {
             product,
+            sku: 'gift_voluntary',
             tier: 'voluntary',
             value: Math.min(1000, voluntaryValue),
             description: 'Mimo para Lari',
@@ -359,6 +396,7 @@ const createOfferPlan = ({
     if (product === 'social_meetup') {
         return {
             product,
+            sku: 'social_meetup_core',
             tier: 'core',
             value: 500,
             description: 'Encontro com Larissa Morais',
@@ -368,13 +406,30 @@ const createOfferPlan = ({
             requestBrief: null,
         };
     }
-    if (product === 'vip') {
+    if (product === 'video_call') {
+        const fixed = COMMERCIAL_CATALOG.video_call_standalone;
         return {
             product,
+            sku: fixed.sku,
             tier: 'core',
-            value: VIP_PRICE,
-            description: 'VIP Lari',
-            format: 'acesso ao VIP da Lari',
+            value: fixed.value,
+            description: fixed.description,
+            format: fixed.format,
+            explicitBudget,
+            valueSource: 'standard',
+            requestBrief: null,
+        };
+    }
+    if (product === 'vip') {
+        const fixed = getCommercialOffer(selectedSku?.startsWith('vip_') ? selectedSku : 'vip_monthly')
+            || COMMERCIAL_CATALOG.vip_monthly;
+        return {
+            product,
+            sku: fixed.sku,
+            tier: fixed.sku === 'vip_monthly' ? 'entry' : fixed.sku === 'vip_lifetime' ? 'core' : 'premium',
+            value: fixed.value,
+            description: fixed.description,
+            format: fixed.format,
             explicitBudget,
             valueSource: 'standard',
             requestBrief: null,
@@ -383,9 +438,11 @@ const createOfferPlan = ({
 
     if (product === 'custom_request' && (explicitBudget || acceptedOfferValue)) {
         const acceptedValue = Math.min(5_000, Math.max(5, Number(explicitBudget || acceptedOfferValue)));
+        const tier = acceptedValue >= 99.90 ? 'premium' : acceptedValue >= 59.90 ? 'core' : 'entry';
         return {
             product,
-            tier: acceptedValue >= 99.90 ? 'premium' : acceptedValue >= 59.90 ? 'core' : 'entry',
+            sku: `custom_request_${tier}`,
+            tier,
             value: Math.round(acceptedValue * 100) / 100,
             description: 'Pedido Personalizado Lari',
             format: customRequestBrief || 'um pedido personalizado conforme combinado',
@@ -425,6 +482,7 @@ const createOfferPlan = ({
     const selected = catalog[tier];
     return {
         product,
+        sku: `${product}_${tier}` as SalesSku,
         tier,
         value: Math.max(5, Math.round((customValue ?? selected[0]) * 100) / 100),
         description: selected[1],
@@ -436,6 +494,42 @@ const createOfferPlan = ({
 };
 
 const isEngagedContinuation = (text: string) => /\b(imagina|queria|gostaria|tesao|gozar|comer|chupar|meter|safad|gostos|delicia|mostra|fazer comigo|como seria|eu ia|eu quero)\b/i.test(normalize(text));
+
+const rejectsVipNow = (text: string) => {
+    const value = normalize(text);
+    return /\b(?:nao quero|nao tenho interesse|sem)\b.{0,24}\b(?:vip|acesso)\b/i.test(value)
+        || /\b(?:so|somente|apenas)\b.{0,18}\b(?:chamada|videochamada|call)\b/i.test(value);
+};
+
+const isSubstantiveCommercialJourneyTurn = (text: string) => {
+    const value = normalize(text);
+    if (!value || /^\/?start\b/i.test(value)) return false;
+    if (/^(oi+|ola|bom dia|boa tarde|boa noite|eai|fala|opa|sim|nao|kk+|rs+)$/i.test(value)) return false;
+    return value.split(/\s+/).filter(Boolean).length >= 2;
+};
+
+const blocksProactiveVip = (text: string) => /\b(?:morreu|luto|hospital|doente|doenca|depress|ansiedade|crise|sem dinheiro|desempregado|divida|nao posso pagar|para|chega|nao quero|golpe|fake|mentira|reembolso|cobranca errada)\b/i.test(normalize(text));
+
+const hasRecentVipOffer = (messages: SalesMessage[], now: Date) => messages.some((message) =>
+    String(message.sender || '') === 'bot'
+    && isRecent(message.created_at, 12 * 60 * 60_000, now)
+    && /\bvip\b/i.test(String(message.content || ''))
+    && /r\$\s*(?:29[,.]90|49[,.]90|79[,.]90)/i.test(String(message.content || ''))
+);
+
+const hasRecentVipCatalog = (messages: SalesMessage[], now: Date) => messages.some((message) => {
+    if (String(message.sender || '') !== 'bot' || !isRecent(message.created_at, 90 * 60_000, now)) return false;
+    const content = String(message.content || '');
+    return /\bvip\b/i.test(content)
+        && /29[,.]90/.test(content)
+        && /49[,.]90/.test(content)
+        && /79[,.]90/.test(content);
+});
+
+const commercialSkuFromMemory = (memory: LeadMemoryLike) => {
+    const candidate = String(memory?.metadata?.sales_offer_sku || '') as CommercialSku;
+    return getCommercialOffer(candidate) ? candidate : null;
+};
 
 export const evaluateSalesTiming = ({
     userText,
@@ -454,15 +548,68 @@ export const evaluateSalesTiming = ({
     leadScore?: LeadScoreInput | null;
     deviceType?: string | null;
 }) => {
-    const detectedProduct = detectPaidProduct(userText);
+    const rawDetectedProduct = detectPaidProduct(userText);
+    const candidateSku = detectCommercialSku(userText, {
+        allowBareVipCatalogAmount: hasRecentVipCatalog(recentMessages, now),
+    });
+    const detectedSku = rawDetectedProduct && !['vip', 'video_call'].includes(rawDetectedProduct)
+        ? null
+        : candidateSku;
+    const skuDetectedProduct = getCommercialOffer(detectedSku)?.product || null;
+    const rejectedVipThisTurn = rejectsVipNow(userText);
+    const resolvedDetectedProduct = rawDetectedProduct || skuDetectedProduct;
+    const detectedProduct = rejectedVipThisTurn && resolvedDetectedProduct === 'vip' ? null : resolvedDetectedProduct;
     const storedActiveOrder = readActiveSalesOrder(leadMemory?.metadata?.sales_active_order, now);
-    const compatibleActiveOrder = storedActiveOrder && (!detectedProduct || storedActiveOrder.product === detectedProduct)
+    const genericVipMenuRequest = detectedProduct === 'vip' && !detectedSku && isVipMenuRequest(userText);
+    const compatibleActiveOrder = storedActiveOrder
+        && !genericVipMenuRequest
+        && (!detectedProduct || storedActiveOrder.product === detectedProduct)
+        && (!detectedSku || storedActiveOrder.sku === detectedSku)
         ? storedActiveOrder
         : null;
-    const rememberedProduct = isRecent(leadMemory?.metadata?.sales_nurture_updated_at, 12 * 60 * 60_000, now)
+    const rememberedProduct = totalPaid <= 0
+        && isRecent(leadMemory?.metadata?.sales_nurture_updated_at, 12 * 60 * 60_000, now)
         ? productFromMemory(leadMemory)
         : null;
-    const activeProduct = detectedProduct || compatibleActiveOrder?.product || rememberedProduct;
+    const memoryRejectedVip = (leadMemory?.rejected_products || []).some((item) => /\bvip\b/i.test(normalize(item)));
+    const vipRejected = rejectedVipThisTurn || memoryRejectedVip;
+    const conversationStartedAt = Date.parse(String(leadMemory?.metadata?.conversation_started_at || ''));
+    const episodeUserMessages = recentMessages.filter((message) => {
+        if (String(message.sender || '') !== 'user') return false;
+        if (!Number.isFinite(conversationStartedAt)) return true;
+        const createdAt = Date.parse(String(message.created_at || ''));
+        return Number.isFinite(createdAt) && createdAt >= conversationStartedAt;
+    });
+    const observedJourneyTurns = episodeUserMessages
+        .map((message) => String(message.content || ''))
+        .filter(isSubstantiveCommercialJourneyTurn)
+        .length;
+    const currentObserved = episodeUserMessages.some((message) => normalize(message.content) === normalize(userText));
+    const currentJourneyIncrement = !currentObserved && isSubstantiveCommercialJourneyTurn(userText) ? 1 : 0;
+    const vipJourneyTurns = Math.min(20, Math.max(
+        Number(leadMemory?.metadata?.vip_journey_turns || 0),
+        observedJourneyTurns + currentJourneyIncrement,
+    ));
+    const recentVipOffer = hasRecentVipOffer(recentMessages, now);
+    const proactiveVipOffer = totalPaid <= 0
+        && !vipRejected
+        && !detectedProduct
+        && !storedActiveOrder
+        && vipJourneyTurns >= 3
+        && !recentVipOffer
+        && !blocksProactiveVip(userText);
+    const activeProduct = detectedProduct
+        || compatibleActiveOrder?.product
+        || rememberedProduct
+        || (proactiveVipOffer ? 'vip' : null);
+    const rememberedSku = commercialSkuFromMemory(leadMemory);
+    const explicitBudget = extractExplicitBudget(userText);
+    const selectedSku = detectedSku
+        || (compatibleActiveOrder && getCommercialOffer(compatibleActiveOrder.sku as CommercialSku)
+            ? compatibleActiveOrder.sku as CommercialSku
+            : null)
+        || (!genericVipMenuRequest && rememberedProduct === activeProduct ? rememberedSku : null)
+        || (proactiveVipOffer ? 'vip_monthly' : null);
     const rememberedCustomBrief = String(leadMemory?.metadata?.sales_custom_request_brief || '').trim();
     const isBriefedProduct = activeProduct === 'custom_request' || activeProduct === 'erotic_audio';
     const customRequestBrief = isBriefedProduct
@@ -494,21 +641,28 @@ export const evaluateSalesTiming = ({
             || (Boolean(latestBotText) && (isCheckoutMessage(latestBotText)
             || isPricePitchMessage(latestBotText)
             || (detectPaidProduct(latestBotText) === activeProduct && extractOfferValue(latestBotText) !== null))));
-    const salesContextActive = Boolean(detectedProduct || engagedContinuation || directCheckout || askedPrice || acceptedOffer || recentOffer);
-    const canPitchPrice = true;
-    const explicitBudget = extractExplicitBudget(userText);
-    const fixedVipBudgetGap = activeProduct === 'vip'
-        && explicitBudget !== null
-        && explicitBudget < VIP_PRICE;
+    const genericVipInterest = activeProduct === 'vip' && !selectedSku;
+    const requiresSkuSelection = genericVipInterest
+        && Boolean(detectedProduct === 'vip' || directCheckout || askedPrice || acceptedOffer || rememberedProduct === 'vip');
+    const salesContextActive = Boolean(activeProduct || engagedContinuation || directCheckout || askedPrice || acceptedOffer || recentOffer);
+    const canPitchPrice = Boolean(activeProduct);
+    const selectedFixedOffer = getCommercialOffer(selectedSku);
+    const fixedCatalogBudgetGap = Boolean(explicitBudget !== null && (
+        (selectedFixedOffer && explicitBudget < selectedFixedOffer.value)
+        || (!selectedFixedOffer && activeProduct === 'vip' && explicitBudget < VIP_MONTHLY_PRICE)
+    ));
+    const fixedVipBudgetGap = activeProduct === 'vip' && fixedCatalogBudgetGap;
     // Cobrança exige o produto dito neste turno ou um pedido ativo persistido.
     // Memória de produto e texto antigo ajudam a conversar, mas nunca reabrem
     // sozinhos uma compra já paga.
     const hasAuthoritativeOrderContext = Boolean(detectedProduct || compatibleActiveOrder);
     const canGeneratePayment = (directCheckout || acceptanceAnswersCurrentOffer)
         && hasAuthoritativeOrderContext
-        && !fixedVipBudgetGap;
-    const offerPlan = createOfferPlan({
+        && !requiresSkuSelection
+        && !fixedCatalogBudgetGap;
+    const offerPlan = requiresSkuSelection ? null : createOfferPlan({
         product: activeProduct,
+        selectedSku,
         explicitBudget,
         acceptedOfferValue: canGeneratePayment ? recentOfferDetails?.value ?? null : null,
         totalPaid: Math.max(0, Number(totalPaid || 0)),
@@ -518,11 +672,32 @@ export const evaluateSalesTiming = ({
         deviceType,
         customRequestBrief,
     });
+    const vipJourneyStage = totalPaid > 0 ? 'converted'
+        : vipRejected ? 'rejected'
+            : requiresSkuSelection ? 'selection'
+                : proactiveVipOffer || recentVipOffer ? 'offer'
+                    : vipJourneyTurns >= 2 ? 'desire'
+                        : vipJourneyTurns >= 1 ? 'connection'
+                            : 'discovery';
+    const mustPresentVipMenu = requiresSkuSelection && (isVipMenuRequest(userText)
+        || detectedProduct === 'vip'
+        || directCheckout
+        || acceptedOffer);
+    const mustStateOfferNow = Boolean(offerPlan && (askedPrice || detectedSku || proactiveVipOffer));
 
     return {
         activeProduct,
+        selectedSku,
         activeOrder: compatibleActiveOrder,
         salesContextActive,
+        acquisitionGoal: totalPaid <= 0 && !vipRejected ? 'vip_monthly' as const : null,
+        vipJourneyStage,
+        vipJourneyTurns,
+        proactiveVipOffer,
+        requiresSkuSelection,
+        mustPresentVipMenu,
+        vipMenuOffers: VIP_OFFERS,
+        mustStateOfferNow,
         nurtureTurns,
         directCheckout,
         askedPrice,
@@ -531,20 +706,27 @@ export const evaluateSalesTiming = ({
         canPitchPrice,
         canGeneratePayment,
         fixedVipBudgetGap,
+        fixedCatalogBudgetGap,
         explicitBudget,
         recentOfferValue: recentOfferDetails?.value ?? null,
         offerPlan,
         customRequestBrief,
-        metadataPatch: activeProduct && salesContextActive ? {
-            sales_nurture_product: activeProduct,
-            sales_nurture_turns: nurtureTurns,
-            sales_nurture_updated_at: now.toISOString(),
-            sales_checkout_ready: canGeneratePayment,
-            sales_offer_seen: recentOffer,
-            sales_offer_value: offerPlan?.value ?? leadMemory?.metadata?.sales_offer_value ?? null,
-            sales_offer_tier: offerPlan?.tier ?? leadMemory?.metadata?.sales_offer_tier ?? null,
-            ...(customRequestBrief ? { sales_custom_request_brief: customRequestBrief } : {}),
-        } : {},
+        metadataPatch: {
+            vip_journey_stage: vipJourneyStage,
+            vip_journey_turns: vipJourneyTurns,
+            vip_sales_status: totalPaid > 0 ? 'converted' : vipRejected ? 'rejected' : 'prospecting',
+            ...(activeProduct && salesContextActive ? {
+                sales_nurture_product: activeProduct,
+                sales_nurture_turns: nurtureTurns,
+                sales_nurture_updated_at: now.toISOString(),
+                sales_checkout_ready: canGeneratePayment,
+                sales_offer_seen: recentOffer,
+                sales_offer_value: offerPlan?.value ?? leadMemory?.metadata?.sales_offer_value ?? null,
+                sales_offer_tier: offerPlan?.tier ?? leadMemory?.metadata?.sales_offer_tier ?? null,
+                sales_offer_sku: offerPlan?.sku ?? selectedSku ?? null,
+                ...(customRequestBrief ? { sales_custom_request_brief: customRequestBrief } : {}),
+            } : {}),
+        },
     };
 };
 

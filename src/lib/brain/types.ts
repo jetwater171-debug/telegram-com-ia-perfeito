@@ -29,12 +29,15 @@ export type RealityState = {
         currentOrder: {
             orderId: string;
             product: string;
+            sku?: string | null;
             amount: number;
+            amountCents?: number;
             description: string;
             status: string;
             paymentId: string | null;
         } | null;
         lastProductBought: string | null;
+        lastSkuBought?: string | null;
         lastPurchaseAt: string | null;
         postPurchaseCooldownUntil: string | null;
     };
@@ -45,7 +48,12 @@ export type LeadTwinState = {
     conversationStyle: { messageLength: string; humor: number; directness: number };
     interests: Record<string, number>;
     mediaPreferences: Record<string, number>;
-    commercial: { purchaseIntent: number; priceSensitivity: number };
+    commercial: {
+        purchaseIntent: number;
+        priceSensitivity: number;
+        targetSku?: string | null;
+        vipJourneyStage?: string | null;
+    };
     openLoops: string[];
 };
 

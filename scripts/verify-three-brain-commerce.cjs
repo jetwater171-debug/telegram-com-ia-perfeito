@@ -4,15 +4,19 @@ const path = require('node:path');
 const ts = require('typescript');
 
 const root = path.resolve(process.env.TARGET_ROOT || process.cwd());
-const load = (relativePath) => {
+const cache = new Map();
+const load = (relativePath, stubs = {}) => {
   const filename = path.join(root, relativePath);
+  if (cache.has(filename)) return cache.get(filename).exports;
   const compiled = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
     fileName: filename,
   }).outputText;
-  const module = { exports: {} };
-  new Function('require', 'module', 'exports', '__filename', '__dirname', compiled)(require, module, module.exports, filename, path.dirname(filename));
-  return module.exports;
+  const loaded = { exports: {} };
+  cache.set(filename, loaded);
+  const localRequire = (id) => Object.prototype.hasOwnProperty.call(stubs, id) ? stubs[id] : require(id);
+  new Function('require', 'module', 'exports', '__filename', '__dirname', compiled)(localRequire, loaded, loaded.exports, filename, path.dirname(filename));
+  return loaded.exports;
 };
 
 const orchestration = load('src/lib/aiOrchestration.ts');
@@ -23,7 +27,10 @@ for (const paid of [0, 19.9, 100, 200]) {
   assert.equal(plan.evaluator, false);
 }
 
-const sales = load('src/lib/salesTiming.ts');
+const commercialCatalog = load('src/lib/commercialCatalog.ts');
+const sales = load('src/lib/salesTiming.ts', {
+  '@/lib/commercialCatalog': commercialCatalog,
+});
 assert.equal(sales.detectPaidProduct('quero comprar sua calcinha'), 'custom_request');
 assert.equal(sales.detectPaidProduct('se eu te pagar vc grava isso pra mim?'), 'custom_request');
 assert.equal(sales.detectPaidProduct('quero te mandar 40 pro ifood'), 'gift');
@@ -128,7 +135,7 @@ assert.match(gateway, /review\?\.approved === false \|\| reviewIssues\.length > 
 assert.match(prompts, /Aprovar significa preservar/);
 assert.doesNotMatch(gateway, /strategyCallPromise/);
 assert.match(prompts, /MASTER BRAIN ÚNICO DA LARI/);
-assert.match(prompts, /Responda sempre em 2 a 4 balões curtos/);
+assert.match(prompts, /Normalmente responda em 2 a 4 balões curtos/);
 assert.match(gateway, /thinking = \{ type: 'disabled' \}/);
 assert.doesNotMatch(gateway, /const isRetryable = gateway\.provider === 'bai'/);
 assert.match(gatewayRouter, /timeoutMs: 10_000/);

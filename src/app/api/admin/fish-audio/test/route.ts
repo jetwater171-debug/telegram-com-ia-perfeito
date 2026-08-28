@@ -33,7 +33,12 @@ export async function POST(req: NextRequest) {
             model: String(body.fishAudioModel || map.elevenlabs_model || process.env.ELEVENLABS_MODEL || DEFAULT_ELEVENLABS_SETTINGS.model),
         });
         const plainText = String(body.text || "Oi amor… passei rapidinho pra falar baixinho com você. Como você tá?");
-        const expressiveText = buildElevenV3Performance({ messageText: plainText, userText: plainText, maxChars: 300 });
+        const expressiveText = buildElevenV3Performance({
+            messageText: plainText,
+            userText: plainText,
+            adultVerified: body.adultVerified === true,
+            maxChars: 300,
+        });
         const generated = await generateElevenLabsAudio({ settings, text: expressiveText });
 
         return new NextResponse(new Uint8Array(generated.audio), {

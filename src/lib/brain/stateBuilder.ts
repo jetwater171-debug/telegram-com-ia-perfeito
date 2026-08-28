@@ -40,7 +40,9 @@ const fallbackReality = (session: any, recentMessages: any[]): RealityState => {
             currentOrder: activeOrder ? {
                 orderId: activeOrder.orderId,
                 product: activeOrder.product,
+                sku: activeOrder.sku,
                 amount: activeOrder.amount,
+                amountCents: activeOrder.amountCents,
                 description: activeOrder.description,
                 status: activeOrder.status,
                 paymentId: activeOrder.paymentId,

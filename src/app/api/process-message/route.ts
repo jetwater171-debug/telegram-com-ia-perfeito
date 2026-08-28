@@ -51,6 +51,16 @@ import {
 } from '@/lib/elevenLabs';
 import { prepareElevenLabsScript } from '@/lib/elevenLabsScriptAgent';
 import {
+    formatVipCatalog,
+    formatBrl,
+    detectCommercialSku,
+    getCommercialFulfillmentBrief,
+    getCommercialOffer,
+    renderCommercialOfferMessage,
+    renderVipMenuMessages,
+    type CommercialSku,
+} from '@/lib/commercialCatalog';
+import {
     buildLeadVoicePolicy,
     estimateElevenLabsCredits,
     getElevenLabsSubscriptionForBudget,
@@ -62,7 +72,7 @@ import {
 import { normalizeBaiModelName } from '@/lib/aiModels';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
-import { buildDeliveredPreviewCaption, isPhotoTakenNow, rankPreviewCandidatesByMoment } from '@/lib/previewMoment';
+import { buildDeliveredPreviewCaption, isPhotoTakenNow, isPreviewAssetExplicitForUnverifiedLead, rankPreviewCandidatesByMoment } from '@/lib/previewMoment';
 import {
     filterUnsentPreviewAssets,
     normalizePreviewMediaKey as normalizeMediaUrlKey,
@@ -87,13 +97,12 @@ import { formatBrainRuntimeContext, loadBrainRuntimeState } from '@/lib/brain/st
 import {
     appendLeadEventSafe,
     markAdultDeclarationSafe,
-    markAdultVerificationSafe,
     patchRealityStateSafe,
     persistBrainProjectionsSafe,
     persistMemoryUpdatesSafe,
     recordAiDecisionSafe,
 } from '@/lib/brain/eventStore';
-import { detectAdultDeclaration, validateMasterBrainResponse } from '@/lib/brain/hardValidator';
+import { confirmsAdultDeclarationPrompt, isExplicitSexualContext, validateMasterBrainResponse } from '@/lib/brain/hardValidator';
 import { applyPreviewBanditRanking, recordPreviewReactionSafe, recordPreviewSentSafe } from '@/lib/brain/previewBandit';
 import { trackLeadResponseOutcomesSafe } from '@/lib/brain/outcomeTracker';
 import { markSessionSalesOrderPaidSafe, recordCustomOrderSafe } from '@/lib/customOrders';
@@ -554,6 +563,39 @@ const extractPrices = (text: string) => {
     return matches.map(m => Number(m.replace(',', '.'))).filter(n => !Number.isNaN(n));
 };
 
+const summarizePaymentGatewayResult = (payment: any) => ({
+    ok: Boolean(payment?.pixCopiaCola),
+    gateway: String(payment?.gateway || ''),
+    gatewayLabel: String(payment?.gatewayLabel || ''),
+    status: String(payment?.status || ''),
+    hasPaymentId: Boolean(payment?.paymentId),
+    hasPixCode: Boolean(payment?.pixCopiaCola),
+    hasQrCode: Boolean(payment?.qrCodeBase64),
+    attempts: Array.isArray(payment?.gatewayAttempts)
+        ? payment.gatewayAttempts.map((attempt: any) => ({
+            gateway: String(attempt?.gateway || ''),
+            ok: attempt?.ok === true,
+            status: String(attempt?.status || ''),
+            error: String(attempt?.error || '').slice(0, 160),
+        })).slice(0, 6)
+        : [],
+});
+
+const enforceSingleFixedCommercialOffer = (
+    messages: string[],
+    sku: CommercialSku,
+) => {
+    const offer = getCommercialOffer(sku);
+    if (!offer) return messages;
+    const priceLike = /R\$\s*\d{1,4}(?:[.,]\d{1,2})?|\b(?:19|29|49|79)[.,]90\b|\b50(?:[.,]00)?\s*reais?\b/iu;
+    const kept = (messages || [])
+        .map((message) => String(message || '').trim())
+        .filter(Boolean)
+        .filter((message) => !priceLike.test(message))
+        .slice(0, 3);
+    return [...kept, renderCommercialOfferMessage(offer)].slice(0, 4);
+};
+
 const PAID_STATUS_WORDS = new Set([
     'approved',
     'paid',
@@ -700,8 +742,8 @@ const resolveContextualMediaAction = (userText: string, currentAction?: string) 
         };
     }
     return {
-        action: 'send_shower_photo',
-        intro: 'olha essa fotinha que separei pra vc amor'
+        action: 'send_custom_preview',
+        intro: 'vou escolher uma fotinha que combine com esse momento'
     };
 };
 
@@ -1203,7 +1245,7 @@ export async function POST(req: NextRequest) {
         .map((m: any) => String(m.created_at))
         .sort()
         .at(-1) || new Date().toISOString();
-    const adultDeclaredNow = detectAdultDeclaration(userOnlyText);
+    const adultDeclaredNow = confirmsAdultDeclarationPrompt(userOnlyText, String(lastBotMsg?.content || ''));
     const leadMessageEventId = await appendLeadEventSafe({
         sessionId: String(session.id),
         eventType: 'lead_message',
@@ -1232,7 +1274,7 @@ export async function POST(req: NextRequest) {
     }
     // "kkkk" isolado é só reação à última fala. Não volta para a IA, pois ela
     // pode ressuscitar uma pergunta antiga e produzir texto sem sentido.
-    if (groupedUserMessages.length === 1 && isLowSignalLeadReaction(userOnlyText)) {
+    if (!adultDeclaredNow && groupedUserMessages.length === 1 && isLowSignalLeadReaction(userOnlyText)) {
         console.log('[PROCESSADOR] Reação curta isolada; aguardando próximo turno do lead.');
         return NextResponse.json({ status: 'low_signal_ignored' });
     }
@@ -1254,7 +1296,10 @@ export async function POST(req: NextRequest) {
     // quando a sessão nunca recebeu uma resposta anterior da Lari.
     const isConversationStart = receivedStartCommand && !lastBotMsg;
     const repetition = detectRepetition(filteredGroupMessages);
-    console.log(`[PROCESSADOR] Enviando para Gemini: ${combinedText}`);
+    console.log('[PROCESSADOR] Enviando turno consolidado ao Master Brain', {
+        groupedMessages: filteredGroupMessages.length,
+        userChars: userOnlyText.length,
+    });
 
     const lastOfferAt = lastOfferMsg?.created_at ? new Date(lastOfferMsg.created_at).getTime() : null;
     const minutesSinceOffer = lastOfferAt ? Math.floor((Date.now() - lastOfferAt) / 60000) : 999;
@@ -1290,6 +1335,7 @@ export async function POST(req: NextRequest) {
             .limit(1)
             .maybeSingle();
         if (redirectRow) {
+            const redirectAdultConfirmed = redirectRow.metadata?.adult_confirmed === true;
             leadMemory = {
                 ...leadMemory,
                 metadata: {
@@ -1307,9 +1353,11 @@ export async function POST(req: NextRequest) {
                     redirect_timezone: redirectRow.timezone || leadMemory.metadata?.redirect_timezone || '',
                     redirect_accept_language: redirectRow.metadata?.accept_language || leadMemory.metadata?.redirect_accept_language || '',
                     redirect_user_agent: redirectRow.user_agent || leadMemory.metadata?.redirect_user_agent || '',
-                    adult_verified: true,
-                    adult_verification_source: 'presell_redirect',
-                    adult_verified_at: redirectRow.clicked_at || redirectRow.created_at || new Date().toISOString(),
+                    ...(redirectAdultConfirmed ? {
+                        adult_verified: true,
+                        adult_verification_source: 'presell_explicit_confirmation',
+                        adult_verified_at: redirectRow.clicked_at || redirectRow.created_at || new Date().toISOString(),
+                    } : {}),
                 },
                 updated_at: new Date().toISOString(),
             };
@@ -1342,21 +1390,30 @@ export async function POST(req: NextRequest) {
             await supabase.from('sessions').update({ user_city: detectedCity }).eq('id', session.id);
         }
     }
-    if (isConversationStart) {
-        // /start abre uma nova conversa mental sem apagar os fatos privados do lead.
-        // O cerebro volta ao estagio inicial e nao reaproveita uma venda/gancho antigo.
+    if (adultDeclaredNow) {
+        leadMemory = {
+            ...leadMemory,
+            metadata: {
+                ...(leadMemory.metadata || {}),
+                adult_verified: true,
+                adult_verification_source: 'lead_self_declaration',
+                adult_verified_at: lastGroupedUserAt,
+            },
+            updated_at: new Date().toISOString(),
+        };
+    }
+    if (receivedStartCommand) {
+        // Todo /start encerra somente o episódio comercial transitório. Fatos,
+        // compras e pagamentos permanecem conciliáveis pelo paymentId.
         const freshMetadata = { ...(leadMemory.metadata || {}) } as Record<string, unknown>;
         for (const key of [
             'sales_nurture_product', 'sales_nurture_turns', 'sales_nurture_updated_at',
             'sales_checkout_ready', 'sales_offer_seen', 'sales_offer_value', 'sales_offer_tier',
+            'sales_offer_sku', 'sales_active_order', 'vip_journey_stage',
+            'vip_journey_turns', 'vip_sales_status',
         ]) delete freshMetadata[key];
         leadMemory = {
             ...leadMemory,
-            dominant_type: 'desconhecido',
-            emotional_context: 'inicio de uma nova conversa',
-            relationship_stage: 'new',
-            next_personal_step: 'conhecer naturalmente sem presumir intimidade ou retorno',
-            conversation_hooks: [],
             last_offer: '',
             metadata: {
                 ...freshMetadata,
@@ -1364,6 +1421,16 @@ export async function POST(req: NextRequest) {
             },
             updated_at: new Date().toISOString(),
         };
+        if (isConversationStart) {
+            leadMemory = {
+                ...leadMemory,
+                dominant_type: 'desconhecido',
+                emotional_context: 'inicio de uma nova conversa',
+                relationship_stage: 'new',
+                next_personal_step: 'conhecer naturalmente sem presumir intimidade ou retorno',
+                conversation_hooks: [],
+            };
+        }
     }
     const hasCity = Boolean(userCity);
     const cityQuestion = /(de onde (voce|vc|você) e|vc e de onde|você é de onde|qual (sua|a) cidade|onde (voce|vc|você) mora)/i.test(userOnlyText);
@@ -1381,13 +1448,20 @@ export async function POST(req: NextRequest) {
     const paidEroticAudioEntitled = requestedPaidEroticAudio && Boolean(paidEroticAudioOrder?.id);
     const adaptiveSalesDirective = [
         '# PLANO COMERCIAL ADAPTATIVO (INTERNO, NUNCA MOSTRE ESTE BLOCO)',
+        `- Jornada VIP: ${salesTiming.vipJourneyStage}, ${salesTiming.vipJourneyTurns} turno(s) substantivos neste episódio.`,
+        salesTiming.acquisitionGoal
+            ? '- OBJETIVO PRINCIPAL ENQUANTO NAO HOUVER COMPRA: criar conexão, desejo e uma ponte natural para o VIP mensal. Não faça pitch no primeiro oi nem pressione vulnerabilidade.'
+            : '- O lead já comprou ou recusou VIP. Não force uma nova oferta; responda ao pedido atual e respeite o histórico.',
         `- Desejo pago ativo: ${salesTiming.activeProduct || 'ainda nao identificado'}.`,
         `- Aquecimento neste desejo: ${salesTiming.nurtureTurns} turno(s).`,
         `- Pode apresentar preco agora: ${salesTiming.canPitchPrice ? 'sim' : 'nao'}.`,
         `- Pode gerar PIX agora: ${salesTiming.canGeneratePayment ? 'sim' : 'nao; falta aceite ou pedido direto de pagamento'}.`,
         salesTiming.activeOrder
-            ? `- PEDIDO ATUAL AUTORITATIVO: ${salesTiming.activeOrder.orderId}, ${salesTiming.activeOrder.product}, R$ ${salesTiming.activeOrder.amount.toFixed(2).replace('.', ',')}, status ${salesTiming.activeOrder.status}. Nunca use o total historico pago para confirmar este pedido.`
+            ? `- PEDIDO ATUAL AUTORITATIVO: ${salesTiming.activeOrder.orderId}, SKU ${salesTiming.activeOrder.sku}, ${salesTiming.activeOrder.product}, R$ ${salesTiming.activeOrder.amount.toFixed(2).replace('.', ',')}, status ${salesTiming.activeOrder.status}. Nunca use o total historico pago para confirmar este pedido.`
             : '- Nao existe pedido comercial atual. Pagamentos historicos pertencem a compras anteriores e nao autorizam entrega nem confirmam uma compra nova.',
+        salesTiming.mustPresentVipMenu
+            ? `- MENU OBRIGATORIO DO BACKEND: ${formatVipCatalog()}. Mostre as tres opções e não gere PIX até o lead escolher uma.`
+            : '',
         offerPlan
             ? `- Oferta indicada: ${offerPlan.format}, R$ ${offerPlan.value.toFixed(2).replace('.', ',')} (${offerPlan.description}).`
             : '- Ainda nao existe oferta definida; mantenha a conversa natural e deixe desejo/contexto aparecerem sem pergunta de qualificacao.',
@@ -1402,9 +1476,11 @@ export async function POST(req: NextRequest) {
                 ? '- O pedido atual e um audio erotico personalizado JA PAGO. Entregue em voz agora; use o nome verificado somente se ele pediu e nunca invente nome.'
                 : '- O pedido atual e um audio erotico personalizado. NUNCA entregue gemido, fala erotica sob medida ou o nome gemido antes do pagamento confirmado; apresente a oferta indicada.'
             : '',
-        salesTiming.fixedVipBudgetGap
-            ? '- O VIP custa R$ 19,90 e o limite declarado e menor. Nao gere PIX do VIP nem invente desconto; esclareca o valor uma vez e deixe o lead escolher outro produto menor se quiser.'
+        salesTiming.fixedCatalogBudgetGap && offerPlan
+            ? `- O SKU escolhido custa R$ ${offerPlan.value.toFixed(2).replace('.', ',')} e o limite declarado e menor. Nao gere PIX nem invente desconto; esclareca uma vez e respeite a decisao.`
             : '',
+        '- Catálogo fixo: VIP mensal R$ 29,90; vitalício R$ 49,90; vitalício + chamada R$ 79,90; chamada avulsa R$ 50,00. Nunca altere esses valores.',
+        '- Chamada íntima tem horário, duração e limites combinados. Nunca prometa orgasmo, resultado fisiológico ou duração ilimitada.',
         '- Se o desejo mudar, abandone a oferta anterior e aqueça o novo desejo antes de precificar.',
         '- Venda o resultado que ele pediu; para pouco dinheiro, reduza o escopo do mesmo desejo em vez de empurrar outro produto.',
         '- Este plano pertence apenas ao cerebro. Mesmo em relacao nova, uma intencao comercial literal pode ser atendida imediatamente; sem intencao real, converse normalmente.',
@@ -1420,29 +1496,36 @@ export async function POST(req: NextRequest) {
         userText: userOnlyText,
         recentMessages: recentSalesHistory,
     });
-    // O bot e a etapa posterior do presell. Portanto, uma sessao admitida pelo
-    // webhook do Telegram ja cumpriu o gate +18, mesmo quando o Telegram remove
-    // ou nao devolve o payload profundo do /start.
-    const verifiedByPresell = Boolean(session.telegram_chat_id)
-        || Boolean(leadMemory.metadata?.redirect_code)
-        || (leadMemory.metadata?.adult_verified === true
-            && leadMemory.metadata?.adult_verification_source === 'presell_redirect');
-    if (verifiedByPresell && !brainRuntime.reality.adultVerified) {
-        brainRuntime.reality.adultVerified = true;
-        const verifiedAt = String(leadMemory.metadata?.adult_verified_at || lastGroupedUserAt);
-        await Promise.all([
-            markAdultVerificationSafe(String(session.id), verifiedAt),
-            appendLeadEventSafe({
-                sessionId: String(session.id),
-                eventType: 'adult_verified',
-                source: 'presell',
-                sourceId: `presell:${String(leadMemory.metadata?.redirect_code || session.id)}`,
-                payload: { method: 'presell_confirmation' },
-                occurredAt: verifiedAt,
-            }),
-        ]);
+    // Chat id, /start e clique em redirecionador não provam idade. Somente uma
+    // declaração explícita ou confirmação de presell com evidência é confiável.
+    const adultVerificationSource = String(leadMemory.metadata?.adult_verification_source || '');
+    const trustedAdultVerification = adultDeclaredNow || (
+        leadMemory.metadata?.adult_verified === true
+        && ['lead_self_declaration', 'presell_explicit_confirmation'].includes(adultVerificationSource)
+    );
+    if (brainRuntime.reality.adultVerified !== trustedAdultVerification) {
+        brainRuntime.reality.adultVerified = trustedAdultVerification;
+        await patchRealityStateSafe(String(session.id), { adultVerified: trustedAdultVerification });
     }
-    if (adultDeclaredNow) brainRuntime.reality.adultVerified = true;
+    if (receivedStartCommand) {
+        brainRuntime.reality.payment.pendingPaymentId = null;
+        brainRuntime.reality.commercial.currentOrder = null;
+        await patchRealityStateSafe(String(session.id), {
+            payment: { pendingPaymentId: null },
+            commercial: { currentOrder: null },
+        });
+    }
+    brainRuntime.twin.commercial = {
+        ...brainRuntime.twin.commercial,
+        purchaseIntent: salesTiming.canGeneratePayment ? 0.98
+            : salesTiming.offerPlan ? 0.78
+                : salesTiming.activeProduct ? 0.6
+                    : Math.max(0.2, Number(brainRuntime.twin.commercial.purchaseIntent || 0.3)),
+        priceSensitivity: salesTiming.fixedCatalogBudgetGap ? 0.9
+            : Math.max(0.2, Number(brainRuntime.twin.commercial.priceSensitivity || 0.4)),
+        targetSku: salesTiming.selectedSku || null,
+        vipJourneyStage: salesTiming.vipJourneyStage,
+    };
     extraScript = [extraScript, formatBrainRuntimeContext(brainRuntime)].filter(Boolean).join('\n\n');
 
     if (mem0Settings.enabled && mem0Settings.apiKey && userOnlyText.trim()) {
@@ -1551,7 +1634,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             const filePath = await getTelegramFilePath(botToken, fileId);
             if (filePath) {
                 const downloadUrl = getTelegramFileDownloadUrl(botToken, filePath);
-                console.log(`[PROCESSADOR] Baixando áudio de: ${downloadUrl}`);
+                console.log('[PROCESSADOR] Baixando audio do Telegram', { fileId, hasFilePath: Boolean(filePath) });
 
                 const res = await fetch(downloadUrl);
                 const arrayBuffer = await res.arrayBuffer();
@@ -1617,7 +1700,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             const filePath = await getTelegramFilePath(botToken, fileId);
             if (filePath) {
                 const downloadUrl = getTelegramFileDownloadUrl(botToken, filePath);
-                console.log(`[PROCESSADOR] URL da Foto: ${downloadUrl}`);
+                console.log('[PROCESSADOR] Baixando foto do Telegram', { fileId, hasFilePath: Boolean(filePath) });
 
                 // 1. Atualizar a mensagem original com o media_url para o Chat Monitor ver
                 // Precisamos achar a mensagem do usuário com esse FileID
@@ -1737,7 +1820,26 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             `esse áudio personalizado fica R$ ${price}, quer que eu faça?`,
         ];
     }
+    const adultCommercialProduct = ['vip', 'video_call', 'erotic_audio', 'custom_photo', 'custom_video', 'custom_request', 'evaluation'].includes(String(salesTiming.activeProduct || ''));
+    const adultPaymentVerificationRequired = salesTiming.canGeneratePayment
+        && adultCommercialProduct
+        && !brainRuntime.reality.adultVerified;
+    if (salesTiming.mustPresentVipMenu) {
+        aiResponse.action = 'none';
+        aiResponse.current_state = 'SALES_PITCH';
+        aiResponse.next_best_action = 'MAKE_OFFER';
+        aiResponse.payment_details = null;
+        aiResponse.messages = renderVipMenuMessages();
+    }
+    if (adultPaymentVerificationRequired) {
+        aiResponse.action = 'none';
+        aiResponse.current_state = 'CONNECTION';
+        aiResponse.next_best_action = 'ASK';
+        aiResponse.payment_details = null;
+        aiResponse.messages = ['antes de gerar o pagamento, confirma pra mim que vc tem 18 anos ou mais?'];
+    }
     const backendMustGeneratePayment = salesTiming.canGeneratePayment
+        && !adultPaymentVerificationRequired
         && Boolean(salesTiming.offerPlan)
         && (salesTiming.directCheckout || salesTiming.acceptedOffer);
     if (backendMustGeneratePayment && aiResponse.action !== 'check_payment_status') {
@@ -1755,15 +1857,22 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     // Isso permite varias compras iguais, inclusive em dias diferentes, sem
     // reaproveitar a cobranca ou o pagamento de um pedido anterior.
     let activeSalesOrder: ActiveSalesOrder | null = salesTiming.activeOrder;
-    const responseHasPrice = extractPrices((Array.isArray(aiResponse.messages) ? aiResponse.messages : []).join('\n')).length > 0;
-    if (offerPlan && responseHasPrice) {
+    let responseHasPrice = extractPrices((Array.isArray(aiResponse.messages) ? aiResponse.messages : []).join('\n')).length > 0;
+    const fixedCommercialOffer = getCommercialOffer(offerPlan?.sku as CommercialSku);
+    if (offerPlan && fixedCommercialOffer && !adultPaymentVerificationRequired
+        && (salesTiming.mustStateOfferNow || responseHasPrice || aiResponse.action === 'generate_pix_payment')) {
+        aiResponse.messages = enforceSingleFixedCommercialOffer(aiResponse.messages || [], fixedCommercialOffer.sku);
+        responseHasPrice = true;
+    } else if (offerPlan && responseHasPrice && !fixedCommercialOffer) {
         aiResponse.messages = canonicalizeSalesOfferMessages(aiResponse.messages || [], offerPlan.value);
     }
-    if (offerPlan && (responseHasPrice || aiResponse.action === 'generate_pix_payment')) {
-        const nextOrderStatus = aiResponse.action === 'generate_pix_payment' ? 'accepted' : 'offered';
+    if (offerPlan && (responseHasPrice || aiResponse.action === 'generate_pix_payment' || adultPaymentVerificationRequired)) {
+        const nextOrderStatus = aiResponse.action === 'generate_pix_payment' || adultPaymentVerificationRequired
+            ? 'accepted'
+            : 'offered';
         const orderSource = String(triggerMessageId || lastGroupedUserAt).replace(/[^a-zA-Z0-9:_-]/g, '').slice(0, 120);
         activeSalesOrder = buildSalesOrderSnapshot({
-            orderId: `order:${session.id}:${orderSource}:${offerPlan.product}`,
+            orderId: `order:${session.id}:${orderSource}:${offerPlan.sku}`,
             plan: offerPlan,
             status: nextOrderStatus,
             previous: salesTiming.activeOrder,
@@ -1806,7 +1915,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     const hardValidation = validateMasterBrainResponse({
         response: aiResponse,
         userText: userOnlyText,
-        canGeneratePayment: salesTiming.canGeneratePayment,
+        canGeneratePayment: salesTiming.canGeneratePayment && !adultPaymentVerificationRequired,
         canPitchPrice: salesTiming.canPitchPrice,
         adultVerified: brainRuntime.reality.adultVerified,
         offer: offerPlan ? {
@@ -1818,13 +1927,19 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         pendingPaymentId: brainRuntime.reality.payment.pendingPaymentId,
     });
     aiResponse = hardValidation.response;
+    responseHasPrice = extractPrices((Array.isArray(aiResponse.messages) ? aiResponse.messages : []).join('\n')).length > 0;
     if (hardValidation.corrections.length > 0) {
         console.log('[HARD VALIDATOR] decisão corrigida:', hardValidation.corrections);
     }
-    if (activeSalesOrder?.status === 'accepted' && aiResponse.action !== 'generate_pix_payment') {
+    if (!adultPaymentVerificationRequired
+        && activeSalesOrder?.status === 'accepted'
+        && aiResponse.action !== 'generate_pix_payment') {
         activeSalesOrder = responseHasPrice
             ? { ...activeSalesOrder, status: 'offered', acceptedAt: null }
             : salesTiming.activeOrder;
+    }
+    if (hardValidation.corrections.includes('adult_verification_required') && !adultPaymentVerificationRequired) {
+        activeSalesOrder = salesTiming.activeOrder;
     }
 
     // O modelo descreve a relacao, mas nao tem autoridade para declarar compra,
@@ -1918,7 +2033,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     const currentLeadHeat = Number(aiResponse.lead_stats?.tarado || 0);
     const currentAiStage = String(aiResponse.current_state || '').toUpperCase();
     const currentTextIsHot = hasExplicitSexualFantasyTrigger(userOnlyText)
-        || /\b(tesao|tesão|safad|pelad|nua|buceta|peito|bunda|gozar|meter|chupar)\b/i.test(userOnlyText);
+        || isExplicitSexualContext(userOnlyText);
     const enoughConversationForSurprise = recentSalesHistory.filter((message: any) => message.sender === 'user').length >= 6;
     const leadMessageHasSubstance = userOnlyText.trim().split(/\s+/).filter(Boolean).length >= 3;
     const blocksSurprise = /\b(nao|não|para|chega|trabalho|familia|família|triste|problema|doente|hospital|morreu|pix|pagar|caro|dinheiro)\b/i.test(userOnlyText);
@@ -1934,6 +2049,21 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         && currentLeadHeat >= 70
         && stablePercent(`${session.id}:${triggerMessageId || lastGroupedUserAt}:unsolicited-preview`) < 8;
     let shouldDeliverMedia = requestedMediaDelivery || unsolicitedPreviewAllowed;
+    // Todo o catalogo desta operacao e adulto. Mesmo uma solicitacao generica
+    // de foto precisa passar pela confirmacao 18+ antes de resolver ou enviar
+    // qualquer asset; isso tambem impede que a correcao do hard validator seja
+    // revertida pela normalizacao de acao logo abaixo.
+    if (!brainRuntime.reality.adultVerified && (userAskedMedia || modelAttemptedMedia || shouldDeliverMedia)) {
+        shouldDeliverMedia = false;
+        aiResponse.action = 'none';
+        aiResponse.preview_id = null;
+        aiResponse.payment_details = null;
+        aiResponse.next_best_action = 'ASK';
+        aiResponse.messages = ['antes de continuar, confirma pra mim que vc tem 18 anos ou mais?'];
+        if (!hardValidation.corrections.includes('adult_verification_required')) {
+            hardValidation.corrections.push('adult_verification_required');
+        }
+    }
     if (unsolicitedPreviewAllowed) {
         console.log('[PREVIAS] Surpresa rara autorizada por calor, profundidade e cooldown de 24h.');
     }
@@ -2000,7 +2130,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             aiResponse.action = contextualMedia.action as any;
             aiResponse.current_state = (ACTION_STAGE_MAP[contextualMedia.action] || aiResponse.current_state) as any;
         } else {
-            aiResponse.action = 'send_shower_photo';
+            aiResponse.action = 'send_custom_preview';
         }
     }
     let pendingPhotoRequestAnalysis: Promise<unknown> | null = null;
@@ -2024,10 +2154,11 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 .eq('enabled', true)
                 .limit(1000);
             const { data: candidates } = await query;
+            const meaningfulGapTags = requestedSpec.tags.filter((tag) => !/^(foto|photo|imagem|video|vídeo)$/i.test(String(tag || '').trim()));
             const bestScore = Math.max(0, ...(candidates || []).map((asset: any) =>
-                scorePreviewForContext(asset, userOnlyText, requestedSpec.tags)
+                scorePreviewForContext({ ...asset, priority: 0 }, meaningfulGapTags.join(' '), meaningfulGapTags)
             ));
-            if (bestScore < 4) {
+            if (meaningfulGapTags.length > 0 && bestScore < 2) {
                 pendingPhotoRequestAnalysis = registerMissingPhotoRequest({
                     userText: userOnlyText,
                     description: requestedSpec.description,
@@ -2067,7 +2198,8 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 .map((row: any) => String(row.media_url || '').trim())
                 .filter(Boolean);
             sentMediaKeysForSession = new Set(sentMediaUrlsForSession.map(normalizeMediaUrlKey).filter(Boolean));
-            const catalog = (catalogResult.data || []).filter((asset: any) => asset.media_url);
+            const catalog = (catalogResult.data || []).filter((asset: any) => asset.media_url
+                && (brainRuntime.reality.adultVerified || !isPreviewAssetExplicitForUnverifiedLead(asset)));
             const isImgAsset = (t?: string | null) => t === 'image' || t === 'photo' || !t;
             const isVidAsset = (t?: string | null) => t === 'video';
             const action = String(aiResponse.action || '');
@@ -2088,7 +2220,14 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
 
             const requestedSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
             const tarado = Number(aiResponse.lead_stats?.tarado || 0);
-            const candidatePool = unusedCatalog;
+            const meaningfulRequestedTags = requestedSpec.tags.filter((tag) => !/^(foto|photo|imagem|video|vídeo)$/i.test(String(tag || '').trim()));
+            const candidatePool = meaningfulRequestedTags.length > 0
+                ? unusedCatalog.filter((asset: any) => scorePreviewForContext(
+                    { ...asset, priority: 0 },
+                    meaningfulRequestedTags.join(' '),
+                    meaningfulRequestedTags,
+                ) >= 2)
+                : unusedCatalog;
             const momentRankedPreviews = rankPreviewCandidatesByMoment({
                 assets: candidatePool,
                 context: {
@@ -2203,7 +2342,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         leadMemory
     );
     let updatedLeadMemory = mergeLeadMemoryPatch(detectedLeadMemory, aiResponse.lead_memory_patch);
-    if (salesTiming.activeProduct && salesTiming.salesContextActive) {
+    if (Object.keys(salesTiming.metadataPatch || {}).length > 0) {
         updatedLeadMemory = {
             ...updatedLeadMemory,
             metadata: {
@@ -2217,11 +2356,18 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     const shouldReplaceStoredSalesOrder = Boolean(activeSalesOrder)
         || (salesTiming.salesContextActive && hadStoredSalesOrder && !salesTiming.activeOrder);
     if (shouldReplaceStoredSalesOrder) {
+        const priorOrderHistory = Array.isArray(updatedLeadMemory.metadata?.sales_order_history)
+            ? updatedLeadMemory.metadata.sales_order_history.filter((item: any) => item && typeof item === 'object')
+            : [];
+        const nextOrderHistory = activeSalesOrder
+            ? [...priorOrderHistory.filter((item: any) => String(item.orderId || item.order_id || '') !== activeSalesOrder?.orderId), activeSalesOrder].slice(-30)
+            : priorOrderHistory.slice(-30);
         updatedLeadMemory = {
             ...updatedLeadMemory,
             metadata: {
                 ...(updatedLeadMemory.metadata || {}),
                 sales_active_order: activeSalesOrder,
+                sales_order_history: nextOrderHistory,
             },
             updated_at: new Date().toISOString(),
         };
@@ -2499,6 +2645,18 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         .map((message) => sanitizeOutgoingMessage(message, latestUserText))
         .filter(Boolean)
         .slice(0, 4);
+    // Última palavra comercial é sempre do catálogo do backend. Esta etapa roda
+    // depois de todas as revisoras para que nenhuma delas reintroduza preço antigo.
+    if (hardValidation.corrections.includes('adult_verification_required')) {
+        safeMessages = ['antes de continuar, confirma pra mim que vc tem 18 anos ou mais?'];
+    } else if (salesTiming.mustPresentVipMenu) {
+        safeMessages = renderVipMenuMessages();
+    } else if (fixedCommercialOffer
+        && !adultPaymentVerificationRequired
+        && !hardValidation.corrections.includes('adult_verification_required')
+        && (salesTiming.mustStateOfferNow || responseHasPrice || aiResponse.action === 'generate_pix_payment')) {
+        safeMessages = enforceSingleFixedCommercialOffer(safeMessages, fixedCommercialOffer.sku);
+    }
 
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));
     // Em turno de mídia, nenhum texto que prometa "olha" ou "te mandei" sai
@@ -2522,11 +2680,19 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     let operationalLeadMemory = updatedLeadMemory;
     let paymentCreatedThisTurn = false;
     const persistSalesOrderState = async (order: Record<string, unknown> | null) => {
+        const priorOrderHistory = Array.isArray(operationalLeadMemory.metadata?.sales_order_history)
+            ? operationalLeadMemory.metadata.sales_order_history.filter((item: any) => item && typeof item === 'object')
+            : [];
+        const orderId = String(order?.orderId || order?.order_id || '');
+        const nextOrderHistory = order && orderId
+            ? [...priorOrderHistory.filter((item: any) => String(item.orderId || item.order_id || '') !== orderId), order].slice(-30)
+            : priorOrderHistory.slice(-30);
         operationalLeadMemory = {
             ...operationalLeadMemory,
             metadata: {
                 ...(operationalLeadMemory.metadata || {}),
                 sales_active_order: order,
+                sales_order_history: nextOrderHistory,
             },
             updated_at: new Date().toISOString(),
         };
@@ -2702,6 +2868,8 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     messageText: audioSpokenText,
                     userText: userOnlyText,
                     emotionalContext,
+                    conversationContext: [lastBotContent, ...recentUserTexts.slice(-3), ...recentBotTexts.slice(-3)].filter(Boolean).join('\n').slice(-900),
+                    adultVerified: brainRuntime.reality.adultVerified,
                     maxChars: audioMaxChars,
                 }),
                 delivery: 'deterministic',
@@ -2718,6 +2886,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 // Um pedido explícito merece uma resposta criada para ser dita,
                 // não a mera leitura de uma bolha de texto já montada.
                 mode: userWantsAudio ? 'requested_audio' : 'voice_render',
+                adultVerified: brainRuntime.reality.adultVerified,
                 conversationContext: [
                     lastBotContent,
                     ...recentUserTexts.slice(-3),
@@ -2759,8 +2928,9 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 console.log('[ELEVENLABS] Roteiro preparado', {
                     source: script.source,
                     delivery: script.delivery,
-                    reaction: script.reaction || 'none',
-                    spokenText: script.spokenText,
+                    hasReaction: Boolean(script.reaction),
+                    spokenChars: script.spokenText.length,
+                    spokenWords: script.spokenText.split(/\s+/).filter(Boolean).length,
                 });
                 const subscription = await getElevenLabsSubscriptionForBudget({
                     apiKey: elevenLabsSettings.apiKey,
@@ -2955,6 +3125,17 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             ...(actionTags[String(aiResponse.action)] || []),
             ...requestedPreviewSpec.tags,
         ]));
+        const meaningfulPreviewTags = (tags: string[]) => tags
+            .map((tag) => String(tag || '').trim())
+            .filter((tag) => tag && !/^(foto|photo|imagem|video|vídeo)$/i.test(tag));
+        const isPreviewSemanticallyRelevant = (asset: any, tags: string[]) => {
+            const meaningfulTags = meaningfulPreviewTags(tags);
+            return meaningfulTags.length === 0 || scorePreviewForContext(
+                { ...asset, priority: 0 },
+                meaningfulTags.join(' '),
+                meaningfulTags,
+            ) >= 2;
+        };
 
         const isImageType = (t?: string | null) => t === 'image' || t === 'photo' || !t;
         const isVideoType = (t?: string | null) => t === 'video';
@@ -2967,7 +3148,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             mediaType?: 'image' | 'video',
             excludeUrls: string[] = sentMediaUrlsForSession,
             preferredTags: string[] = preferredPreviewTags,
-            requireRelevant = false,
+            requireRelevant = true,
         ) => {
             let data: any[] | null = null;
             let error: any = null;
@@ -2994,14 +3175,25 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             if (!data || data.length === 0) return null;
 
             const excluded = new Set(excludeUrls.map((url) => normalizeMediaUrlKey(url)).filter(Boolean));
-            const valid = (data || []).filter((item: any) => item?.media_url && matchesMediaType(item.media_type, mediaType));
+            const ageEligible = (data || []).filter((item: any) => item?.media_url
+                && (brainRuntime.reality.adultVerified || !isPreviewAssetExplicitForUnverifiedLead(item)));
+            const valid = ageEligible.filter((item: any) => matchesMediaType(item.media_type, mediaType));
             
-            const candidateList = valid.length > 0 ? valid : (data || []).filter((item: any) => item?.media_url);
+            const candidateList = valid.length > 0 ? valid : ageEligible;
             if (candidateList.length === 0) return null;
 
             const available = candidateList.filter((item: any) => !excluded.has(normalizeMediaUrlKey(item.media_url)));
             if (available.length === 0) return null;
-            const pool = available;
+            const meaningfulTags = meaningfulPreviewTags(preferredTags);
+            const semanticallyRelevant = meaningfulTags.length > 0
+                ? available.filter((item: any) => scorePreviewForContext(
+                    { ...item, priority: 0 },
+                    meaningfulTags.join(' '),
+                    meaningfulTags,
+                ) >= 2)
+                : available;
+            if (requireRelevant && meaningfulTags.length > 0 && semanticallyRelevant.length === 0) return null;
+            const pool = requireRelevant ? semanticallyRelevant : available;
 
             const momentRanked = rankPreviewCandidatesByMoment({
                 assets: pool,
@@ -3033,14 +3225,17 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     .select('*')
                     .eq('id', previewId)
                     .maybeSingle();
-                if (previewRow?.media_url && !sentMediaKeysForSession.has(normalizeMediaUrlKey(previewRow.media_url))) {
+                if (previewRow?.media_url
+                    && (brainRuntime.reality.adultVerified || !isPreviewAssetExplicitForUnverifiedLead(previewRow))
+                    && isPreviewSemanticallyRelevant(previewRow, requestedPreviewSpec.tags)
+                    && !sentMediaKeysForSession.has(normalizeMediaUrlKey(previewRow.media_url))) {
                     mediaUrl = previewRow.media_url;
                     mediaType = previewRow.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = previewRow;
                 }
             }
             if (!mediaUrl) {
-                const fallbackPreview = await getRegisteredPreview(undefined, sentMediaUrlsForSession, requestedPreviewSpec.tags, false);
+                const fallbackPreview = await getRegisteredPreview(undefined, sentMediaUrlsForSession, requestedPreviewSpec.tags, true);
                 if (fallbackPreview) {
                     mediaUrl = fallbackPreview.media_url;
                     mediaType = fallbackPreview.media_type === 'video' ? 'video' : 'image';
@@ -3053,8 +3248,8 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 case 'send_lingerie_photo':
                 case 'send_wet_finger_photo':
                 case 'send_ass_photo_preview': {
-                    const registered = await getRegisteredPreview('image', sentMediaUrlsForSession, preferredPreviewTags, false)
-                        || await getRegisteredPreview(undefined, sentMediaUrlsForSession, preferredPreviewTags, false);
+                    const registered = await getRegisteredPreview('image', sentMediaUrlsForSession, preferredPreviewTags, true)
+                        || await getRegisteredPreview(undefined, sentMediaUrlsForSession, preferredPreviewTags, true);
                     mediaUrl = registered?.media_url || null;
                     mediaType = registered?.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = registered;
@@ -3062,9 +3257,9 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 }
                 case 'send_video_preview':
                 case 'send_hot_video_preview': {
-                    const registered = await getRegisteredPreview('video', sentMediaUrlsForSession, preferredPreviewTags, false)
-                        || await getRegisteredPreview('image', sentMediaUrlsForSession, preferredPreviewTags, false)
-                        || await getRegisteredPreview(undefined, sentMediaUrlsForSession, preferredPreviewTags, false);
+                    const registered = await getRegisteredPreview('video', sentMediaUrlsForSession, preferredPreviewTags, true)
+                        || await getRegisteredPreview('image', sentMediaUrlsForSession, preferredPreviewTags, true)
+                        || await getRegisteredPreview(undefined, sentMediaUrlsForSession, preferredPreviewTags, true);
                     mediaUrl = registered?.media_url || null;
                     mediaType = registered?.media_type === 'video' ? 'video' : 'image';
                     selectedPreviewAsset = registered;
@@ -3083,10 +3278,21 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                             .limit(20);
                         if (paymentRowsError) throw paymentRowsError;
                         const rows = paymentRows || [];
-                        const lastPayMsg = (currentOrder
+                        const pendingRows = rows.filter((row: any) => row.payment_data?.paid !== true);
+                        const referencedSku = detectCommercialSku(userOnlyText, { allowBareVipCatalogAmount: true });
+                        const explicitlyReferencedPayment = referencedSku
+                            ? pendingRows.find((row: any) => String(row.payment_data?.sku || '') === referencedSku)
+                            : null;
+                        const currentOrderPayment = currentOrder
                             ? rows.find((row: any) => String(row.payment_data?.order_id || '') === currentOrder.orderId)
-                            : null)
-                            || rows.find((row: any) => row.payment_data?.paid !== true)
+                            : null;
+                        if (!currentOrderPayment && !explicitlyReferencedPayment && pendingRows.length > 1) {
+                            await sendTelegramMessage(botToken, chatId, 'tenho mais de uma cobranca aberta aqui. me fala o produto ou o valor do pix que vc quer conferir');
+                            break;
+                        }
+                        const lastPayMsg = explicitlyReferencedPayment
+                            || currentOrderPayment
+                            || pendingRows[0]
                             || rows[0];
 
                         if (!lastPayMsg) {
@@ -3111,17 +3317,13 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                         if (isPaid) {
                             const result = await reconcilePaymentMessage(lastPayMsg, {
                                 gateway: paymentData.gateway,
-                                notify: false,
+                                notify: true,
+                                botToken,
+                                telegramChatId: chatId,
                                 source: 'conversation_payment_check',
                                 statusPayload: statusData,
                             });
                             const paidAt = String(paymentData.paid_at || new Date().toISOString());
-                            await markSessionSalesOrderPaidSafe({
-                                sessionId: String(session.id),
-                                orderId: String(paymentData.order_id || currentOrder?.orderId || ''),
-                                paymentId,
-                                paidAt,
-                            });
                             await patchRealityStateSafe(String(session.id), {
                                 payment: {
                                     totalConfirmed: Number(result.totalPaid ?? session.total_paid ?? 0),
@@ -3133,23 +3335,16 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                                     currentOrder: {
                                         orderId: String(paymentData.order_id || currentOrder?.orderId || ''),
                                         product: String(paymentData.product || ''),
+                                        sku: result.catalogMismatch ? null : String(paymentData.sku || currentOrder?.sku || ''),
                                         amount: Number(paymentData.value || 0),
+                                        amountCents: Number(paymentData.amount_cents || Math.round(Number(paymentData.value || 0) * 100)),
                                         description: String(paymentData.description || paymentData.product || 'produto'),
-                                        status: 'paid',
+                                        status: result.catalogMismatch ? 'paid_needs_manual_review' : 'paid',
                                         paymentId,
                                         paidAt,
                                     },
                                 },
                             });
-                            await sendTelegramMessage(
-                                botToken,
-                                chatId,
-                                String(paymentData.product || '') === 'social_meetup'
-                                    ? 'pagamento confirmado, agora vamos alinhar e confirmar os detalhes do nosso encontro'
-                                    : String(paymentData.product || '') === 'erotic_audio'
-                                        ? 'confirmado amor... agora me fala como quer o áudio e o nome que eu faço pra vc'
-                                    : 'confirmado amor! obrigada, vou te mandar agora',
-                            );
                             console.log('[PAGAMENTO] Pedido confirmado', {
                                 orderId: paymentData.order_id || null,
                                 paymentId,
@@ -3191,16 +3386,23 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                         break;
                     }
                     const paymentProduct = authoritativeOrder.product;
+                    const paymentSku = authoritativeOrder.sku;
+                    const fixedPaymentOffer = getCommercialOffer(paymentSku as CommercialSku);
                     const isSocialMeetup = paymentProduct === 'social_meetup';
                     const value = authoritativeOrder.amount;
                     const description = authoritativeOrder.description;
                     const customRequestBrief = authoritativeOrder.requestBrief;
+                    const fulfillmentBrief = fixedPaymentOffer
+                        ? getCommercialFulfillmentBrief(fixedPaymentOffer.sku)
+                        : customRequestBrief || description;
+                    const requiresAdminFulfillment = Boolean(fixedPaymentOffer)
+                        || ['custom_photo', 'custom_video', 'custom_request', 'erotic_audio', 'evaluation', 'social_meetup'].includes(paymentProduct);
                     const orderId = authoritativeOrder.orderId;
                     const idempotencyKey = `${session.id}:${orderId}`;
                     // Idempotência por pedido, não por produto/preço. Uma nova
                     // compra igual cria outro PIX; repetir o mesmo pedido reenvia
                     // exatamente a cobrança já criada.
-                    const { data: lastPixMsg } = await supabase
+                    const { data: lastPixMsg, error: lastPixLookupError } = await supabase
                         .from('messages')
                         .select('id, payment_data, created_at')
                         .eq('session_id', session.id)
@@ -3210,11 +3412,13 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                         .order('created_at', { ascending: false })
                         .limit(1)
                         .maybeSingle();
+                    if (lastPixLookupError) throw new Error(`payment_idempotency_lookup_failed:${lastPixLookupError.message}`);
 
                     const lastPaymentData: any = lastPixMsg?.payment_data || {};
                     const sameValue = Number(lastPaymentData.value || 0) === Number(value);
                     const sameProduct = String(lastPaymentData.product || '') === paymentProduct
                         || (!lastPaymentData.product && String(lastPaymentData.description || '') === description);
+                    const sameSku = String(lastPaymentData.sku || '') === paymentSku;
                     const sameGateway = !isSocialMeetup || String(lastPaymentData.gateway || '') === 'wiinpay';
                     const notPaid = lastPaymentData.paid !== true;
                     const lastPixCode = lastPaymentData.pixCopiaCola;
@@ -3225,7 +3429,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                         break;
                     }
 
-                    if (sameValue && sameProduct && sameGateway && notPaid && lastPixCode) {
+                    if (sameValue && sameProduct && sameSku && sameGateway && notPaid && lastPixCode) {
                         const pendingOrder = {
                             ...authoritativeOrder,
                             status: 'payment_pending',
@@ -3233,8 +3437,29 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                             gateway: String(lastPaymentData.gateway || authoritativeOrder.gateway || '') || null,
                             expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
                         };
+                        if (requiresAdminFulfillment) {
+                            const customOrderReady = await recordCustomOrderSafe({
+                                sessionId: String(session.id),
+                                paymentId: String(lastPaymentId || ''),
+                                gateway: lastPaymentData.gateway,
+                                requestBrief: fulfillmentBrief,
+                                amount: value,
+                                product: paymentProduct,
+                                orderId,
+                                paymentData: {
+                                    ...lastPaymentData,
+                                    description,
+                                    product: paymentProduct,
+                                    sku: paymentSku,
+                                    amount_cents: authoritativeOrder.amountCents,
+                                    order_id: orderId,
+                                    idempotency_key: idempotencyKey,
+                                },
+                            });
+                            if (!customOrderReady) throw new Error('custom_order_recovery_failed');
+                        }
                         await persistSalesOrderState(pendingOrder);
-                        await sendTelegramMessage(botToken, chatId, "ta aqui o pix de novo amor");
+                        await sendTelegramMessage(botToken, chatId, `${description} por ${formatBrl(value)}. ta aqui o pix de novo`);
                         await sendTelegramCopyableCode(botToken, chatId, lastPixCode);
 
                         await supabase.from('messages').insert({
@@ -3256,7 +3481,9 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                                 payment_id: lastPaymentId || null,
                                 gateway: lastPaymentData.gateway || null,
                                 product: paymentProduct,
+                                sku: paymentSku,
                                 amount: value,
+                                amount_cents: authoritativeOrder.amountCents,
                                 description,
                             },
                         });
@@ -3279,6 +3506,8 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                             session_id: session.id,
                             order_id: orderId,
                             product: paymentProduct,
+                            sku: paymentSku,
+                            amount_cents: authoritativeOrder.amountCents,
                             idempotency_key: idempotencyKey,
                             ...(customRequestBrief ? { custom_request_brief: customRequestBrief } : {}),
                         },
@@ -3288,55 +3517,66 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     await supabase.from('messages').insert({
                         session_id: session.id,
                         sender: 'system',
-                        content: `[DEBUG] Resposta Gateway PIX: ${JSON.stringify(payment)}`
+                        content: `[DEBUG] Resumo Gateway PIX: ${JSON.stringify(summarizePaymentGatewayResult(payment))}`
                     });
 
                     if (payment && payment.pixCopiaCola) {
-                        await sendTelegramMessage(botToken, chatId, "ta aqui o pix amor");
-                        if (payment.gateway === 'pushinpay') {
-                            await sendTelegramMessage(botToken, chatId, "aviso rapidinho: a PushinPay so processa o pagamento, a entrega e suporte continuam comigo.");
-                        }
-                        await sendTelegramCopyableCode(botToken, chatId, payment.pixCopiaCola);
-
-                        await supabase.from('messages').insert({
+                        if (!String(payment.paymentId || '').trim()) throw new Error('payment_gateway_missing_id');
+                        const persistedPaymentData = {
+                            paymentId: payment.paymentId,
+                            gateway: payment.gateway,
+                            gatewayLabel: payment.gatewayLabel,
+                            gatewayAttempts: payment.gatewayAttempts,
+                            value,
+                            amount_cents: authoritativeOrder.amountCents,
+                            order_id: orderId,
+                            description,
+                            product: paymentProduct,
+                            sku: paymentSku,
+                            custom_request_brief: customRequestBrief,
+                            idempotency_key: idempotencyKey,
+                            fulfillment_status: requiresAdminFulfillment ? 'awaiting_payment' : 'pending',
+                            pixCopiaCola: payment.pixCopiaCola,
+                            qrCodeBase64: payment.qrCodeBase64 || null,
+                            paid: false,
+                            status: payment.status || 'pending',
+                        };
+                        // A trilha conciliavel precisa existir antes de qualquer
+                        // codigo PIX chegar ao lead. Se a persistencia falhar, a
+                        // cobranca criada no gateway fica retida para recuperacao.
+                        const paymentRecordWrite = await supabase.from('messages').insert({
                             session_id: session.id,
                             sender: 'system',
                             content: "[SYSTEM: PIX GENERATED - " + value + " | ID: " + payment.paymentId + "]",
-                            payment_data: {
-                                paymentId: payment.paymentId,
-                                gateway: payment.gateway,
-                                gatewayLabel: payment.gatewayLabel,
-                                gatewayAttempts: payment.gatewayAttempts,
-                                value,
-                                order_id: orderId,
-                                description,
-                                product: paymentProduct,
-                                custom_request_brief: customRequestBrief,
-                                idempotency_key: idempotencyKey,
-                                fulfillment_status: isSocialMeetup ? 'awaiting_payment' : 'pending',
-                                pixCopiaCola: payment.pixCopiaCola,
-                                qrCodeBase64: payment.qrCodeBase64 || null,
-                                paid: false,
-                                status: payment.status || 'pending'
-                            }
-                        });
-                        const requiresAdminFulfillment = ['custom_photo', 'custom_video', 'custom_request', 'erotic_audio', 'evaluation', 'social_meetup'].includes(paymentProduct);
+                            payment_data: persistedPaymentData,
+                        }).select('id').single();
+                        if (paymentRecordWrite.error || !paymentRecordWrite.data?.id) {
+                            throw new Error(`payment_record_insert_failed:${paymentRecordWrite.error?.message || 'missing_id'}`);
+                        }
                         if (requiresAdminFulfillment) {
-                            await recordCustomOrderSafe({
+                            const customOrderReady = await recordCustomOrderSafe({
                                 sessionId: String(session.id),
                                 paymentId: String(payment.paymentId),
                                 gateway: payment.gateway,
-                                requestBrief: customRequestBrief || description,
+                                requestBrief: fulfillmentBrief,
                                 amount: value,
                                 product: paymentProduct,
                                 orderId,
                                 paymentData: {
                                     description,
                                     product: paymentProduct,
+                                    sku: paymentSku,
+                                    amount_cents: authoritativeOrder.amountCents,
                                     order_id: orderId,
                                     idempotency_key: idempotencyKey,
                                 },
                             });
+                            if (!customOrderReady) {
+                                await supabase.from('messages').update({
+                                    payment_data: { ...persistedPaymentData, fulfillment_status: 'fulfillment_write_failed' },
+                                }).eq('id', paymentRecordWrite.data.id);
+                                throw new Error('custom_order_record_failed');
+                            }
                         }
                         const pendingOrder = {
                             ...authoritativeOrder,
@@ -3356,7 +3596,9 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                                 payment_id: payment.paymentId,
                                 gateway: payment.gateway,
                                 product: paymentProduct,
+                                sku: paymentSku,
                                 amount: value,
+                                amount_cents: authoritativeOrder.amountCents,
                                 description,
                             },
                         });
@@ -3365,6 +3607,11 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                             commercial: { currentOrder: pendingOrder },
                         });
                         paymentCreatedThisTurn = true;
+                        await sendTelegramMessage(botToken, chatId, `${description} por ${formatBrl(value)}. ta aqui o pix`);
+                        if (payment.gateway === 'pushinpay') {
+                            await sendTelegramMessage(botToken, chatId, "aviso rapidinho: a PushinPay so processa o pagamento, a entrega e suporte continuam comigo.");
+                        }
+                        await sendTelegramCopyableCode(botToken, chatId, payment.pixCopiaCola);
                     } else {
                         await sendTelegramMessage(botToken, chatId, "amor o sistema caiu aqui rapidinho, tenta daqui a pouco?");
                     }
@@ -3384,7 +3631,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         }
 
         if (!mediaUrl && MEDIA_ACTIONS.has(String(aiResponse.action || ''))) {
-            const registered = await getRegisteredPreview(undefined, sentMediaUrlsForSession, preferredPreviewTags, false);
+            const registered = await getRegisteredPreview(undefined, sentMediaUrlsForSession, preferredPreviewTags, true);
             if (registered?.media_url) {
                 mediaUrl = registered.media_url;
                 mediaType = registered.media_type || 'image';

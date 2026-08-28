@@ -58,7 +58,7 @@ for (const text of texts) {
             adultVerified,
             canGeneratePayment,
             canPitchPrice,
-            offer: { id: 'vip:19.90', value: 19.9, description: 'VIP Lari' },
+            offer: { id: 'vip_monthly', value: 29.9, description: 'VIP Mensal Lari' },
           });
           cases += 1;
           corrections += result.corrections.length;
@@ -92,9 +92,9 @@ const accepted = validateMasterBrainResponse({
   adultVerified: true,
   canGeneratePayment: true,
   canPitchPrice: true,
-  offer: { id: 'vip:19.90', value: 19.9, description: 'VIP Lari' },
+  offer: { id: 'vip_monthly', value: 29.9, description: 'VIP Mensal Lari' },
 });
 assert.equal(accepted.response.action, 'generate_pix_payment');
-assert.deepEqual(accepted.response.payment_details, { value: 19.9, description: 'VIP Lari' });
+assert.deepEqual(accepted.response.payment_details, { value: 29.9, description: 'VIP Mensal Lari' });
 
 console.log(`MASTER_BRAIN_EVAL_OK cases=${cases} corrections=${corrections} payment_gate=1 adult_gate=1 memory_truth=1 message_limit=1`);

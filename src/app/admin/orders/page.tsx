@@ -7,7 +7,7 @@ import { adminFetchJson } from "@/lib/adminApiClient";
 type Order = {
     id: string;
     created_at: string;
-    status: "awaiting_payment" | "paid" | "in_progress" | "delivered" | "cancelled";
+    status: "awaiting_payment" | "paid" | "paid_needs_manual_review" | "in_progress" | "delivered" | "cancelled";
     request_brief: string;
     amount: number;
     gateway?: string | null;
@@ -19,6 +19,7 @@ type Order = {
 const statusLabel: Record<Order["status"], string> = {
     awaiting_payment: "Aguardando PIX",
     paid: "Pago · precisa produzir",
+    paid_needs_manual_review: "Pago · revisar pacote",
     in_progress: "Em produção",
     delivered: "Entregue",
     cancelled: "Cancelado",
@@ -63,7 +64,7 @@ export default function CustomOrdersPage() {
     };
 
     const visible = useMemo(() => filter === "all" ? orders : orders.filter((order) => order.status === filter), [filter, orders]);
-    const paidOpen = orders.filter((order) => order.status === "paid" || order.status === "in_progress").length;
+    const paidOpen = orders.filter((order) => ["paid", "paid_needs_manual_review", "in_progress"].includes(order.status)).length;
 
     return (
         <div className="min-h-screen bg-[#080b10] text-slate-100">
@@ -83,7 +84,7 @@ export default function CustomOrdersPage() {
 
             <main className="mx-auto w-full max-w-6xl px-4 py-6">
                 <div className="mb-5 flex flex-wrap gap-2">
-                    {(["paid", "in_progress", "awaiting_payment", "delivered", "all"] as const).map((value) => (
+                    {(["paid", "paid_needs_manual_review", "in_progress", "awaiting_payment", "delivered", "all"] as const).map((value) => (
                         <button key={value} onClick={() => setFilter(value)} className={`rounded-xl px-3 py-2 text-xs font-semibold ${filter === value ? "bg-emerald-300 text-slate-950" : "border border-white/10 bg-white/[.035] text-slate-300"}`}>
                             {value === "all" ? "Todos" : statusLabel[value]}
                         </button>
@@ -109,6 +110,7 @@ export default function CustomOrdersPage() {
                                 <div className="mt-4 rounded-xl border border-white/8 bg-black/25 p-4 text-sm leading-6 text-slate-200">{order.request_brief}</div>
                                 <div className="mt-4 flex flex-wrap gap-2">
                                     {order.lead?.telegram_chat_id && <Link href={`/admin/chat/${order.lead.telegram_chat_id}`} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-200">Abrir conversa</Link>}
+                                    {order.status === "paid_needs_manual_review" && <button onClick={() => void update(order, "paid")} className="rounded-lg bg-sky-300 px-3 py-2 text-xs font-bold text-slate-950">Pacote revisado</button>}
                                     {order.status === "paid" && <button onClick={() => void update(order, "in_progress")} className="rounded-lg bg-amber-300 px-3 py-2 text-xs font-bold text-slate-950">Começar produção</button>}
                                     {order.status === "in_progress" && <button onClick={() => void update(order, "delivered")} className="rounded-lg bg-emerald-300 px-3 py-2 text-xs font-bold text-slate-950">Marcar entregue</button>}
                                 </div>

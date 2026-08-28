@@ -27,7 +27,24 @@ export const detectAdultDeclaration = (userText: string) => {
     return Number.isInteger(age) && age >= 18 && age <= 100;
 };
 
-const isExplicitMediaRequest = (userText: string) => /\b(nua|pelada|sem roupa|nude|nudes|explicita|expl[ií]cita|molhada|dedo|bunda|peito|seio|de quatro)\b/i.test(userText);
+export const confirmsAdultDeclarationPrompt = (userText: string, previousBotText: string) => {
+    if (detectAdultDeclaration(userText)) return true;
+    const pendingExplicitQuestion = /\bconfirma\b.{0,48}\b18 anos(?: ou mais)?\b|\btem\b.{0,18}\b18 anos(?: ou mais)?\b/i.test(previousBotText);
+    if (!pendingExplicitQuestion) return false;
+    const answer = normalize(userText).replace(/[.!?]+$/g, '').trim();
+    return /^(sim|sim eu tenho|tenho sim|confirmo|sou sim|claro|tenho|maior de idade)$/i.test(answer);
+};
+
+export const isExplicitSexualContext = (text: string) => {
+    const normalized = normalize(text);
+    const explicitTerm = /\b(nua|pelad\w*|sem roupa|nude|nudes|explicita|expl[ií]cita|molhad\w*|dedo|bunda|peito|seio|de quatro|sexo|sexual|putaria|lingerie|calcinha|sutia|suti[aã]|safad\w*|tes[aã]o|gostos[ao]|goz\w*|orgasm\w*|fud\w*|met\w*|chup\w*|buceta|vagina|pau|pinto|gemid\w*|masturb\w*|transar|transando|transou|enfi\w*)\b/iu;
+    const explicitPhrase = /\b(?:quero|vou|deixa(?: eu)?|posso)\s+(?:te\s+)?comer\b|\b(?:sentar|sento|sentando|sentada)\b.{0,24}\b(?:em (?:vc|voc[eê])|no seu|na sua|pau|pinto|rosto|cara)\b/iu;
+    return explicitTerm.test(normalized) || explicitPhrase.test(normalized);
+};
+const isExplicitMediaRequest = isExplicitSexualContext;
+const isAdultCommerceRequest = (text: string) => /\b(vip|chamada|videochamada|call|nude|conte[uú]do adulto|[aá]udio er[oó]tico|gemendo|pedido adulto)\b/i.test(text);
+const isMediaDeliveryRequest = (text: string) => /\b(?:manda|mande|mostra|envia|solta|quero ver|deixa ver)\b.{0,36}\b(?:foto|fotinha|selfie|previa|prévia|video|vídeo|nude|lingerie|uma)\b/i.test(text)
+    || /^\s*(?:foto|fotinha|selfie|previa|prévia|video|vídeo|nude)\s*[!?.]*\s*$/i.test(text);
 const isOnlyFreePreviewRequest = (userText: string) => {
     const asksPreview = /\b(previa|prévia|amostra|foto|fotinha|selfie|video|vídeo)\b/i.test(userText);
     const commercial = /\b(comprar|pagar|pix|pre[cç]o|valor|quanto|vip|pack|pacote|personalizad[oa])\b/i.test(userText);
@@ -113,15 +130,21 @@ export const validateMasterBrainResponse = ({
         corrections.push('preview_id_not_in_candidate_set');
     }
 
-    if (MEDIA_ACTIONS.has(String(response.action)) && isExplicitMediaRequest(userText) && !adultVerified) {
+    const responseText = response.messages.join(' ');
+    const requiresAdultVerification = !adultVerified && (
+        isExplicitSexualContext(userText)
+        || isExplicitSexualContext(responseText)
+        || isMediaDeliveryRequest(userText)
+        || MEDIA_ACTIONS.has(String(response.action))
+        || EXPLICIT_MEDIA_ACTIONS.has(String(response.action))
+        || (response.action === 'send_voice_reply' && (isExplicitSexualContext(userText) || isExplicitSexualContext(responseText)))
+        || (response.action === 'generate_pix_payment' && isAdultCommerceRequest(userText))
+    );
+
+    if (requiresAdultVerification) {
         response.action = 'none';
         response.preview_id = null;
-        response.next_best_action = 'ASK';
-        response.messages = ['antes de continuar, confirma pra mim que vc tem 18 anos ou mais?'];
-        corrections.push('adult_verification_required');
-    } else if (EXPLICIT_MEDIA_ACTIONS.has(String(response.action)) && !adultVerified) {
-        response.action = 'none';
-        response.preview_id = null;
+        response.payment_details = null;
         response.next_best_action = 'ASK';
         response.messages = ['antes de continuar, confirma pra mim que vc tem 18 anos ou mais?'];
         corrections.push('adult_verification_required');

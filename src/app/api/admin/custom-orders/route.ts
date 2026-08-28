@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 
-const STATUSES = ['awaiting_payment', 'paid', 'in_progress', 'delivered', 'cancelled'] as const;
+const STATUSES = ['awaiting_payment', 'paid', 'paid_needs_manual_review', 'in_progress', 'delivered', 'cancelled'] as const;
 
 export async function GET() {
     const { data: rows, error } = await supabase

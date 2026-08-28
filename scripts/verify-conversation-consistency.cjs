@@ -76,22 +76,25 @@ assert.equal(recovery.length, 1);
 assert.doesNotMatch(recovery[0], /me conta|me explica/i);
 assert.match(recovery[0], /vc (?:tem razão|já)|eu (?:me perdi|que respondi)/i);
 
-assert.deepEqual(quality.enforceLatestIntentMessages(['agora eu entendi'], {
-    latestUserText: 'como assinar moça?',
-    language: 'pt',
-}), ['o vip é 19,90. se quiser fechar, eu já gero o pix pra vc']);
 assert.deepEqual(quality.enforceLatestIntentMessages(['tá cego é?'], {
     latestUserText: 'não chegou foto nenhuma',
     language: 'pt',
 }), ['foi mal, vc tem razão: não tinha chegado']);
 assert.equal(quality.detectConversationLanguage('Can you show me more please?'), 'en');
 assert.equal(quality.detectConversationLanguage('como faço pra assinar?'), 'pt');
-assert.equal(quality.refineNewRelationshipMessages(['oiii, tudo bem?'], {
+assert.deepEqual(quality.enforceLatestIntentMessages(['agora eu entendi'], {
+    latestUserText: 'como assinar moça?',
+    language: 'pt',
+}), ['te mostro as três opções do VIP pra vc escolher certinho']);
+const firstOpening = quality.refineNewRelationshipMessages(['oiii, tudo bem?'], {
     userText: '/start',
     isConversationStart: true,
     hasKnownName: false,
     variationKey: 'lead-123',
-}).length, 1);
+});
+assert.equal(firstOpening.length, 2);
+assert.match(firstOpening[0], /^(oi|eii)/i);
+assert.match(firstOpening[1], /nome|cham/i);
 
 assert.equal(prompts.needsLariReview({
     relationshipStage: 'familiar',
