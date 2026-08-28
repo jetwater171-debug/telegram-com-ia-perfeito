@@ -31,11 +31,11 @@ assert.deepEqual([...models.GEMINI_MODEL_OPTIONS], [
     'gemini-3.5-flash-lite',
 ]);
 assert.ok(!models.OPENROUTER_MODEL_FALLBACK_ORDER.includes('openrouter/free'));
-assert.ok(models.OPENROUTER_MODEL_FALLBACK_ORDER.includes('openai/gpt-4o-mini'));
+assert.deepEqual([...models.OPENROUTER_MODEL_FALLBACK_ORDER], ['deepseek/deepseek-chat']);
 
 const geminiSource = fs.readFileSync(path.resolve(__dirname, '../src/lib/gemini.ts'), 'utf8');
 assert.match(geminiSource, /gateways\.map\(\(gateway, priority\)/);
 assert.match(geminiSource, /DEFAULT_GEMINI_MODEL,[\s\S]*DEFAULT_GEMINI_FALLBACK_MODEL,[\s\S]*'gemini-3\.5-flash',[\s\S]*DEFAULT_GEMINI_LITE_MODEL/);
 assert.match(geminiSource, /priority,/);
 
-console.log('GEMINI_MODEL_ROUTING_OK first=gemini-3.7-flash second=gemini-3.6-flash third=gemini-3.5-flash capacity=gemini-3.5-flash-lite openrouter_free=removed');
+console.log('GEMINI_MODEL_ROUTING_OK first=gemini-3.7-flash second=gemini-3.6-flash third=gemini-3.5-flash capacity=gemini-3.5-flash-lite openrouter=deepseek-chat');

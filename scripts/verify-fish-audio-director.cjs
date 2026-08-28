@@ -127,12 +127,13 @@ const fakeDeepSeek = async (url, init) => {
     }
 
     const processSource = fs.readFileSync(path.resolve(__dirname, '../src/app/api/process-message/route.ts'), 'utf8');
-    assert.match(processSource, /prepareFishAudioScript/);
+    assert.doesNotMatch(processSource, /prepareFishAudioScript/);
+    assert.match(processSource, /prepareElevenLabsScript/);
     assert.match(processSource, /content:\s*preparedAudio\.script\.spokenText/);
     assert.match(processSource, /bai_api_key/);
     assert.match(processSource, /mode: userWantsAudio \? 'requested_audio' : 'voice_render'/);
 
-    console.log('FISH_AUDIO_DIRECTOR_OK deepseek=1 requested_audio_author=1 exact_transcript=1 chat_laugh_removed=1 quality_guard=1 opus_validation=1');
+    console.log('FISH_AUDIO_DIRECTOR_OK legacy_module=1 elevenlabs_runtime=1 requested_audio_author=1 exact_transcript=1 chat_laugh_removed=1 quality_guard=1 opus_validation=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

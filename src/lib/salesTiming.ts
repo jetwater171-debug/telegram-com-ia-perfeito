@@ -495,6 +495,23 @@ const createOfferPlan = ({
 
 const isEngagedContinuation = (text: string) => /\b(imagina|queria|gostaria|tesao|gozar|comer|chupar|meter|safad|gostos|delicia|mostra|fazer comigo|como seria|eu ia|eu quero)\b/i.test(normalize(text));
 
+const isOrganicVipDesireSignal = (text: string) => {
+    const value = normalize(text);
+    return isEngagedContinuation(value)
+        || /\b(?:foto|fotinha|previa|conteudo|video|audio|voz|nude|pelada|sem roupa|te ver|ver voce|ver vc|curioso|provoca|provocante|linda|gata|sexy)\b/i.test(value);
+};
+
+const isWarmBridgeContinuation = (text: string) => {
+    const value = normalize(text).replace(/[.!?]+$/g, '').trim();
+    return isOrganicVipDesireSignal(value)
+        || /^(?:sim|quero|quero sim|pode|pode sim|manda|mostra|gostei|curti|amei|continua|mais|bora|claro|com certeza)\b/i.test(value);
+};
+
+const isBotDesireBridge = (text: string) => {
+    const value = normalize(text);
+    return /\b(?:provoc|vontade|imagina|curioso|arrepi|safad|tesao|foto|previa|te mostrar|quero ver sua reacao|sem controle)\b/i.test(value);
+};
+
 const rejectsVipNow = (text: string) => {
     const value = normalize(text);
     return /\b(?:nao quero|nao tenho interesse|sem)\b.{0,24}\b(?:vip|acesso)\b/i.test(value)
@@ -590,12 +607,29 @@ export const evaluateSalesTiming = ({
         Number(leadMemory?.metadata?.vip_journey_turns || 0),
         observedJourneyTurns + currentJourneyIncrement,
     ));
+    const leadDesireTurns = episodeUserMessages
+        .map((message) => String(message.content || ''))
+        .filter(isOrganicVipDesireSignal)
+        .length + (!currentObserved && isOrganicVipDesireSignal(userText) ? 1 : 0);
+    const botDesireTurns = recentMessages.filter((message) => {
+        if (String(message.sender || '') !== 'bot' || !isBotDesireBridge(String(message.content || ''))) return false;
+        if (!Number.isFinite(conversationStartedAt)) return true;
+        const createdAt = Date.parse(String(message.created_at || ''));
+        return Number.isFinite(createdAt) && createdAt >= conversationStartedAt;
+    }).length;
+    // Quantidade de mensagens sozinha não prova prontidão. A ponte só existe
+    // quando já houve conversa suficiente e o lead participou do clima em mais
+    // de um momento, ou respondeu positivamente a uma provocação da própria Lari.
+    const organicVipBridge = vipJourneyTurns >= 4 && (
+        leadDesireTurns >= 2
+        || (leadDesireTurns >= 1 && botDesireTurns >= 1 && isWarmBridgeContinuation(userText))
+    );
     const recentVipOffer = hasRecentVipOffer(recentMessages, now);
     const proactiveVipOffer = totalPaid <= 0
         && !vipRejected
         && !detectedProduct
         && !storedActiveOrder
-        && vipJourneyTurns >= 3
+        && organicVipBridge
         && !recentVipOffer
         && !blocksProactiveVip(userText);
     const activeProduct = detectedProduct
@@ -676,8 +710,8 @@ export const evaluateSalesTiming = ({
         : vipRejected ? 'rejected'
             : requiresSkuSelection ? 'selection'
                 : proactiveVipOffer || recentVipOffer ? 'offer'
-                    : vipJourneyTurns >= 2 ? 'desire'
-                        : vipJourneyTurns >= 1 ? 'connection'
+                    : leadDesireTurns > 0 ? 'desire'
+                        : vipJourneyTurns >= 2 ? 'connection'
                             : 'discovery';
     const mustPresentVipMenu = requiresSkuSelection && (isVipMenuRequest(userText)
         || detectedProduct === 'vip'
@@ -693,6 +727,7 @@ export const evaluateSalesTiming = ({
         acquisitionGoal: totalPaid <= 0 && !vipRejected ? 'vip_monthly' as const : null,
         vipJourneyStage,
         vipJourneyTurns,
+        organicVipBridge,
         proactiveVipOffer,
         requiresSkuSelection,
         mustPresentVipMenu,
@@ -732,6 +767,17 @@ export const evaluateSalesTiming = ({
 
 const isCheckoutMessage = (message: string) => /\b(pix|chave pix|codigo pix|copia e cola|vou gerar|gerar seu|mandar o pix|pagar|pagamento)\b/i.test(normalize(message));
 const isPricePitchMessage = (message: string) => /r\$\s*\d|\b(?:fica|custa|valor|preco|por)\s+(?:r\$\s*)?\d{1,3}(?:[,.]\d{2})?\b|\bchama no privado\b/i.test(normalize(message));
+const isVipPitchMessage = (message: string) => {
+    const value = normalize(message);
+    return /\bvip\b/i.test(value)
+        && /\b(?:mensal|vitalicio|combo|acesso|assina|assinar|conteudo exclusivo|meu conteudo|entrar|liberar)\b/i.test(value);
+};
+const isPrematureCommercialMessage = (message: string) => {
+    const value = normalize(message);
+    const explicitPrice = /r\$\s*\d/i.test(value)
+        || /\b(?:fica|custa|valor|preco)\s+(?:r\$\s*)?\d{1,3}(?:[,.]\d{2})?\b/i.test(value);
+    return explicitPrice || isVipPitchMessage(value);
+};
 
 const deterministicPick = (items: string[], seed: string) => {
     let hash = 2166136261;
@@ -814,8 +860,9 @@ export const guardPrematureSaleMessages = ({
     let safe = (messages || [])
         .map((message) => String(message || '').trim())
         .filter(Boolean)
-        .filter((message) => canGeneratePayment || !isCheckoutMessage(message));
+        .filter((message) => canGeneratePayment || !isCheckoutMessage(message))
+        .filter((message) => canPitchPrice || !isPrematureCommercialMessage(message));
 
-    if (safe.length === 0) safe = productWarmup(product, normalize(userText)).slice(0, 2);
+    if (safe.length === 0 && product) safe = productWarmup(product, normalize(userText)).slice(0, 2);
     return safe.slice(0, 3);
 };

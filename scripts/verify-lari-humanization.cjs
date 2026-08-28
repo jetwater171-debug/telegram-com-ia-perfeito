@@ -22,6 +22,8 @@ const quality = loadPureTypeScriptModule('../src/lib/conversationQuality.ts');
 const bubbles = loadPureTypeScriptModule('../src/lib/conversationBubbles.ts');
 const orchestration = loadPureTypeScriptModule('../src/lib/aiOrchestration.ts');
 const models = loadPureTypeScriptModule('../src/lib/aiModels.ts');
+const timing = loadPureTypeScriptModule('../src/lib/humanDeliveryTiming.ts');
+const adult = loadPureTypeScriptModule('../src/lib/adultVerification.ts');
 
 const core = prompts.buildLariCorePrompt({
     localTime: '00:21',
@@ -105,12 +107,44 @@ assert.equal(orchestration.shouldRunAiReview(starter, false), false);
 assert.equal(models.normalizeGeminiModelName('gemini-3.5-flash'), 'gemini-3.5-flash');
 assert.equal(models.normalizeGroqModelName('llama-3.1-8b-instant'), 'openai/gpt-oss-20b');
 
+const firstBubbleDelay = timing.humanTextDelayMs({
+    text: 'legal te conhecer, leo',
+    bubbleIndex: 0,
+    random: () => 0,
+});
+const secondBubbleDelay = timing.humanTextDelayMs({
+    text: 'o que vc gosta de fazer quando ta de boa?',
+    bubbleIndex: 1,
+    random: () => 0,
+});
+const slowModelFirstBubbleDelay = timing.humanTextDelayMs({
+    text: 'oi',
+    bubbleIndex: 0,
+    modelDurationMs: 9_000,
+    random: () => 0,
+});
+assert.ok(firstBubbleDelay >= 900);
+assert.ok(secondBubbleDelay >= 1_700);
+assert.ok(secondBubbleDelay > firstBubbleDelay);
+assert.equal(slowModelFirstBubbleDelay, 850);
+assert.ok(timing.humanTextDelayMs({ text: 'x'.repeat(500), bubbleIndex: 2, random: () => 1 }) <= 5_200);
+
+assert.equal(adult.isPresellAdultVerificationGuaranteed(undefined), true);
+assert.equal(adult.isPresellAdultVerificationGuaranteed('false'), false);
+const verifiedByPresell = adult.withPresellAdultVerification({}, '2026-08-28T12:00:00.000Z');
+assert.equal(verifiedByPresell.adult_verified, true);
+assert.equal(verifiedByPresell.adult_verification_source, 'presell_entry_contract');
+assert.equal(adult.hasTrustedAdultVerification(verifiedByPresell), true);
+
 const geminiSource = fs.readFileSync(path.resolve(__dirname, '../src/lib/gemini.ts'), 'utf8');
 const routeSource = fs.readFileSync(path.resolve(__dirname, '../src/app/api/process-message/route.ts'), 'utf8');
 assert.match(geminiSource, /extractLeadTextFromPrompt/);
 assert.match(geminiSource, /needsLariReview/);
 assert.doesNotMatch(geminiSource, /const useSeparateReviewCall = false/);
 assert.match(routeSource, /isEarlyConversationEpisode/);
+assert.match(routeSource, /const DEBOUNCE_WAIT_MS = 4000/);
+assert.match(routeSource, /humanTextDelayMs\(\{/);
+assert.doesNotMatch(routeSource, /modelDurationMs >= 8_000\s*\?\s*150/);
 assert.match(routeSource, /preferredCount: aiResponse\.recommended_message_count \|\| 2/);
 assert.doesNotMatch(routeSource, /amor já te mandei várias prévias|calma amor, assim vc me deixa sem fôlego/);
 

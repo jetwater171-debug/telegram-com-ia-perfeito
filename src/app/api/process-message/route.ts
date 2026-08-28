@@ -106,6 +106,8 @@ import { confirmsAdultDeclarationPrompt, isExplicitSexualContext, validateMaster
 import { applyPreviewBanditRanking, recordPreviewReactionSafe, recordPreviewSentSafe } from '@/lib/brain/previewBandit';
 import { trackLeadResponseOutcomesSafe } from '@/lib/brain/outcomeTracker';
 import { markSessionSalesOrderPaidSafe, recordCustomOrderSafe } from '@/lib/customOrders';
+import { isTrustedAdultVerificationSource } from '@/lib/adultVerification';
+import { humanAudioRecordingDelayMs, humanTextDelayMs } from '@/lib/humanDeliveryTiming';
 
 export const maxDuration = 120;
 
@@ -149,34 +151,6 @@ const stablePercent = (value: string) => {
         hash = Math.imul(hash, 16777619);
     }
     return (hash >>> 0) % 100;
-};
-
-const humanTextDelayMs = (text: string, bubbleIndex: number) => {
-    const raw = String(text || '').trim();
-    const length = raw.length;
-    const wordCount = raw.split(/\s+/).filter(Boolean).length;
-
-    // Digitação ágil e natural no celular, sem disparar todos os balões juntos.
-    const typingTimeMs = (length * 22) + (wordCount * 45) + randomBetween(120, 320);
-
-    if (bubbleIndex === 0) {
-        // Primeiro balão: a chamada de IA já funciona como a pausa de leitura.
-        // Digitação rápida para responder quase de imediato.
-        return Math.min(1_900, Math.max(350, typingTimeMs));
-    }
-
-    // Balões seguintes: intervalo curto e natural entre mensagens digitadas em sequência
-    const gapBetweenBubblesMs = randomBetween(650, 1_100);
-    const total = gapBetweenBubblesMs + typingTimeMs;
-    return Math.min(3_200, Math.max(950, total));
-};
-
-const humanAudioRecordingDelayMs = (text: string) => {
-    const raw = String(text || '').trim();
-    const wordCount = raw.split(/\s+/).filter(Boolean).length;
-    // Tempo de gravação de áudio ágil e realista
-    const recordingTimeMs = 1_000 + (wordCount * 180) + randomBetween(200, 500);
-    return Math.min(5_500, Math.max(1_200, recordingTimeMs));
 };
 
 const detectCityFromText = (input: string): string | null => {
@@ -997,11 +971,11 @@ export async function POST(req: NextRequest) {
         }
     };
 
-    // Mensagens normais recebem 1.8s; uma frase claramente interrompida ganha
-    // uma janela maior para o lead terminá-la antes de qualquer IA responder.
+    // A janela reinicia naturalmente no worker da mensagem mais nova. Assim a
+    // Lari chama a IA uma vez só depois de quatro segundos reais de silêncio.
     // Se o lead mandar mais uma mensagem enquanto espera, este worker aborta e passa o bastão para a mais nova.
-    const DEBOUNCE_WAIT_MS = 1800;
-    const INCOMPLETE_TURN_WAIT_MS = 4200;
+    const DEBOUNCE_WAIT_MS = 4000;
+    const INCOMPLETE_TURN_WAIT_MS = 6500;
     const pollIntervalMs = 300;
     let waited = 0;
     let debounceWaitMs = DEBOUNCE_WAIT_MS;
@@ -1452,6 +1426,11 @@ export async function POST(req: NextRequest) {
         salesTiming.acquisitionGoal
             ? '- OBJETIVO PRINCIPAL ENQUANTO NAO HOUVER COMPRA: criar conexão, desejo e uma ponte natural para o VIP mensal. Não faça pitch no primeiro oi nem pressione vulnerabilidade.'
             : '- O lead já comprou ou recusou VIP. Não force uma nova oferta; responda ao pedido atual e respeite o histórico.',
+        salesTiming.proactiveVipOffer
+            ? '- PONTE VIP PRONTA: o lead já participou do clima. Responda ao que ele disse, conecte o benefício ao desejo e apresente o mensal com naturalidade neste turno.'
+            : salesTiming.activeProduct
+                ? '- O próprio lead abriu um desejo comercial. Trate exatamente esse pedido, sem trocar por outro produto.'
+                : '- SEM PONTE COMERCIAL AINDA: não mencione VIP, preço, assinatura, plano ou PIX neste turno. Continue o assunto, crie conexão e deixe um gancho natural.',
         `- Desejo pago ativo: ${salesTiming.activeProduct || 'ainda nao identificado'}.`,
         `- Aquecimento neste desejo: ${salesTiming.nurtureTurns} turno(s).`,
         `- Pode apresentar preco agora: ${salesTiming.canPitchPrice ? 'sim' : 'nao'}.`,
@@ -1501,7 +1480,7 @@ export async function POST(req: NextRequest) {
     const adultVerificationSource = String(leadMemory.metadata?.adult_verification_source || '');
     const trustedAdultVerification = adultDeclaredNow || (
         leadMemory.metadata?.adult_verified === true
-        && ['lead_self_declaration', 'presell_explicit_confirmation'].includes(adultVerificationSource)
+        && isTrustedAdultVerificationSource(adultVerificationSource)
     );
     if (brainRuntime.reality.adultVerified !== trustedAdultVerification) {
         brainRuntime.reality.adultVerified = trustedAdultVerification;
@@ -1788,26 +1767,26 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         action: aiResponse.action,
         state: aiResponse.current_state,
     });
-    if (salesTiming.salesContextActive || aiResponse.action === 'generate_pix_payment') {
-        const attemptedPrematurePayment = aiResponse.action === 'generate_pix_payment' && !salesTiming.canGeneratePayment;
-        if (attemptedPrematurePayment) {
-            console.log('[VENDA] PIX prematuro bloqueado', {
-                product: salesTiming.activeProduct,
-                nurtureTurns: salesTiming.nurtureTurns,
-                recentOffer: salesTiming.recentOffer,
-            });
-            aiResponse.action = 'none';
-            aiResponse.payment_details = null;
-            aiResponse.current_state = salesTiming.canPitchPrice ? 'SALES_PITCH' : 'HOT_TALK';
-        }
-        aiResponse.messages = guardPrematureSaleMessages({
-            messages: Array.isArray(aiResponse.messages) ? aiResponse.messages : [],
+    const attemptedPrematurePayment = aiResponse.action === 'generate_pix_payment' && !salesTiming.canGeneratePayment;
+    if (attemptedPrematurePayment) {
+        console.log('[VENDA] PIX prematuro bloqueado', {
             product: salesTiming.activeProduct,
-            canPitchPrice: salesTiming.canPitchPrice,
-            canGeneratePayment: salesTiming.canGeneratePayment,
-            userText: userOnlyText,
+            nurtureTurns: salesTiming.nurtureTurns,
+            recentOffer: salesTiming.recentOffer,
         });
+        aiResponse.action = 'none';
+        aiResponse.payment_details = null;
+        aiResponse.current_state = salesTiming.canPitchPrice ? 'SALES_PITCH' : 'HOT_TALK';
     }
+    // Roda em todo turno: mesmo sem contexto comercial, uma saída defeituosa do
+    // modelo nunca pode transformar apresentação ou conversa neutra em anúncio.
+    aiResponse.messages = guardPrematureSaleMessages({
+        messages: Array.isArray(aiResponse.messages) ? aiResponse.messages : [],
+        product: salesTiming.activeProduct,
+        canPitchPrice: salesTiming.canPitchPrice,
+        canGeneratePayment: salesTiming.canGeneratePayment,
+        userText: userOnlyText,
+    });
     if (requestedPaidEroticAudio && !paidEroticAudioEntitled) {
         const price = Number(offerPlan?.value || 14.90).toFixed(2).replace('.', ',');
         aiResponse.action = 'none';
@@ -2747,10 +2726,10 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     };
 
     const sendDeferredMediaReaction = async () => {
-        for (const message of deferredMediaMessages) {
+        for (const [index, message] of deferredMediaMessages.entries()) {
             if (await findNewerUserMessage()) return;
 
-            await waitWithChatAction('typing', humanTextDelayMs(message, 1));
+            await waitWithChatAction('typing', humanTextDelayMs({ text: message, bubbleIndex: index + 1 }));
             if (await findNewerUserMessage()) return;
             await sendTelegramMessage(botToken, chatId, message);
             await insertGeneratedMessage({
@@ -3048,9 +3027,11 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         }
 
         const modelDurationMs = Number(aiResponse.ai_debug?.duration_ms || 0);
-        const messageDelayMs = i === 0 && modelDurationMs >= 8_000
-            ? 150
-            : humanTextDelayMs(textToSend, i);
+        const messageDelayMs = humanTextDelayMs({
+            text: textToSend,
+            bubbleIndex: i,
+            modelDurationMs,
+        });
         await waitWithChatAction('typing', messageDelayMs);
         const interruptedDuringTyping = await findNewerUserMessage();
         if (interruptedDuringTyping) {

@@ -2,6 +2,13 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { approveChatJoinRequest } from '@/lib/telegram';
 import { appendLeadEventSafe, markAdultVerificationSafe } from '@/lib/brain/eventStore';
+import {
+    hasTrustedAdultVerification,
+    isPresellAdultVerificationGuaranteed,
+    isTrustedAdultVerificationSource,
+    PRESELL_ADULT_VERIFICATION_SOURCE,
+    withPresellAdultVerification,
+} from '@/lib/adultVerification';
 
 const parseStartPayload = (text: string | undefined) => {
     const match = (text || '').trim().match(/^\/?start(?:\s+(.+))?$/i);
@@ -156,6 +163,7 @@ export async function POST(req: NextRequest) {
     let senderName = message.from.first_name || "Desconhecido";
     const startPayload = parseStartPayload(text);
     const leadRedirectCode = startPayload && startPayload.startsWith('l_') ? startPayload : '';
+    const presellAdultVerified = isPresellAdultVerificationGuaranteed();
 
     // CHECK FOR OP KAIQUE
     if (text && (
@@ -200,13 +208,12 @@ export async function POST(req: NextRequest) {
                     device_type: "Unknown",
                     user_name: senderName,
                     status: 'active',
-                    // Abrir o Telegram ou possuir um chat id não comprova idade.
-                    // A confirmação só é persistida depois de evidência explícita.
                     lead_memory: {
-                        metadata: {
-                            adult_verified: false,
-                            adult_verification_source: 'unverified',
-                        },
+                        // O funil confirma 18+ antes de abrir o bot. A origem fica
+                        // explícita para o worker não pedir a mesma confirmação.
+                        metadata: presellAdultVerified
+                            ? withPresellAdultVerification({}, new Date().toISOString())
+                            : { adult_verified: false, adult_verification_source: 'unverified' },
                         updated_at: new Date().toISOString(),
                     },
                 }])
@@ -218,6 +225,39 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ error: 'DB Error' }, { status: 500 });
             }
             session = newSession;
+        }
+
+        // Também cura sessões criadas antes deste contrato. O switch de ambiente
+        // permite reativar a confirmação no chat se o funil de entrada mudar.
+        if (presellAdultVerified) {
+            const currentMemory = normalizeLeadMemory(session.lead_memory);
+            const alreadyTrusted = hasTrustedAdultVerification(currentMemory.metadata);
+            if (!alreadyTrusted) {
+                const adultVerifiedAt = new Date().toISOString();
+                const updatedMemory = {
+                    ...currentMemory,
+                    metadata: withPresellAdultVerification(currentMemory.metadata, adultVerifiedAt),
+                    updated_at: adultVerifiedAt,
+                };
+                const { error: verificationPatchError } = await supabase
+                    .from('sessions')
+                    .update({ lead_memory: updatedMemory })
+                    .eq('id', session.id);
+                if (!verificationPatchError) {
+                    session = { ...session, lead_memory: updatedMemory };
+                    await Promise.all([
+                        markAdultVerificationSafe(String(session.id), adultVerifiedAt),
+                        appendLeadEventSafe({
+                            sessionId: String(session.id),
+                            eventType: 'adult_verified',
+                            source: 'presell',
+                            sourceId: `presell-contract:${session.id}`,
+                            payload: { method: PRESELL_ADULT_VERIFICATION_SOURCE },
+                            occurredAt: adultVerifiedAt,
+                        }),
+                    ]);
+                }
+            }
         }
 
         if (leadRedirectCode) {
@@ -234,8 +274,9 @@ export async function POST(req: NextRequest) {
                 const currentMemory = normalizeLeadMemory(session.lead_memory);
                 const priorAdultSource = String(currentMemory.metadata?.adult_verification_source || '');
                 const priorTrustedAdultVerification = currentMemory.metadata?.adult_verified === true
-                    && ['lead_self_declaration', 'presell_explicit_confirmation'].includes(priorAdultSource);
-                const adultVerified = redirectAdultConfirmed || priorTrustedAdultVerification;
+                    && isTrustedAdultVerificationSource(priorAdultSource);
+                const redirectCoveredByPresellContract = presellAdultVerified && Boolean(redirectRow);
+                const adultVerified = redirectAdultConfirmed || redirectCoveredByPresellContract || priorTrustedAdultVerification;
                 const sourceBits = [
                     redirectRow.utm?.utm_source ? `origem ${redirectRow.utm.utm_source}` : '',
                     redirectRow.utm?.utm_campaign ? `campanha ${redirectRow.utm.utm_campaign}` : '',
@@ -267,8 +308,9 @@ export async function POST(req: NextRequest) {
                         adult_verified: adultVerified,
                         adult_verification_source: redirectAdultConfirmed
                             ? 'presell_explicit_confirmation'
+                            : redirectCoveredByPresellContract ? PRESELL_ADULT_VERIFICATION_SOURCE
                             : priorTrustedAdultVerification ? priorAdultSource : 'unverified',
-                        ...(redirectAdultConfirmed ? {
+                        ...(redirectAdultConfirmed || redirectCoveredByPresellContract ? {
                             adult_verified_at: redirectRow.clicked_at || redirectRow.created_at || new Date().toISOString(),
                         } : priorTrustedAdultVerification && currentMemory.metadata?.adult_verified_at ? {
                             adult_verified_at: currentMemory.metadata.adult_verified_at,
@@ -293,7 +335,7 @@ export async function POST(req: NextRequest) {
                     session = { ...session, ...sessionPatch };
                 }
 
-                if (redirectAdultConfirmed) {
+                if (redirectAdultConfirmed || redirectCoveredByPresellContract) {
                     const adultVerifiedAt = redirectRow.clicked_at || redirectRow.created_at || new Date().toISOString();
                     await Promise.all([
                         markAdultVerificationSafe(String(session.id), adultVerifiedAt),
@@ -302,7 +344,12 @@ export async function POST(req: NextRequest) {
                             eventType: 'adult_verified',
                             source: 'presell',
                             sourceId: `presell:${leadRedirectCode}`,
-                            payload: { method: 'presell_explicit_confirmation', redirect_code: leadRedirectCode },
+                            payload: {
+                                method: redirectAdultConfirmed
+                                    ? 'presell_explicit_confirmation'
+                                    : PRESELL_ADULT_VERIFICATION_SOURCE,
+                                redirect_code: leadRedirectCode,
+                            },
                             occurredAt: adultVerifiedAt,
                         }),
                     ]);

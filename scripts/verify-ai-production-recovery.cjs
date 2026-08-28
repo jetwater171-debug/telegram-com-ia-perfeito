@@ -111,7 +111,8 @@ const loadPureTypeScriptModule = (relativePath) => {
     assert.match(worker, /const receivedStartCommand = Boolean\(conversationStartAt\)/);
     assert.match(worker, /const isConversationStart = receivedStartCommand && !lastBotMsg/);
     assert.match(worker, /RETOMADA DE CONVERSA/);
-    assert.match(worker, /const isReturningGreeting = Boolean\(lastBotMsg\)/);
+    assert.match(worker, /const isActualFirstRelationshipTurn = !lastBotMsg/);
+    assert.doesNotMatch(worker, /const isReturningGreeting = Boolean\(lastBotMsg\)/);
     assert.doesNotMatch(worker, /isFirstContact: \/\^\\\/start/);
 
     console.log('AI_PRODUCTION_RECOVERY_OK normalize=1 contextual_recovery=1 debug=1 first_contact=1 retry=1 structured_json=1 models=1 webhook=1 vision=1');

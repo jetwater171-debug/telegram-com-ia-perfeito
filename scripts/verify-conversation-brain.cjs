@@ -50,8 +50,9 @@ const firstOpening = refineNewRelationshipMessages(
     ['Oi, tudo bem?', 'Como tá o seu dia, amor?', 'kkk'],
     { userText: '/start', lastBotContent: '', hasKnownName: false, isConversationStart: true },
 );
-assert.equal(firstOpening.length, 1);
-assert.match(firstOpening[0], /(?:nome|chamar|se chama)/i);
+assert.equal(firstOpening.length, 2);
+assert.match(firstOpening[0], /(?:oi|eii)/i);
+assert.match(firstOpening[1], /(?:nome|chamar|se chama)/i);
 
 const corePrompt = buildLariCorePrompt({
     localTime: '21:30', localPeriod: 'noite', city: 'São Paulo', deviceType: 'Android', totalPaid: 0,
@@ -62,7 +63,12 @@ assert.match(corePrompt, /INTELIGÊNCIA SOCIAL POR TRÁS DA LARI/);
 assert.match(corePrompt, /revisão silenciosa/i);
 assert.doesNotMatch(corePrompt, /Churrasco \/ Picanha|MULTIMODALIDADE CONTÍNUA|mande fotos com frequência/i);
 assert.equal(needsLariReview({ relationshipStage: 'new', messages: ['oi amor'] }), true);
-assert.equal(needsLariReview({ relationshipStage: 'familiar', messages: ['entendi seu ponto'], strategyConfidence: 0.9 }), false);
+assert.equal(needsLariReview({
+    relationshipStage: 'familiar',
+    userText: 'fiz churrasco hoje',
+    messages: ['aí sim kkk ficou bom?', 'qual corte vc fez?'],
+    strategyConfidence: 0.9,
+}), false);
 
 const eightyMessages = Array.from({ length: 80 }, (_, index) => ({
     sender: index % 2 === 0 ? 'user' : 'bot',
@@ -76,7 +82,7 @@ assert.match(cleanHistory.at(-1).parts[0].text, /mensagem 80/);
 const geminiSource = fs.readFileSync(path.resolve(__dirname, '../src/lib/gemini.ts'), 'utf8');
 const processSource = fs.readFileSync(path.resolve(__dirname, '../src/app/api/process-message/route.ts'), 'utf8');
 assert.match(geminiSource, /buildLariCorePrompt/);
-assert.match(geminiSource, /buildLariStrategyPrompt/);
+assert.doesNotMatch(geminiSource, /buildLariStrategyPrompt/);
 assert.match(geminiSource, /buildLariDraftPrompt/);
 assert.match(geminiSource, /buildLariReviewPrompt/);
 assert.doesNotMatch(geminiSource, /const useSeparateReviewCall = false/);
@@ -90,4 +96,4 @@ assert.match(processSource, /const isConversationStart = receivedStartCommand &&
 assert.match(processSource, /RETOMADA DE CONVERSA/);
 assert.match(processSource, /const isActualFirstRelationshipTurn = !lastBotMsg/);
 
-console.log('CONVERSATION_BRAIN_OK history=80 separate_brain=1 episode_reset=1 first_contact=1 persona=1 self_review=1');
+console.log('CONVERSATION_BRAIN_OK history=80 single_draft=1 adaptive_review=1 episode_reset=1 first_contact=1 persona=1');

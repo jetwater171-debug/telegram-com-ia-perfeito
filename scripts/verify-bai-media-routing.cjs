@@ -11,7 +11,7 @@ const adminPage = read('src/app/admin/ai/page.tsx');
 assert.match(models, /DEFAULT_BAI_MODEL\s*=\s*["']deepseek-v4-flash-vision-exp["']/);
 assert.match(models, /["']deepseek-v4-flash["']:\s*DEFAULT_BAI_MODEL/);
 assert.match(gemini, /type AiProvider = [^\n]*["']bai["']/);
-assert.match(gemini, /DEFAULT_PROVIDER_ORDER\s*=\s*["']bai,gemini,/);
+assert.match(gemini, /DEFAULT_PROVIDER_ORDER\s*=\s*["']bai,openrouter,/);
 assert.match(gemini, /provider:\s*["']bai["']/);
 assert.match(gemini, /https:\/\/api\.b\.ai\/v1/);
 assert.match(gemini, /const hasMedia = Boolean\(mediaMimeType\)/);
@@ -27,4 +27,4 @@ assert.match(adminApi, /reasoning_effort:\s*["']low["']/);
 assert.match(adminPage, /B\.AI · DeepSeek V4 Flash/);
 assert.match(adminPage, /DeepSeek V4 Flash Vision no texto e exclusivamente nas fotos/);
 
-console.log('BAI_MEDIA_ROUTING_OK text_primary=bai model=deepseek-v4-flash-vision-exp image_exclusive=bai text_recovery=1 panel=ready strict_json_test=1');
+console.log('BAI_MEDIA_ROUTING_OK text_primary=bai openrouter_fallback=1 model=deepseek-v4-flash-vision-exp image_exclusive=bai text_recovery=1 panel=ready strict_json_test=1');

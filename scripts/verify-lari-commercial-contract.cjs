@@ -70,6 +70,7 @@ const {
   detectPaidProduct,
   evaluateSalesTiming,
   extractExplicitBudget,
+  guardPrematureSaleMessages,
 } = sales;
 const { confirmsAdultDeclarationPrompt, detectAdultDeclaration, validateMasterBrainResponse } = validator;
 
@@ -109,6 +110,79 @@ for (const text of ['quero o VIP', 'quanto custa o VIP?', 'quero VIP manda o PIX
   assert.equal(result.offerPlan, null, text);
   assert.equal(result.canGeneratePayment, false, text);
 }
+
+// O diálogo real que motivou a correção: respostas de apresentação não podem
+// somar um contador e transformar o turno seguinte em anúncio automático.
+const screenshotConversation = [
+  { sender: 'user', content: '/start', created_at: '2026-08-28T11:55:00.000Z' },
+  { sender: 'bot', content: 'oii, como vc tá?', created_at: '2026-08-28T11:55:10.000Z' },
+  { sender: 'bot', content: 'como é seu nome?', created_at: '2026-08-28T11:55:13.000Z' },
+  { sender: 'user', content: 'to bem e voce', created_at: '2026-08-28T11:56:00.000Z' },
+  { sender: 'user', content: 'me chamo leo', created_at: '2026-08-28T11:56:02.000Z' },
+];
+const prematureScreenshotOffer = evaluateSalesTiming({
+  userText: 'me chamo leo',
+  now,
+  recentMessages: screenshotConversation,
+  leadMemory: { metadata: { conversation_started_at: '2026-08-28T11:55:00.000Z' } },
+});
+assert.equal(prematureScreenshotOffer.proactiveVipOffer, false);
+assert.equal(prematureScreenshotOffer.organicVipBridge, false);
+assert.equal(prematureScreenshotOffer.activeProduct, null);
+assert.equal(prematureScreenshotOffer.mustStateOfferNow, false);
+
+const neutralConversation = [
+  'me chamo leo',
+  'sou de mococa',
+  'trabalho com vendas',
+  'hoje meu dia foi corrido',
+  'agora to descansando em casa',
+].map((content, index) => ({
+  sender: 'user',
+  content,
+  created_at: new Date(now.getTime() - (6 - index) * 30_000).toISOString(),
+}));
+const neutralAfterSeveralTurns = evaluateSalesTiming({
+  userText: 'agora to descansando em casa',
+  now,
+  recentMessages: neutralConversation,
+  leadMemory: { metadata: { conversation_started_at: new Date(now.getTime() - 10 * 60_000).toISOString() } },
+});
+assert.equal(neutralAfterSeveralTurns.vipJourneyTurns, 5);
+assert.equal(neutralAfterSeveralTurns.proactiveVipOffer, false);
+assert.equal(neutralAfterSeveralTurns.activeProduct, null);
+
+const warmConversation = [
+  ...neutralConversation.slice(0, 3),
+  { sender: 'user', content: 'vc é muito linda', created_at: '2026-08-28T11:58:00.000Z' },
+  { sender: 'bot', content: 'assim vc me deixa com vontade de te provocar', created_at: '2026-08-28T11:58:10.000Z' },
+  { sender: 'user', content: 'quero te ver sem roupa', created_at: '2026-08-28T11:59:00.000Z' },
+];
+const earnedVipBridge = evaluateSalesTiming({
+  userText: 'quero te ver sem roupa',
+  now,
+  recentMessages: warmConversation,
+  leadMemory: { metadata: { conversation_started_at: new Date(now.getTime() - 10 * 60_000).toISOString() } },
+});
+assert.equal(earnedVipBridge.organicVipBridge, true);
+assert.equal(earnedVipBridge.proactiveVipOffer, true);
+assert.equal(earnedVipBridge.selectedSku, 'vip_monthly');
+assert.equal(earnedVipBridge.mustStateOfferNow, true);
+
+assert.deepEqual(guardPrematureSaleMessages({
+  messages: ['leo é um nome bonito', 'o VIP mensal fica R$ 29,90'],
+  product: null,
+  canPitchPrice: false,
+  canGeneratePayment: false,
+  userText: 'me chamo leo',
+}), ['leo é um nome bonito']);
+assert.deepEqual(guardPrematureSaleMessages({
+  messages: ['assina meu VIP e libera o acesso'],
+  product: null,
+  canPitchPrice: false,
+  canGeneratePayment: false,
+  userText: 'sou de mococa',
+}), []);
 
 const menuWithoutAcceptance = evaluateSalesTiming({
   userText: 'sim',
