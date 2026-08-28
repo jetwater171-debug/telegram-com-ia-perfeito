@@ -19,6 +19,8 @@ import {
     buildProcessingFailureRecoveryMessages,
     detectConversationLanguage,
     enforceLatestIntentMessages,
+    enforcePendingUserQuestionMessages,
+    enforceRoleOwnershipContinuityMessages,
     enforceSemanticTurnContinuityMessages,
     filterConversationConsistencyMessages,
     refineNewRelationshipMessages,
@@ -1504,6 +1506,15 @@ export async function POST(req: NextRequest) {
     };
 
     const priorTurnText = groupedUserMessages.slice(0, -1).map((message: any) => String(message.content || '')).join('\n').trim();
+    const latestLooksLikeShortContinuation = !/[?]/.test(latestUserText)
+        && latestUserText.split(/\s+/).filter(Boolean).length <= 7
+        && !/\b(nao|não|mas|so que|só que|na verdade|quis dizer|mudei|esquece|para)\b/i.test(latestUserText);
+    const pendingUserQuestion = latestLooksLikeShortContinuation
+        ? [...groupedUserMessages.slice(0, -1)]
+            .reverse()
+            .map((message: any) => String(message.content || '').trim())
+            .find((message: string) => /\?|^(quem|qual|quanto|como|onde|quando|por que|porque|pq|com o que|o que)\b/i.test(message)) || ''
+        : '';
     const conversationLanguage = detectConversationLanguage(
         latestUserText,
         leadMemory?.metadata?.redirect_accept_language,
@@ -1511,12 +1522,16 @@ export async function POST(req: NextRequest) {
     let finalUserMessage = `[CONTEXTO ANTERIOR DESTE TURNO]
 ${priorTurnText || '(nenhuma mensagem anterior no pacote)'}
 
+[PERGUNTA AINDA NAO RESPONDIDA NESTE PACOTE]
+${pendingUserQuestion || '(nenhuma)'}
+
 [ULTIMA MENSAGEM DO LEAD — RESPOSTA OBRIGATORIA]
 ${latestUserText || combinedText}
 
 [REGRA DE CONVERSA]
-Responda primeiro e diretamente a ULTIMA MENSAGEM. Ela substitui pedido, hipotese ou assunto anterior quando houver correcao, objecao ou mudanca de intencao.
-Use o bloco anterior apenas como contexto; nunca deixe a ultima pergunta sem resposta.
+Trate todas as mensagens do pacote como um unico turno. Se existir PERGUNTA AINDA NAO RESPONDIDA, responda ela antes de reagir ao complemento curto mais recente.
+A ULTIMA MENSAGEM so substitui o assunto anterior quando houver correcao, objecao, negativa ou mudanca real de intencao. Um "muito", "sim", detalhe ou complemento curto nao apaga a pergunta anterior.
+Nunca deixe pergunta direta sem resposta e nunca troque quem contou, estuda, trabalha, sente ou faz alguma coisa.
 IDIOMA DO TURNO: ${conversationLanguage === 'en' ? 'English' : conversationLanguage === 'es' ? 'Español' : 'Português do Brasil'}. Responda somente nesse idioma, salvo se o lead pedir outro.
 Use de 2 a 4 baloes curtos. Em conversa normal, responda e depois conduza o assunto em 2 ou 3 baloes; nunca deixe o lead carregar a conversa sozinho.
 Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fantasia adulta reciproca, use 3 ou 4 para fazer a cena ou a decisao avancar.
@@ -2370,6 +2385,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         .filter(Boolean);
     const buildRecoveryMessages = () => buildConversationRecoveryMessages({
         userText: latestUserText,
+        pendingQuestion: pendingUserQuestion,
         recentBotTexts,
         recentUserTexts,
         action: String(aiResponse.action || 'none'),
@@ -2401,6 +2417,13 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     safeMessages = enforceLatestIntentMessages(safeMessages, {
         latestUserText,
         language: conversationLanguage,
+    });
+    safeMessages = enforcePendingUserQuestionMessages(safeMessages, {
+        pendingQuestion: pendingUserQuestion,
+    });
+    safeMessages = enforceRoleOwnershipContinuityMessages(safeMessages, {
+        latestUserText,
+        recentBotTexts,
     });
     safeMessages = enforceSemanticTurnContinuityMessages(safeMessages, {
         latestUserText,

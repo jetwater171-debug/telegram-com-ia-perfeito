@@ -143,6 +143,22 @@ export const enforceLatestIntentMessages = (messages: string[], options: {
     const combined = lower(messages.join(' '));
     if (options.language !== 'pt') return messages;
 
+    const reportsRobotLikeConversation = /\b(robo|robô|bot|inteligencia artificial|inteligência artificial)\b|\b(?:e|é|parece)\s+(?:uma\s+)?ia\b/i.test(latest);
+    if (reportsRobotLikeConversation) {
+        return [
+            'minha resposta ficou sem sentido mesmo',
+            'eu me confundi e inverti o assunto',
+        ];
+    }
+
+    const reportsContradiction = /\b(contradicao|contradição|se contradiz|se contradisse|entrou em contradicao|entrou em contradição)\b/i.test(latest);
+    if (reportsContradiction) {
+        return [
+            'vc tem razão, eu me contradisse',
+            'eu que me confundi no assunto',
+        ];
+    }
+
     const asksHowToSubscribe = /\b(como (?:eu )?(?:assino|assinar|compro|comprar)|quero assinar|como ter acesso)\b/i.test(latest);
     if (asksHowToSubscribe && !/\b(vip|19[,.]90|pix|acesso)\b/i.test(combined)) {
         return ['o vip é 19,90. se quiser fechar, eu já gero o pix pra vc'];
@@ -159,6 +175,66 @@ export const enforceLatestIntentMessages = (messages: string[], options: {
     }
 
     return messages;
+};
+
+export const enforcePendingUserQuestionMessages = (messages: string[], options: {
+    pendingQuestion?: string;
+}) => {
+    const pending = lower(options.pendingQuestion);
+    if (!pending) return messages;
+
+    const combined = lower(messages.join(' '));
+    const asksWork = /\b(com o que (?:vc|voce) trabalha|(?:vc|voce) trabalha com o que|qual (?:e )?seu trabalho|o que (?:vc|voce) faz)\b/i.test(pending);
+    if (asksWork && !/\b(trabalho|conteudo|modelo|foto|video)\b/i.test(combined)) {
+        return ['trabalho criando conteúdo e também faço uns trabalhos como modelo'];
+    }
+
+    const asksStudy = /\b((?:vc|voce) (?:ta|esta) estudando|(?:vc|voce) estuda|faz faculdade|qual (?:e )?seu curso)\b/i.test(pending);
+    if (asksStudy && !/\b(estud|faculdade|curso)\b/i.test(combined)) {
+        return ['to terminando a faculdade ainda'];
+    }
+
+    const asksAge = /\b(quantos anos|qual (?:e )?sua idade|(?:vc|voce) tem quantos)\b/i.test(pending);
+    if (asksAge && !/\b19\b/.test(combined)) return ['tenho 19'];
+
+    const asksNameQuestion = /\b(qual (?:e )?seu nome|como (?:vc|voce) se chama|como eu te chamo)\b/i.test(pending);
+    if (asksNameQuestion && !/\blari|larissa\b/i.test(combined)) return ['me chama de lari'];
+
+    return messages;
+};
+
+export const enforceRoleOwnershipContinuityMessages = (messages: string[], options: {
+    latestUserText?: string;
+    recentBotTexts?: unknown[];
+}) => {
+    const latest = lower(options.latestUserText);
+    const botTexts = (options.recentBotTexts || []).map(normalize).filter(Boolean);
+    const recentSelfEducation = botTexts.find((text) =>
+        /\b(?:to|tô|estou|faço|curso|estudo)\b.{0,45}\b(?:faculdade|curso)\b|\bfaculdade de\b/i.test(lower(text))
+    );
+    const leadOnlyAcknowledged = /^(ah+\s*)?(sim|entendi|legal|saquei|ata|a ta|a tá|blz|beleza)[!?.\s]*$/i.test(latest);
+    if (!recentSelfEducation || !leadOnlyAcknowledged) return messages;
+
+    const course = lower(recentSelfEducation).match(/\b(?:faculdade|curso)\s+de\s+([a-z]+(?:\s+[a-z]+){0,2})/i)?.[1] || '';
+    let ownershipWasInverted = false;
+    const safe = (messages || []).map(normalize).filter(Boolean).filter((message) => {
+        const text = lower(message);
+        const asksLeadAboutLarisCourse = /\bcomo (?:e|eh) (?:o )?(?:curso|faculdade) (?:pra|para) (?:vc|voce)\b/i.test(text);
+        const treatsOwnCourseAsSomeoneElses = Boolean(course)
+            && text.includes(course)
+            && /\b(deve ser|parece ser|imagino que)\b/i.test(text);
+        if (asksLeadAboutLarisCourse || treatsOwnCourseAsSomeoneElses) {
+            ownershipWasInverted = true;
+            return false;
+        }
+        return true;
+    });
+
+    if (!ownershipWasInverted) return messages;
+    const meaningful = safe.filter((message) => !/^(entendi|sim|ah sim|ata|legal)[!?.\s]*$/i.test(lower(message)));
+    return meaningful.length > 0
+        ? meaningful
+        : ['ainda falta um pouco pra eu terminar', 'mas to seguindo firme'];
 };
 
 /**
@@ -199,12 +275,14 @@ export const enforceSemanticTurnContinuityMessages = (messages: string[], option
 
 export const buildConversationRecoveryMessages = (options: {
     userText?: string;
+    pendingQuestion?: string;
     recentBotTexts?: unknown[];
     recentUserTexts?: unknown[];
     action?: string;
     language?: ConversationLanguage;
 }) => {
     const userText = lower(options.userText);
+    const pendingQuestion = lower(options.pendingQuestion);
     const action = lower(options.action);
     const complaint = /\b(ja falei|repet|enrolando|nao respondeu|que resposta|nada a ver|parece bot|e bot|mentira|engan|errando|deu erro|nao funciona)\b/i.test(userText);
     const asksMedia = /\b(foto|fotinha|video|audio|voz|manda|mostra|quero ver)\b/i.test(userText)
@@ -229,7 +307,19 @@ export const buildConversationRecoveryMessages = (options: {
         return filtered.length > 0 ? filtered : localized;
     }
 
-    const candidates = affectionateGreeting
+    const pendingQuestionCandidates = (() => {
+        if (/\b(com o que (?:vc|voce) trabalha|(?:vc|voce) trabalha com o que|qual (?:e )?seu trabalho|o que (?:vc|voce) faz)\b/i.test(pendingQuestion)) {
+            return ['trabalho criando conteúdo e também faço uns trabalhos como modelo'];
+        }
+        if (/\b((?:vc|voce) (?:ta|esta) estudando|(?:vc|voce) estuda|faz faculdade|qual (?:e )?seu curso)\b/i.test(pendingQuestion)) {
+            return ['to terminando a faculdade ainda'];
+        }
+        if (/\b(quantos anos|qual (?:e )?sua idade|(?:vc|voce) tem quantos)\b/i.test(pendingQuestion)) return ['tenho 19'];
+        if (/\b(qual (?:e )?seu nome|como (?:vc|voce) se chama|como eu te chamo)\b/i.test(pendingQuestion)) return ['me chama de lari'];
+        return null;
+    })();
+
+    const candidates = pendingQuestionCandidates || (affectionateGreeting
         ? [
             'fala comigo amor, tava por aqui',
             'tava por aqui sim amor, e vc?',
@@ -266,17 +356,19 @@ export const buildConversationRecoveryMessages = (options: {
                         'ta bom, peguei a ideia',
                     ]
                     : [
-                        'fala comigo, quero te responder direito',
-                        'me diz o que passou na sua cabeça',
-                        'quero entender essa parte do seu jeito',
-                    ];
+                        'peguei essa parte',
+                        'entendi o que vc quis dizer',
+                        'faz sentido do jeito que vc explicou',
+                    ]);
 
     const filtered = filterConversationConsistencyMessages(candidates, {
         currentUserText: options.userText,
         recentUserTexts: options.recentUserTexts,
         recentBotTexts: options.recentBotTexts,
     });
-    return filtered.length > 0 ? filtered.slice(0, 1) : ['vou responder direito sem te fazer repetir'];
+    if (filtered.length === 0) return ['entendi essa parte'];
+    const variationKey = [userText, pendingQuestion, ...(options.recentBotTexts || []).slice(0, 3)].join('|');
+    return [stableChoice(filtered, variationKey)];
 };
 
 export const buildProcessingFailureRecoveryMessages = (options: {
