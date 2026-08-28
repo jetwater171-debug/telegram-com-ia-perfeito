@@ -25,9 +25,13 @@ const eleven = compile('../src/lib/elevenLabs.ts', (id) => {
     return require(id);
 });
 const aiModels = compile('../src/lib/aiModels.ts');
+const baiChatRouter = compile('../src/lib/baiChatRouter.ts', (id) => {
+    if (id === '@/lib/aiModels') return aiModels;
+    return require(id);
+});
 const agent = compile('../src/lib/elevenLabsScriptAgent.ts', (id) => {
     if (id === '@/lib/elevenLabs') return eleven;
-    if (id === '@/lib/aiModels') return aiModels;
+    if (id === '@/lib/baiChatRouter') return baiChatRouter;
     return require(id);
 });
 
@@ -76,7 +80,7 @@ assert.equal(
             }), { status: 200 });
         },
     });
-    assert.equal(script.source, 'deepseek');
+    assert.equal(script.source, 'bai');
     assert.equal(script.spokenText, 'Você me deixa doida. Tô aqui pensando em você.');
     assert.match(script.elevenText, /^\[seductively\]/);
     assert.match(script.elevenText, /\[whispers\]/);

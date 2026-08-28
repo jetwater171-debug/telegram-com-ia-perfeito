@@ -2,7 +2,7 @@ import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/ge
 import { AIResponse, LeadStats, AiDebugData } from "@/types";
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import {
-    DEFAULT_BAI_MODEL,
+    BAI_TEXT_MODEL_ORDER,
     DEFAULT_GEMINI_FALLBACK_MODEL,
     DEFAULT_GEMINI_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
@@ -11,7 +11,6 @@ import {
     DEFAULT_OPENROUTER_MODEL,
     GEMINI_MODEL_OPTIONS,
     isBaiVisionModel,
-    normalizeBaiModelName,
     normalizeGeminiModelName,
     normalizeGroqModelName,
     normalizeOpenRouterPrimaryModel,
@@ -884,11 +883,9 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>): AiGatewayC
         }
     };
 
-    // Converte automaticamente o V4 Flash textual salvo no painel para a nova
-    // rota multimodal escolhida. Assim um setting antigo nao impede o deploy de
-    // realmente trocar o modelo em producao.
-    const baiModel = normalizeBaiModelName(configured('bai_model', 'BAI_MODEL', DEFAULT_BAI_MODEL));
-    addProvider({
+    // Cada modelo vira um candidato independente. O roteador respeita esta
+    // ordem e aplica timeout, cooldown e circuit breaker por modelo.
+    BAI_TEXT_MODEL_ORDER.forEach((baiModel, index) => addProvider({
         provider: 'bai',
         apiKey: configured('bai_api_key', 'BAI_API_KEY'),
         baseUrl: process.env.BAI_BASE_URL || 'https://api.b.ai/v1',
@@ -899,8 +896,8 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>): AiGatewayC
             evaluator: baiModel,
         },
         tiers: ['starter', 'buyer', 'premium', 'elite'],
-        weight: 50,
-    });
+        weight: Math.max(20, 60 - index * 6),
+    }));
 
     const groqApiKey = configured('groq_api_key', 'GROQ_API_KEY');
     const groqStarterModel = normalizeGroqModelName(configured('groq_starter_model', 'GROQ_STARTER_MODEL', DEFAULT_GROQ_STARTER_MODEL), DEFAULT_GROQ_STARTER_MODEL);
@@ -1525,9 +1522,8 @@ const callAiGatewayJson = async <T,>(options: {
     const mediaMimeType = String(options.mediaPart?.inlineData?.mimeType || '').trim();
     const hasMedia = Boolean(mediaMimeType);
     const hasImage = mediaMimeType.startsWith('image/');
-    // Foto pertence exclusivamente ao DeepSeek V4 Vision. Outros modelos so
-    // podem entrar depois, na recuperacao textual, se a chamada visual falhar.
-    // Audio/video continuam no Gemini porque o endpoint B.AI nao os recebe.
+    // Fotos usam apenas os modelos B.AI marcados como multimodais, na mesma
+    // ordem de qualidade. Audio/video continuam no Gemini.
     const providerOnly = hasImage ? 'bai' : hasMedia ? 'gemini' : options.providerOnly;
     const gateways = getTierAwareGatewayOrder({
         role: options.role,
@@ -1536,7 +1532,8 @@ const callAiGatewayJson = async <T,>(options: {
         routingKey: options.routingKey,
         preferGemini: hasMedia && !hasImage,
     })
-        .filter((gateway) => !providerOnly || gateway.provider === providerOnly);
+        .filter((gateway) => !providerOnly || gateway.provider === providerOnly)
+        .filter((gateway) => !hasImage || gateway.provider !== 'bai' || isBaiVisionModel(gateway.model));
     const attempts: string[] = [];
     const openRouterHistory: AiMessage[] = options.history.map((message: any) => ({
         role: (message.role === "model" ? "assistant" : "user") as AiMessage["role"],
@@ -1683,6 +1680,13 @@ const callAiGatewayJson = async <T,>(options: {
             excluded.add(lease.candidate.key);
             const durationMs = Date.now() - startedAt;
             const failureKind = lease.fail(error, durationMs, Number(error?.retryAfterMs || 0));
+            // Todos os modelos B.AI compartilham a mesma chave. Em erro de
+            // autenticacao, insistir nos demais so adicionaria latencia.
+            if (gateway.provider === 'bai' && failureKind === 'auth') {
+                candidates
+                    .filter((candidate) => candidate.provider === 'bai')
+                    .forEach((candidate) => excluded.add(candidate.key));
+            }
             const message = `${gateway.label} falhou (${failureKind}): ${error?.message || error}`;
             attempts.push(message);
             console.warn(`[AI Gateway] ${message}`);

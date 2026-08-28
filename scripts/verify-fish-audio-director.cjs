@@ -17,9 +17,13 @@ const compile = (relativePath, customRequire = require) => {
 
 const fish = compile('../src/lib/fishAudio.ts');
 const aiModels = compile('../src/lib/aiModels.ts');
+const baiChatRouter = compile('../src/lib/baiChatRouter.ts', (id) => {
+    if (id === '@/lib/aiModels') return aiModels;
+    return require(id);
+});
 const agent = compile('../src/lib/fishAudioScriptAgent.ts', (id) => {
     if (id === '@/lib/fishAudio') return fish;
-    if (id === '@/lib/aiModels') return aiModels;
+    if (id === '@/lib/baiChatRouter') return baiChatRouter;
     return require(id);
 });
 
@@ -71,11 +75,11 @@ const fakeDeepSeek = async (url, init) => {
         emotionalContext: 'brincadeira carinhosa',
         fetcher: fakeDeepSeek,
     });
-    assert.equal(script.source, 'deepseek');
+    assert.equal(script.source, 'bai');
     assert.equal(script.spokenText, 'Você me deixa doida. Tô aqui pensando em você.');
     assert.doesNotMatch(script.fishText, /kkkk|\brs\b/i);
     assert.match(script.fishText, /^\[soft voice, playful, natural, unhurried\] \[giggle\]/);
-    assert.equal(deepSeekCalls[0].body.model, 'deepseek-v4-flash-vision-exp');
+    assert.equal(deepSeekCalls[0].body.model, 'deepseek-v4-flash');
     assert.equal(deepSeekCalls[0].body.max_tokens, 450);
 
     const invented = await agent.prepareFishAudioScript({

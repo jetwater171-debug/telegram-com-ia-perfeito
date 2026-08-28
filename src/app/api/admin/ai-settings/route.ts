@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer as supabase } from "@/lib/supabaseServer";
 import {
+    BAI_TEXT_MODEL_ORDER,
     DEFAULT_BAI_MODEL,
     DEFAULT_GEMINI_LITE_MODEL,
     DEFAULT_GEMINI_MODEL,
@@ -9,7 +10,6 @@ import {
     DEFAULT_OPENROUTER_MODEL,
     normalizeGeminiModelName,
     normalizeGroqModelName,
-    normalizeBaiModelName,
     normalizeOpenRouterPrimaryModel,
 } from "@/lib/aiModels";
 import { DEFAULT_ELEVENLABS_SETTINGS, normalizeElevenLabsModel } from "@/lib/elevenLabs";
@@ -162,7 +162,7 @@ const buildSettings = (map: Record<string, string>) => {
         customModel: map.ai_custom_gateway_model || process.env.AI_CUSTOM_DRAFT_MODEL || "auto",
         customTiers: map.ai_custom_gateway_tiers || process.env.AI_CUSTOM_GATEWAY_TIERS || "starter,buyer",
         customWeight: Number(map.ai_custom_gateway_weight || process.env.AI_CUSTOM_GATEWAY_WEIGHT || 5),
-        baiModel: normalizeBaiModelName(map.bai_model || DEFAULTS.bai_model),
+        baiModel: DEFAULT_BAI_MODEL,
         groqModel: normalizeGroqModelName(map.groq_model, DEFAULTS.groq_model),
         groqStarterModel: normalizeGroqModelName(map.groq_starter_model, DEFAULTS.groq_starter_model),
         nvidiaModel: map.nvidia_model || DEFAULTS.nvidia_model,
@@ -241,7 +241,9 @@ export async function POST(req: NextRequest) {
         const body = await req.json();
         const providerOrder = normalizeProviderOrder(body.aiModelOrder || body.aiDraftModelOrder);
         const rows: { key: string; value: string }[] = [
-            { key: "bai_model", value: normalizeBaiModelName(cleanText(body.baiModel, DEFAULTS.bai_model)) },
+            // Campo legado mantido sincronizado com a cabeca da fila. A ordem
+            // completa vive no codigo para um valor antigo nao furar o router.
+            { key: "bai_model", value: DEFAULT_BAI_MODEL },
             { key: "openrouter_base_url", value: cleanText(body.openrouterBaseUrl, DEFAULTS.openrouter_base_url) },
             { key: "openrouter_referer", value: cleanText(body.openrouterReferer, DEFAULTS.openrouter_referer) },
             { key: "openrouter_title", value: cleanText(body.openrouterTitle, DEFAULTS.openrouter_title) },
@@ -347,39 +349,18 @@ export async function PUT(req: NextRequest) {
                 const accountId = cleanText(body.accountId || map.cloudflare_account_id || process.env.CLOUDFLARE_ACCOUNT_ID);
                 if (!accountId) throw new Error("informe o Account ID da Cloudflare");
                 response = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search`, { headers: { Authorization: `Bearer ${config.key}` } });
-            } else if (provider === "nvidia" || provider === "bai") {
-                const model = provider === "bai"
-                    ? cleanText(body.model || map.bai_model || DEFAULTS.bai_model)
-                    : cleanText(body.model || map.nvidia_model || DEFAULTS.nvidia_model);
+            } else if (provider === "bai") {
+                // Descobre os modelos liberados para a chave sem gastar uma
+                // chamada de inferencia nem consumir creditos do usuario.
+                response = await fetchWithTimeout(`${config.base}/models`, {
+                    headers: { Authorization: `Bearer ${config.key}` },
+                });
+            } else if (provider === "nvidia") {
+                const model = cleanText(body.model || map.nvidia_model || DEFAULTS.nvidia_model);
                 response = await fetchWithTimeout(`${config.base}/chat/completions`, {
                     method: "POST",
                     headers: { Authorization: `Bearer ${config.key}`, "Content-Type": "application/json" },
-                    body: JSON.stringify(provider === "bai" ? {
-                        model,
-                        messages: [
-                            { role: "system", content: "Retorne somente JSON válido no schema solicitado." },
-                            { role: "user", content: "Teste de conexão do Master Brain. Confirme ok=true e repita o model id." },
-                        ],
-                        max_tokens: 96,
-                        thinking: { type: "enabled" },
-                        reasoning_effort: "low",
-                        response_format: {
-                            type: "json_schema",
-                            json_schema: {
-                                name: "master_brain_connection_test",
-                                strict: true,
-                                schema: {
-                                    type: "object",
-                                    properties: {
-                                        ok: { type: "boolean" },
-                                        model: { type: "string" },
-                                    },
-                                    required: ["ok", "model"],
-                                    additionalProperties: false,
-                                },
-                            },
-                        },
-                    } : {
+                    body: JSON.stringify({
                         model,
                         messages: [{ role: "user", content: "Responda apenas OK" }],
                         max_tokens: 2,
@@ -394,6 +375,18 @@ export async function PUT(req: NextRequest) {
 
         const text = await response.text();
         if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 240)}`);
+        if (provider === "bai") {
+            const payload = JSON.parse(text || "{}");
+            const returnedModels = Array.isArray(payload?.data)
+                ? payload.data
+                    .map((item: any) => String(typeof item === "string" ? item : item?.id || "").toLowerCase())
+                    .filter(Boolean)
+                : [];
+            const returnedSet = new Set(returnedModels);
+            const availableModels = BAI_TEXT_MODEL_ORDER.filter((model) => returnedSet.has(model));
+            const missingModels = BAI_TEXT_MODEL_ORDER.filter((model) => !returnedSet.has(model));
+            return NextResponse.json({ ok: true, latencyMs: Date.now() - startedAt, provider, availableModels, missingModels });
+        }
         return NextResponse.json({ ok: true, latencyMs: Date.now() - startedAt, provider });
     } catch (error: any) {
         return NextResponse.json({ error: error?.message || "teste falhou" }, { status: 400 });

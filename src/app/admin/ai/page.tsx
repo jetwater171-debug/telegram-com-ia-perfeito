@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_BAI_MODEL, DEFAULT_GEMINI_LITE_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from "@/lib/aiModels";
+import { BAI_IMAGE_MODEL_ORDER, BAI_MODEL_CATALOG, BAI_TEXT_MODEL_ORDER, DEFAULT_BAI_MODEL, DEFAULT_GEMINI_LITE_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from "@/lib/aiModels";
 
 type ProviderKey = "bai" | "gemini" | "groq" | "nvidia" | "cloudflare" | "mistral" | "openrouter" | "cerebras" | "custom";
 type SaveState = "loading" | "idle" | "saving" | "saved" | "error";
@@ -48,8 +48,8 @@ type VoiceBudgetMetrics = {
 
 const PROVIDER_ORDER: ProviderKey[] = ["bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"];
 const PROVIDER_INFO: Record<ProviderKey, { label: string; short: string; description: string; keyUrl: string; keyLabel: string; color: string }> = {
-    bai: { label: "B.AI · DeepSeek V4 Flash Vision", short: "Principal multimodal · 0 créditos agora", description: "Usa DeepSeek V4 Flash Vision no texto e exclusivamente nas fotos. Outros modelos só entram como recuperação textual se a visão falhar.", keyUrl: "https://chat.b.ai/chat", keyLabel: "Abrir B.AI e gerar chave", color: "from-emerald-400 to-cyan-300" },
-    gemini: { label: "Google Gemini", short: "Visão + fallback", description: "Analisa fotos e outras mídias dos leads e assume o texto se a B.AI estiver indisponível.", keyUrl: "https://aistudio.google.com/apikey", keyLabel: "Pegar chave no Google AI Studio", color: "from-blue-400 to-cyan-300" },
+    bai: { label: "B.AI · Roteador de 6 modelos", short: "Principal · fallback interno", description: "Tenta os modelos da própria B.AI do melhor para o pior. Limite, timeout ou resposta inválida fazem a Lari seguir automaticamente para o próximo.", keyUrl: "https://chat.b.ai/chat", keyLabel: "Abrir B.AI e gerar chave", color: "from-emerald-400 to-cyan-300" },
+    gemini: { label: "Google Gemini", short: "Mídia + recuperação", description: "Cuida de áudio e vídeo e assume como recuperação externa se todos os modelos B.AI falharem.", keyUrl: "https://aistudio.google.com/apikey", keyLabel: "Pegar chave no Google AI Studio", color: "from-blue-400 to-cyan-300" },
     groq: { label: "Groq", short: "Muito rápido", description: "Absorve conversas de texto com baixa latência e reduz a carga do Gemini.", keyUrl: "https://console.groq.com/keys", keyLabel: "Pegar chave na Groq", color: "from-orange-400 to-amber-300" },
     nvidia: { label: "NVIDIA NIM", short: "Modelos hospedados", description: "Rota oficial NVIDIA com modelos rápidos para distribuir as conversas e aliviar os provedores principais.", keyUrl: "https://build.nvidia.com/settings/api-keys", keyLabel: "Pegar chave na NVIDIA", color: "from-lime-400 to-green-300" },
     cloudflare: { label: "Cloudflare Workers AI", short: "Reserva barata", description: "Boa capacidade diária para o cérebro econômico dos primeiros contatos.", keyUrl: "https://dash.cloudflare.com/profile/api-tokens", keyLabel: "Criar token na Cloudflare", color: "from-amber-400 to-yellow-200" },
@@ -86,6 +86,8 @@ const emptySettings: AiSettings = {
     fishAudioUnpaidMaxChars: 140, fishAudioBuyerMaxChars: 300,
     mem0Enabled: false, mem0TopK: 8,
 };
+
+const BAI_MODEL_LABELS = Object.fromEntries(BAI_MODEL_CATALOG.map((model) => [model.id, model.label])) as Record<string, string>;
 
 const inputClass = "w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/60 focus:bg-black/40";
 
@@ -240,7 +242,10 @@ export default function AdminAiPage() {
             });
             const data = await response.json();
             if (!response.ok || data?.error) throw new Error(data?.error || `HTTP ${response.status}`);
-            setTestResults((current) => ({ ...current, [provider]: `Conectado em ${data.latencyMs}ms` }));
+            const baiCoverage = provider === "bai" && Array.isArray(data.availableModels)
+                ? ` · ${data.availableModels.length}/${BAI_TEXT_MODEL_ORDER.length} modelos disponíveis`
+                : "";
+            setTestResults((current) => ({ ...current, [provider]: `Conectado em ${data.latencyMs}ms${baiCoverage}` }));
         } catch (error: any) {
             setTestResults((current) => ({ ...current, [provider]: `Falhou: ${error?.message || error}` }));
         } finally {
@@ -320,7 +325,7 @@ export default function AdminAiPage() {
                     <div>
                         <p className="admin-eyebrow">Master Brain</p>
                         <h1 className="admin-page-title">Inteligência da Lari</h1>
-                        <p className="admin-page-subtitle mt-2">DeepSeek V4 primeiro no texto, visão dedicada e camadas extras somente quando melhoram a decisão.</p>
+                        <p className="admin-page-subtitle mt-2">Seis modelos B.AI em ordem de qualidade, com visão multimodal e recuperação automática.</p>
                     </div>
                     <SaveBadge state={saveState} message={message} />
                 </div>
@@ -339,7 +344,7 @@ export default function AdminAiPage() {
                         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                                 <h2 className="text-lg font-semibold">Rota recomendada e segura</h2>
-                                <p className="mt-1 text-sm text-slate-400">B.AI/DeepSeek V4 no texto → Gemini para visão → reservas rápidas e independentes.</p>
+                                <p className="mt-1 text-sm text-slate-400">B.AI tenta sua fila interna completa → Gemini e outros provedores entram somente como recuperação externa.</p>
                             </div>
                             <button type="button" onClick={useRecommendedOrder} className="rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-200">Usar ordem recomendada</button>
                         </div>
@@ -386,9 +391,22 @@ export default function AdminAiPage() {
                                             />
                                             <p className="text-xs text-slate-500">A chave é salva quando você sair deste campo.</p>
                                         </Field>
-                                        <Field label={model.label}>
-                                            <input value={String(model.value)} onChange={(event) => updateSetting(model.field, event.target.value)} className={inputClass} />
-                                        </Field>
+                                        {provider === "bai" ? (
+                                            <div className="grid gap-3 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.04] p-3 text-xs md:col-span-1">
+                                                <div>
+                                                    <strong className="text-emerald-200">Texto · melhor para o pior</strong>
+                                                    <p className="mt-1 leading-5 text-slate-400">{BAI_TEXT_MODEL_ORDER.map((id, index) => `${index + 1}. ${BAI_MODEL_LABELS[id] || id}`).join(" → ")}</p>
+                                                </div>
+                                                <div>
+                                                    <strong className="text-cyan-200">Fotos · somente multimodais</strong>
+                                                    <p className="mt-1 leading-5 text-slate-400">{BAI_IMAGE_MODEL_ORDER.map((id, index) => `${index + 1}. ${BAI_MODEL_LABELS[id] || id}`).join(" → ")}</p>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <Field label={model.label}>
+                                                <input value={String(model.value)} onChange={(event) => updateSetting(model.field, event.target.value)} className={inputClass} />
+                                            </Field>
+                                        )}
 
                                         {provider === "cloudflare" && <Field label="Account ID"><input value={settings.cloudflareAccountId} onChange={(event) => updateSetting("cloudflareAccountId", event.target.value)} className={inputClass} placeholder="ID da conta Cloudflare" /></Field>}
                                         {provider === "custom" && <Field label="URL base"><input value={settings.customBaseUrl} onChange={(event) => updateSetting("customBaseUrl", event.target.value)} className={inputClass} placeholder="https://seu-gateway/v1" /></Field>}
@@ -418,7 +436,7 @@ export default function AdminAiPage() {
 
                     <Panel title="Proteção para 30 leads/min">
                         <Toggle title="Limitador compartilhado" description={settings.sharedRateLimitReady ? "Pronto para coordenar todas as instâncias da Vercel." : "Falta SERVICE_ROLE e aplicar a migration do limitador."} checked={settings.aiSharedRateLimitEnabled} onChange={(value) => updateSetting("aiSharedRateLimitEnabled", value)} />
-                        <Toggle title="1 · Master Brain DeepSeek" description="Uma chamada principal entende, conduz, vende, escolhe prévia/PIX e escreve a resposta." checked={true} disabled onChange={() => undefined} />
+                        <Toggle title="1 · Master Brain B.AI" description="Uma chamada principal entende, conduz, vende, escolhe prévia/PIX e escreve a resposta; se o modelo falhar, a fila interna assume." checked={true} disabled onChange={() => undefined} />
                         <Toggle title="2 · Validador do backend" description="Confere pagamento, mídia, oferta e memória sem fazer outra chamada de IA." checked={true} disabled onChange={() => undefined} />
                         <Toggle title="3 · Revisora adaptativa" description="Só usa outra chamada em pagamento, contradição, falha evidente ou baixa confiança." checked={true} disabled onChange={() => undefined} />
                     </Panel>

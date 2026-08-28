@@ -2900,7 +2900,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     },
                 }),
             }).catch((error: any) => {
-                console.warn('[ELEVENLABS] Diretora DeepSeek indisponível; usando roteiro local:', error?.message || error);
+                console.warn('[ELEVENLABS] Diretora B.AI indisponível; usando roteiro local:', error?.message || error);
                 if (paidEroticAudioEntitled) throw error;
                 return deterministicFallback();
             }).then(async (script) => {

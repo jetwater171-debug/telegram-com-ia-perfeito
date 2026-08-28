@@ -1,4 +1,20 @@
-export const DEFAULT_BAI_MODEL = "deepseek-v4-flash-vision-exp";
+export const BAI_MODEL_CATALOG = [
+    { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", acceptsImage: false },
+    { id: "deepseek-v4-flash-vision-exp", label: "DeepSeek V4 Flash Vision Exp", acceptsImage: true },
+    { id: "glm-5.3-flash", label: "GLM-5.3 Flash", acceptsImage: true },
+    { id: "qwen3.8-flash", label: "Qwen3.8 Flash", acceptsImage: true },
+    { id: "mimo-v2.5", label: "MiMo-V2.5", acceptsImage: true },
+    { id: "hy3", label: "Hy3", acceptsImage: false },
+] as const;
+
+// Ordem estrita dentro da B.AI: qualidade primeiro. Uma falha, limite ou
+// resposta invalida libera o proximo modelo sem trocar de provedor.
+export const BAI_TEXT_MODEL_ORDER = BAI_MODEL_CATALOG.map((model) => model.id);
+export const BAI_IMAGE_MODEL_ORDER = BAI_MODEL_CATALOG
+    .filter((model) => model.acceptsImage)
+    .map((model) => model.id);
+
+export const DEFAULT_BAI_MODEL = BAI_TEXT_MODEL_ORDER[0];
 export const DEFAULT_GEMINI_MODEL = "gemini-3.7-flash";
 export const DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-3.6-flash";
 export const DEFAULT_GEMINI_LITE_MODEL = "gemini-3.5-flash-lite";
@@ -12,18 +28,22 @@ export const OPENROUTER_MODEL_FALLBACK_ORDER = [
 export const DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat";
 
 const BAI_MODEL_MIGRATIONS: Record<string, string> = {
-    "deepseek-v4-flash": DEFAULT_BAI_MODEL,
     "deepseek-v4-flash-0731": DEFAULT_BAI_MODEL,
 };
+
+const BAI_MODEL_BY_ID = new Map<string, (typeof BAI_MODEL_CATALOG)[number]>(
+    BAI_MODEL_CATALOG.map((model) => [model.id, model] as const),
+);
 
 export const normalizeBaiModelName = (value?: string | null) => {
     const model = String(value || "").trim();
     if (!model) return DEFAULT_BAI_MODEL;
-    return BAI_MODEL_MIGRATIONS[model.toLowerCase()] || model;
+    const normalized = model.toLowerCase();
+    return BAI_MODEL_MIGRATIONS[normalized] || BAI_MODEL_BY_ID.get(normalized)?.id || model;
 };
 
 export const isBaiVisionModel = (value?: string | null) =>
-    normalizeBaiModelName(value).toLowerCase() === DEFAULT_BAI_MODEL;
+    Boolean(BAI_MODEL_BY_ID.get(normalizeBaiModelName(value).toLowerCase())?.acceptsImage);
 
 const OPENROUTER_MODEL_MIGRATIONS: Record<string, string> = {
     "deepseek/deepseek-v4-flash-0731": DEFAULT_OPENROUTER_MODEL,

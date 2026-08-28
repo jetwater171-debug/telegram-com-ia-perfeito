@@ -1,5 +1,5 @@
 import { buildExpressiveSpeech, cleanTextForSpeech } from '@/lib/fishAudio';
-import { DEFAULT_BAI_MODEL, normalizeBaiModelName } from '@/lib/aiModels';
+import { callBaiChatWithFallback } from '@/lib/baiChatRouter';
 
 export type FishAudioScriptAgentSettings = {
     apiKey: string;
@@ -13,7 +13,7 @@ export type PreparedFishAudioScript = {
     fishText: string;
     delivery: string;
     reaction: string;
-    source: 'deepseek' | 'deterministic';
+    source: 'bai' | 'deterministic';
 };
 
 export type FishAudioScriptMode = 'voice_render' | 'requested_audio';
@@ -111,7 +111,6 @@ export const prepareFishAudioScript = async ({
     if (!apiKey || !fallback.spokenText) return fallback;
 
     const baseUrl = String(settings.baseUrl || 'https://api.b.ai/v1').replace(/\/$/, '');
-    const model = normalizeBaiModelName(settings.model || DEFAULT_BAI_MODEL);
     const systemPrompt = `Você é o DIRETOR DE VOZ DA LARI, especialista no Fish Audio S2.1 Pro.
 
 Sua função não é conversar com o lead. Sua única função é transformar uma mensagem já aprovada em roteiro de TTS.
@@ -127,13 +126,13 @@ REGRAS OBRIGATÓRIAS:
 8. Fish S2.1 usa instruções em [colchetes]. Não use tags de S1 em parênteses, SSML, markdown ou explicações.
 9. Retorne somente JSON válido: {"spoken_text":"...","delivery":"...","reaction":"none"}.`;
 
-    const response = await fetcher(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+    const routed = await callBaiChatWithFallback({
+        apiKey,
+        baseUrl,
+        preferredModel: settings.model,
+        fetcher,
+        timeoutMs: Math.min(15_000, Math.max(3_000, Number(settings.timeoutMs) || 8_000)),
+        buildBody: (model) => ({
             model,
             messages: [
                 { role: 'system', content: systemPrompt },
@@ -146,14 +145,17 @@ REGRAS OBRIGATÓRIAS:
             temperature: 0.25,
             max_tokens: 450,
         }),
-        signal: AbortSignal.timeout(Math.min(15_000, Math.max(3_000, Number(settings.timeoutMs) || 8_000))),
+        parseResponse: (responseText) => {
+            const payload = JSON.parse(responseText || '{}');
+            const rawContent = payload?.choices?.[0]?.message?.content;
+            const parsed = typeof rawContent === 'string' ? parseJsonObject(rawContent) : rawContent;
+            if (!parsed || typeof parsed !== 'object' || typeof parsed.spoken_text !== 'string') {
+                throw new Error('roteiro de voz sem spoken_text');
+            }
+            return parsed;
+        },
     });
-
-    const responseText = await response.text();
-    if (!response.ok) throw new Error(`DeepSeek áudio ${response.status}: ${responseText.slice(0, 400)}`);
-    const payload = JSON.parse(responseText || '{}');
-    const rawContent = payload?.choices?.[0]?.message?.content;
-    const parsed = typeof rawContent === 'string' ? parseJsonObject(rawContent) : rawContent;
+    const parsed = routed.data;
 
     let spokenText = cleanTextForSpeech(parsed?.spoken_text, maxChars);
     if (mode === 'voice_render' && !preservesOriginalSpeech(fallback.spokenText, spokenText)) {
@@ -170,6 +172,6 @@ REGRAS OBRIGATÓRIAS:
         fishText: `${cue} ${spokenText}`.trim(),
         delivery,
         reaction,
-        source: 'deepseek',
+        source: 'bai',
     };
 };

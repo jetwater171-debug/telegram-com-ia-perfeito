@@ -7,7 +7,7 @@ import {
     limitElevenLabsSpeechDuration,
     stripElevenV3Tags,
 } from '@/lib/elevenLabs';
-import { DEFAULT_BAI_MODEL, normalizeBaiModelName } from '@/lib/aiModels';
+import { callBaiChatWithFallback } from '@/lib/baiChatRouter';
 
 export type ElevenLabsScriptAgentSettings = {
     apiKey: string;
@@ -21,7 +21,7 @@ export type PreparedElevenLabsScript = {
     elevenText: string;
     delivery: string;
     reaction: string;
-    source: 'deepseek' | 'deterministic';
+    source: 'bai' | 'deterministic';
 };
 
 export type ElevenLabsScriptMode = 'voice_render' | 'requested_audio';
@@ -155,7 +155,6 @@ export const prepareElevenLabsScript = async ({
     if (!apiKey || !fallback.spokenText) return fallback;
 
     const baseUrl = String(settings.baseUrl || 'https://api.b.ai/v1').replace(/\/$/, '');
-    const model = normalizeBaiModelName(settings.model || DEFAULT_BAI_MODEL);
     const systemPrompt = `Você é a DIRETORA DE VOZ PRIVADA DA LARISSA MORAIS para ElevenLabs Eleven v3.
 
 Você é um agente separado da IA que conduz a conversa. Você não conversa diretamente com o lead, não vende e não decide ações. Sua única função é transformar uma intenção já aprovada em uma mensagem de voz que pareça gravada pela própria Lari naquele instante.
@@ -190,10 +189,13 @@ REGRAS OBRIGATÓRIAS:
 12. paidEroticAudio não substitui adultVerified. Só siga a regra 11 se adultVerified=true.
 13. Retorne somente JSON válido: {"spoken_text":"...","performance_script":"[softly] ...","delivery":"softly","reaction":"none"}.`;
 
-    const response = await fetcher(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+    const routed = await callBaiChatWithFallback({
+        apiKey,
+        baseUrl,
+        preferredModel: settings.model,
+        fetcher,
+        timeoutMs: Math.min(15_000, Math.max(3_000, Number(settings.timeoutMs) || 8_000)),
+        buildBody: (model) => ({
             model,
             messages: [
                 { role: 'system', content: systemPrompt },
@@ -206,14 +208,17 @@ REGRAS OBRIGATÓRIAS:
             temperature: 0.35,
             max_tokens: 650,
         }),
-        signal: AbortSignal.timeout(Math.min(15_000, Math.max(3_000, Number(settings.timeoutMs) || 8_000))),
+        parseResponse: (responseText) => {
+            const payload = JSON.parse(responseText || '{}');
+            const rawContent = payload?.choices?.[0]?.message?.content;
+            const parsed = typeof rawContent === 'string' ? parseJsonObject(rawContent) : rawContent;
+            if (!parsed || typeof parsed !== 'object' || typeof parsed.spoken_text !== 'string') {
+                throw new Error('roteiro ElevenLabs sem spoken_text');
+            }
+            return parsed;
+        },
     });
-
-    const responseText = await response.text();
-    if (!response.ok) throw new Error(`DeepSeek roteiro ElevenLabs ${response.status}: ${responseText.slice(0, 400)}`);
-    const payload = JSON.parse(responseText || '{}');
-    const rawContent = payload?.choices?.[0]?.message?.content;
-    const parsed = typeof rawContent === 'string' ? parseJsonObject(rawContent) : rawContent;
+    const parsed = routed.data;
 
     let spokenText = limitElevenLabsSpeechDuration(parsed?.spoken_text, { maxChars, maxWords });
     if (mode === 'voice_render' && !preservesOriginalSpeech(fallback.spokenText, spokenText)) spokenText = fallback.spokenText;
@@ -237,6 +242,6 @@ REGRAS OBRIGATÓRIAS:
             ? 'softly'
             : cleanInlineValue(parsed?.delivery) || (allowSexualPerformance ? 'seductively' : 'softly'),
         reaction: cleanInlineValue(parsed?.reaction, 40).toLowerCase() === 'none' ? '' : cleanInlineValue(parsed?.reaction, 40),
-        source: 'deepseek',
+        source: 'bai',
     };
 };
