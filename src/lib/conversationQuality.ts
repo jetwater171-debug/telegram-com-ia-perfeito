@@ -94,13 +94,11 @@ export const refineNewRelationshipMessages = (messages: unknown[], options: {
         unique.push(message);
     }
     if (options.isConversationStart && userOnlyGreeting) {
-        const knownOpenings = ['oii, tudo bem?', 'eii, como vc tá?', 'oi, tudo certo por aí?'];
-        const unknownOpenings = [
-            'oii, tudo bem? como posso te chamar?',
-            'eii, chegou bem? qual seu nome?',
-            'oi, tudo certo por aí? como vc se chama?',
+        const openings = ['oiii, tudo bem?', 'eii, tudo bem?', 'oii, como vc tá?'];
+        return [
+            stableChoice(openings, options.variationKey || userText),
+            'como é seu nome?',
         ];
-        return [stableChoice(options.hasKnownName ? knownOpenings : unknownOpenings, options.variationKey || userText)];
     }
     if (unique.length === 0) {
         return options.hasKnownName ? ['quero entender direito o que vc quis dizer'] : ['como é seu nome??'];
