@@ -135,6 +135,26 @@ export const filterConversationConsistencyMessages = (messages: unknown[], optio
     return accepted;
 };
 
+export const asksAboutResponderIdentity = (value: unknown) => {
+    const text = lower(value);
+    const identity = '(?:robo|bot|ia|inteligencia artificial|assistente virtual|humana?|pessoa(?: real| de verdade)?)';
+    const article = '(?:(?:um|uma|a|o)\\s+)?';
+    return new RegExp(`\\b(?:voce|vc|tu)\\s+(?:e|eh|es|seria)\\s+${article}${identity}\\b`).test(text)
+        || new RegExp(`^(?:afinal[,:]?\\s+)?(?:e|eh|es)\\s+${article}${identity}\\s*[?!.,]*$`).test(text)
+        || new RegExp(`\\b(?:estou|to|tou)\\s+(?:falando|conversando)\\s+com\\s+${article}${identity}\\b`).test(text)
+        || /\b(?:voce|vc|tu)\s+(?:e|eh|es)\s+(?:a\s+)?(?:lari|larissa)\b/.test(text)
+        || /\b(?:lari|larissa|pessoa|humano|humana)\b.{0,32}\bou\s+(?:(?:um|uma)\s+)?(?:bot|robo|ia)\b/.test(text)
+        || /\b(?:bot|robo|ia)\s+ou\s+(?:(?:um|uma|a)\s+)?(?:lari|larissa|pessoa|humano|humana)\b/.test(text)
+        || /(?:^|[.!?]\s*)(?:afinal[, ]+)?quem\s+(?:(?:esta|ta)\s+)?(?:respondendo|responde|fala|falando)(?:\s+(?:aqui|comigo|ai|por aqui))?\s*[?!.,]*$/.test(text);
+};
+
+const hasHonestResponderIdentity = (value: unknown) => {
+    const text = lower(value);
+    const identifiesAutomation = /\bsou\s+(?:(?:a|uma|o|um)\s+)?(?:assistente virtual|ia|inteligencia artificial|bot|robo|versao virtual)\b/.test(text);
+    const deniesAutomation = /\bnao\s+sou\s+(?:(?:a|uma|o|um)\s+)?(?:assistente virtual|ia|inteligencia artificial|bot|robo)\b/.test(text);
+    return identifiesAutomation && !deniesAutomation;
+};
+
 export const enforceLatestIntentMessages = (messages: string[], options: {
     latestUserText?: string;
     language?: ConversationLanguage;
@@ -143,12 +163,10 @@ export const enforceLatestIntentMessages = (messages: string[], options: {
     const combined = lower(messages.join(' '));
     if (options.language !== 'pt') return messages;
 
-    const reportsRobotLikeConversation = /\b(robo|robô|bot|inteligencia artificial|inteligência artificial)\b|\b(?:e|é|parece)\s+(?:uma\s+)?ia\b/i.test(latest);
-    if (reportsRobotLikeConversation) {
-        return [
-            'sou a assistente virtual da Lari aqui no Telegram',
-            'posso continuar te ajudando por aqui sem enrolar vc',
-        ];
+    // Uma referência a tecnologia ou uma crítica ao estilo não é, sozinha,
+    // pergunta sobre identidade. Preserve respostas corretas já contextualizadas.
+    if (asksAboutResponderIdentity(latest) && !hasHonestResponderIdentity(combined)) {
+        return ['sou a assistente virtual da Lari aqui no Telegram'];
     }
 
     const reportsContradiction = /\b(contradicao|contradição|se contradiz|se contradisse|entrou em contradicao|entrou em contradição)\b/i.test(latest);

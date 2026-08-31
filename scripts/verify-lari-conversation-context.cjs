@@ -17,6 +17,7 @@ const loadTs = (relativePath, code) => {
   return mod.exports;
 };
 const prompts = loadTs('src/lib/lariConversationPrompts.ts');
+const quality = loadTs('src/lib/conversationQuality.ts');
 const { composeLariPromptContext } = loadTs('src/lib/lariPromptContext.ts');
 const { formatRetrievedMemories } = loadTs('src/lib/brain/memoryRetriever.ts');
 
@@ -49,6 +50,41 @@ assert.match(core, /responde suficientemente ao turno|resposta curta e suficient
 assert.match(core, /Pagamento confirmado não significa acesso liberado/);
 assert.match(core, /Não crie links, domínios, números, contatos/);
 assert.match(core, /Aceite genérico depois de um menu ainda exige escolher a modalidade/);
+assert.match(core, /Na conversa cotidiana, responda ao assunto sem apresentações sobre automação/);
+assert.match(core, /tom é de mensagem pessoal no WhatsApp\/Telegram/);
+
+for (const userText of [
+  'assisti um filme de robô ontem',
+  'trabalho com inteligência artificial',
+  'meu bot no Telegram parou de funcionar',
+  'quem fala do robô naquele filme?',
+  'essa resposta ficou robótica, vc não respondeu minha pergunta',
+  'você é de Campinas?',
+]) {
+  const answer = ['vc tinha perguntado da conversa de ontem'];
+  assert.equal(quality.asksAboutResponderIdentity(userText), false);
+  assert.deepEqual(quality.enforceLatestIntentMessages(answer, {
+    latestUserText: userText, language: 'pt',
+  }), answer, 'menção incidental não deve trocar assunto por apresentação');
+}
+for (const userText of [
+  'você é um bot?', 'vc é uma IA?', 'é um robô?',
+  'estou falando com uma pessoa de verdade?', 'vc é humana?',
+  'é a Lari ou uma IA?', 'é bot ou a Larissa?', 'vc é a Lari mesmo?',
+  'quem está respondendo?',
+]) {
+  assert.equal(quality.asksAboutResponderIdentity(userText), true);
+  assert.deepEqual(quality.enforceLatestIntentMessages(['sou humana de verdade'], {
+    latestUserText: userText, language: 'pt',
+  }), ['sou a assistente virtual da Lari aqui no Telegram']);
+}
+const transparentAnswer = ['sou a assistente virtual da Lari, e vc tinha perguntado sobre o acesso'];
+assert.deepEqual(quality.enforceLatestIntentMessages(transparentAnswer, {
+  latestUserText: 'vc é um bot?', language: 'pt',
+}), transparentAnswer, 'resposta honesta existente não vira template');
+assert.deepEqual(quality.enforceLatestIntentMessages(['não sou um bot'], {
+  latestUserText: 'vc é uma IA?', language: 'pt',
+}), ['sou a assistente virtual da Lari aqui no Telegram']);
 
 for (const [userText, answer] of [
   ['obrigado', 'por nada'],
