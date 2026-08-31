@@ -111,6 +111,31 @@ const PROCESSING_LEASE_TTL_MS = 90_000;
 const PROCESSING_LEASE_WAIT_MS = 45_000;
 const PROCESSING_LEASE_POLL_MS = 750;
 
+// A cobrança e sua trilha em messages são a fonte de verdade para o PIX. A
+// fila custom_orders serve ao fulfillment; se ela estiver indisponível, o
+// pagamento continua recuperável pela reconciliação e o lead ainda recebe um
+// código PIX que o gateway já gerou.
+const markPaymentFulfillmentWriteDeferred = async (
+    paymentMessageId: string | null | undefined,
+    paymentData: Record<string, unknown>,
+    reason: string,
+) => {
+    if (!paymentMessageId) return false;
+    const update = await supabase.from('messages').update({
+        payment_data: {
+            ...paymentData,
+            fulfillment_status: 'fulfillment_write_failed',
+            fulfillment_write_failed_at: new Date().toISOString(),
+            fulfillment_write_failure: reason,
+        },
+    }).eq('id', paymentMessageId);
+    if (update.error) {
+        console.warn('[PAGAMENTO] Não foi possível marcar fulfillment pendente:', update.error.message);
+        return false;
+    }
+    return true;
+};
+
 const normalizeTelegramImageMimeType = (contentType: string | null, filePath: string) => {
     const normalized = String(contentType || '').split(';')[0].trim().toLowerCase();
     if (normalized.startsWith('image/')) return normalized;
@@ -3010,7 +3035,13 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                                     idempotency_key: idempotencyKey,
                                 },
                             });
-                            if (!customOrderReady) throw new Error('custom_order_recovery_failed');
+                            if (!customOrderReady) {
+                                await markPaymentFulfillmentWriteDeferred(
+                                    lastPixMsg?.id,
+                                    lastPaymentData,
+                                    'custom_order_recovery_failed',
+                                );
+                            }
                         }
                         await persistSalesOrderState(pendingOrder);
                         await sendTelegramMessage(botToken, chatId, `${description} por ${formatBrl(value)}. ta aqui o pix de novo`);
@@ -3126,10 +3157,11 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                                 },
                             });
                             if (!customOrderReady) {
-                                await supabase.from('messages').update({
-                                    payment_data: { ...persistedPaymentData, fulfillment_status: 'fulfillment_write_failed' },
-                                }).eq('id', paymentRecordWrite.data.id);
-                                throw new Error('custom_order_record_failed');
+                                await markPaymentFulfillmentWriteDeferred(
+                                    paymentRecordWrite.data.id,
+                                    persistedPaymentData,
+                                    'custom_order_record_failed',
+                                );
                             }
                         }
                         const pendingOrder = {

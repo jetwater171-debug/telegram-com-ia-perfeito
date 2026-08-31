@@ -63,14 +63,14 @@ const createFakeEventStoreSupabase = () => {
 
 const createFakeCustomOrdersSupabase = (initialStatus) => {
   const state = {
-    row: {
+    row: initialStatus ? {
       id: 'custom-order-1',
       session_id: 'session-1',
       payment_id: 'payment-1',
       status: initialStatus,
       request_brief: 'briefing original',
       amount: 49.9,
-    },
+    } : null,
   };
   const matches = (filters) => filters.every(({ key, value }) => String(state.row?.[key] ?? '') === String(value ?? ''));
   const from = () => {
@@ -87,9 +87,9 @@ const createFakeCustomOrdersSupabase = (initialStatus) => {
       eq(key, value) { filters.push({ key, value }); return query; },
       maybeSingle() { return execute(true); },
       update(nextValues) { operation = 'update'; values = nextValues; return query; },
-      upsert(nextValues, options = {}) {
-        if (!state.row) state.row = clone(nextValues);
-        else if (!options.ignoreDuplicates) Object.assign(state.row, clone(nextValues));
+      insert(nextValues) {
+        if (state.row) return Promise.resolve({ data: null, error: { code: '23505', message: 'duplicate key' } });
+        state.row = { id: 'custom-order-1', ...clone(nextValues) };
         return Promise.resolve({ data: clone(state.row), error: null });
       },
       then(resolve, reject) { return execute(false).then(resolve, reject); },
@@ -297,6 +297,19 @@ const runCase = async ({
   assert.equal(deliveredStore.state.row.request_brief, 'briefing atualizado');
   assert.equal(await customOrders.markCustomOrderPaidSafe('payment-1'), true);
   assert.equal(deliveredStore.state.row.status, 'delivered');
+
+  // 0b. A tabela legada sem UNIQUE(payment_id) também grava o pedido: esse
+  // caminho não depende de ON CONFLICT/UPSERT.
+  const legacyStore = createFakeCustomOrdersSupabase(null);
+  const legacyCustomOrders = loadTypeScript('src/lib/customOrders.ts', {
+    '@/lib/supabaseServer': { supabaseServer: legacyStore.client },
+  });
+  assert.equal(await legacyCustomOrders.recordCustomOrderSafe({
+    sessionId: 'session-1', paymentId: 'payment-1', gateway: 'wiinpay',
+    requestBrief: 'briefing legado', amount: 29.9, product: 'vip', orderId: 'order-legacy',
+  }), true);
+  assert.equal(legacyStore.state.row.status, 'awaiting_payment');
+  assert.equal(legacyStore.state.row.payment_id, 'payment-1');
 
   // 1. O SKU diz vitalício, mas o valor é mensal: contabiliza o pagamento e
   // encaminha para revisão manual, sem liberar o pacote errado.

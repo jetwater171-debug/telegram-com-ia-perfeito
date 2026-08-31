@@ -121,7 +121,9 @@ try {
   assert.match(reconciliationSource, /confirmation_dispatch_state:\s*'notification_reserved'/);
   assert.match(reconciliationSource, /sendTelegramMessageStrict/);
   assert.match(route, /notify:\s*true,\s*\n\s*botToken,\s*\n\s*telegramChatId:\s*chatId/);
-  assert.match(customOrdersSource, /ignoreDuplicates:\s*true/);
+  assert.doesNotMatch(customOrdersSource, /\.upsert\(/);
+  assert.match(customOrdersSource, /select\('id'\)/);
+  assert.match(customOrdersSource, /duplicate key\|unique constraint/);
   assert.match(customOrdersSource, /\['in_progress', 'delivered', 'cancelled'\]/);
   assert.match(route, /isPreviewSemanticallyRelevant\(previewRow, requestedPreviewSpec\.tags\)/);
   assert.match(route, /const lastPayMsg = explicitlyReferencedPayment\s*\|\|\s*currentOrderPayment/);
@@ -133,6 +135,8 @@ try {
   const newPixBlock = route.slice(route.indexOf("if (payment && payment.pixCopiaCola)"));
   assert.ok(newPixBlock.indexOf('paymentRecordWrite') >= 0);
   assert.ok(newPixBlock.indexOf('paymentRecordWrite') < newPixBlock.indexOf('ta aqui o pix`'));
+  assert.match(route, /markPaymentFulfillmentWriteDeferred/);
+  assert.doesNotMatch(route, /throw new Error\('custom_order_(?:record|recovery)_failed'\)/);
   assert.match(reconciliationSource, /trackPaymentOutcomeSafe/);
   assert.match(outcomeSource, /conversation_continued/);
   assert.match(outcomeSource, /repeat_purchase/);

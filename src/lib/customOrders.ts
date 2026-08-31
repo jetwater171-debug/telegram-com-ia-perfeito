@@ -35,18 +35,40 @@ export const recordCustomOrderSafe = async ({
             },
             updated_at: new Date().toISOString(),
         };
-        // O conflito ignora somente o insert. A atualização seguinte não toca no
-        // status, portanto um webhook repetido nunca rebaixa in_progress,
-        // delivered ou cancelled de volta para awaiting_payment.
-        const insert = await supabase.from('custom_orders').upsert({
+        // Algumas instalações mais antigas da tabela não possuem uma restrição
+        // UNIQUE em payment_id. Não usamos upsert aqui: o PostgREST rejeita o
+        // ON CONFLICT antes de gravar qualquer dado nesse cenário.
+        const { data: existing, error: readError } = await supabase
+            .from('custom_orders')
+            .select('id')
+            .eq('payment_id', paymentId)
+            .maybeSingle();
+        if (readError) throw readError;
+
+        // Atualizar somente os campos mutáveis preserva um estado operacional
+        // que o painel já tenha avançado para produção, entrega ou cancelamento.
+        if (existing?.id) {
+            const update = await supabase.from('custom_orders')
+                .update(mutablePayload)
+                .eq('id', existing.id);
+            if (update.error) throw update.error;
+            return true;
+        }
+
+        const insert = await supabase.from('custom_orders').insert({
             ...mutablePayload,
             status: 'awaiting_payment',
-        }, { onConflict: 'payment_id', ignoreDuplicates: true });
-        if (insert.error) throw insert.error;
-        const update = await supabase.from('custom_orders')
-            .update(mutablePayload)
-            .eq('payment_id', paymentId);
-        if (update.error) throw update.error;
+        });
+        if (insert.error) {
+            // Se duas tentativas chegarem juntas em uma tabela com UNIQUE,
+            // a segunda apenas atualiza o pedido que acabou de ser criado.
+            const isDuplicate = insert.error.code === '23505' || /duplicate key|unique constraint/i.test(String(insert.error.message || ''));
+            if (!isDuplicate) throw insert.error;
+            const recoveryUpdate = await supabase.from('custom_orders')
+                .update(mutablePayload)
+                .eq('payment_id', paymentId);
+            if (recoveryUpdate.error) throw recoveryUpdate.error;
+        }
         return true;
     } catch (error: any) {
         if (!missingTable(error)) console.warn('[CUSTOM ORDERS] Falha ao registrar pedido:', error?.message || error);
