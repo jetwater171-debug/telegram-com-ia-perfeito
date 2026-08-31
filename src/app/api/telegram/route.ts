@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { approveChatJoinRequest } from '@/lib/telegram';
 import { appendLeadEventSafe, markAdultVerificationSafe } from '@/lib/brain/eventStore';
+import { triggerProcessMessageWithRetry } from '@/lib/processMessageRetry';
 import {
     hasTrustedAdultVerification,
     isPresellAdultVerificationGuaranteed,
@@ -435,24 +436,11 @@ export async function POST(req: NextRequest) {
 
         after(async () => {
             console.log(`[WEBHOOK] Executing background worker trigger...`);
-            try {
-                const workerResponse = await fetch(workerUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        sessionId: session.id,
-                        triggerMessageId: insertedMsg.id
-                    })
-                });
-                const workerBody = await workerResponse.text();
-                if (!workerResponse.ok) {
-                    console.error(`[WEBHOOK] Worker respondeu ${workerResponse.status}: ${workerBody.slice(0, 800)}`);
-                } else {
-                    console.log(`[WEBHOOK] Worker concluido ${workerResponse.status}: ${workerBody.slice(0, 400)}`);
-                }
-            } catch (err) {
-                console.error("Worker trigger failed:", err);
-            }
+            await triggerProcessMessageWithRetry({
+                workerUrl,
+                sessionId: String(session.id),
+                triggerMessageId: String(insertedMsg.id),
+            });
         });
 
         return NextResponse.json({ ok: true });

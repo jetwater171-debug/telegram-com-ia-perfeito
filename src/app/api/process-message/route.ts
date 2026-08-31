@@ -2,36 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { extractAiMessageText, normalizeAiMessageList } from '@/lib/aiMessageNormalization';
 import { errorMessage, insertMessageWithAiDebug, withAiDebugMessageIndex } from '@/lib/aiDebug';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
-import { sendMessageToGemini } from '@/lib/gemini';
+import { sendMessageToGemini, repairModelReply } from '@/lib/gemini';
+import { inspectModelReply, type ModelReplyContract } from '@/lib/modelReplyContract';
+import { sanitizeConversationHistoryText } from '@/lib/fullConversationHistory';
 import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode, sendTelegramVoice, type TelegramMediaProtection } from '@/lib/telegram';
 import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
 import { reconcilePaymentMessage, reconcilePendingPayments } from '@/lib/paymentReconciliation';
 import { calculateLeadScore, parseLeadScore, toStoredLeadScore } from '@/lib/leadScoring';
-import { shapeConversationBubbles } from '@/lib/conversationBubbles';
 import { findLatestConversationStartAt } from '@/lib/conversationEpisode';
 import {
-    filterMalformedConversationMessages,
     isLikelyIncompleteLeadMessage,
-    isLowSignalLeadReaction,
 } from '@/lib/conversationTurn';
-import {
-    buildConversationRecoveryMessages,
-    buildProcessingFailureRecoveryMessages,
-    detectConversationLanguage,
-    enforceLatestIntentMessages,
-    enforcePendingUserQuestionMessages,
-    enforceRoleOwnershipContinuityMessages,
-    enforceSemanticTurnContinuityMessages,
-    filterConversationConsistencyMessages,
-    refineNewRelationshipMessages,
-} from '@/lib/conversationQuality';
+import { detectConversationLanguage } from '@/lib/conversationQuality';
 import {
     mergeLeadMemoryPatch,
     mergeUniqueLeadMemoryValues as mergeUnique,
     normalizeLeadMemory,
 } from '@/lib/leadMemory';
 import {
-    buildElevenLabsUnavailableReply,
     buildElevenV3Performance,
     cleanTextForElevenLabsSpeech,
     DEFAULT_ELEVENLABS_SETTINGS,
@@ -56,8 +44,6 @@ import {
     detectCommercialSku,
     getCommercialFulfillmentBrief,
     getCommercialOffer,
-    renderCommercialOfferMessage,
-    renderVipMenuMessages,
     type CommercialSku,
 } from '@/lib/commercialCatalog';
 import {
@@ -72,7 +58,7 @@ import {
 import { normalizeBaiModelName } from '@/lib/aiModels';
 import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previewCatalog';
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
-import { buildDeliveredPreviewCaption, isPhotoTakenNow, isPreviewAssetExplicitForUnverifiedLead, rankPreviewCandidatesByMoment } from '@/lib/previewMoment';
+import { isPhotoTakenNow, isPreviewAssetExplicitForUnverifiedLead, rankPreviewCandidatesByMoment } from '@/lib/previewMoment';
 import {
     filterUnsentPreviewAssets,
     normalizePreviewMediaKey as normalizeMediaUrlKey,
@@ -80,9 +66,7 @@ import {
 } from '@/lib/previewDeliveryPolicy';
 import {
     buildSalesOrderSnapshot,
-    canonicalizeSalesOfferMessages,
     evaluateSalesTiming,
-    guardPrematureSaleMessages,
     readActiveSalesOrder,
     type ActiveSalesOrder,
 } from '@/lib/salesTiming';
@@ -259,68 +243,11 @@ const hasExplicitSexualFantasyTrigger = (text: string) => {
     return /(quero te comer|te comeria|vou te comer|te pegava|quero transar|quero meter|meter em voce|meter em voc[eê]|quero te chupar|me chupa|quero gozar|gozar em voce|gozar em voc[eê]|pau|buceta|de 4|por tras|por trás)/i.test(text || '');
 };
 
-const GLUE_DICT = new Set([
-    'amor', 'vida', 'casa', 'banho', 'foto', 'video', 'hoje', 'agora', 'aqui', 'sozinha', 'cansada', 'cansado',
-    'deitada', 'molhada', 'pelada', 'safada', 'gostosa', 'quente', 'fria', 'carente', 'tesao', 'tesão',
-    'buceta', 'pau', 'gozar', 'porra', 'queria', 'querendo', 'saudade'
-]);
-
-const fixGluedWords = (text: string) => {
-    return (text || '').split(/(\s+)/).map((part) => {
-        if (!part || /^\s+$/.test(part)) return part;
-        if (!/^[\p{L}]+$/u.test(part)) return part;
-        const lower = part.toLowerCase();
-        if (lower.length < 8 || lower.length > 22) return part;
-        for (let i = 3; i <= lower.length - 3; i++) {
-            const left = lower.slice(0, i);
-            const right = lower.slice(i);
-            if (GLUE_DICT.has(left) && GLUE_DICT.has(right)) {
-                return `${left} ${right}`;
-            }
-        }
-        return part;
-    }).join('');
-};
-
-const sanitizeOutgoingMessage = (text: unknown, currentUserText = '') => {
-    let out = extractAiMessageText(text);
-    out = out.replace(/\beu\s+sou\s+a\s+lari\b/gi, 'eu sou lari');
-    out = out.replace(/\beu\s+sou\s+a\s+larissa\b/gi, 'eu sou larissa');
-    out = out.replace(/\bsou\s+a\s+lari\b/gi, 'sou lari');
-    out = out.replace(/\bsou\s+a\s+larissa\b/gi, 'sou larissa');
-    out = out.replace(/\bme\s+chamo\s+a\s+lari\b/gi, 'me chamo lari');
-    out = out.replace(/\bme\s+chamo\s+a\s+larissa\b/gi, 'me chamo larissa');
-    out = out.replace(/\bsou\s+eu\b/gi, 'sou lari');
-    out = out.replace(/\beu\s+sou\s+eu\b/gi, 'eu sou lari');
-    // A Lari responde da própria perspectiva; ela não copia o papel do lead.
-    out = out.replace(/\b(?:eu\s+)?quero\s+te\s+comer\b/gi, 'quero dar pra vc');
-    out = out.replace(/\b(?:eu\s+)?quero\s+comer\s+(?:vc|voce|você)\b/gi, 'quero dar pra vc');
-    out = out.replace(/\b(?:eu\s+)?vou\s+te\s+comer\b/gi, 'vou dar pra vc');
-    out = out.replace(/\b(?:eu\s+)?vou\s+comer\s+(?:vc|voce|você)\b/gi, 'vou dar pra vc');
-    out = out.replace(/\b(?:eu\s+)?te\s+comeria\b/gi, 'eu daria pra vc');
-    out = out.replace(/\bimagina\s+eu\s+te\s+comendo\b/gi, 'imagina eu dando pra vc');
-    out = out.replace(/\bamoro\b/gi, 'amor o');
-    out = out.replace(/\b(?:dar\s+)?(?:um\s+)?abra[cç]o\s+virtual\b/gi, 'te dar um abraço bem gostoso');
-    out = out.replace(/\b(?:dar\s+)?(?:um\s+)?beijo\s+virtual\b/gi, 'te dar um beijinho bem gostoso');
-    out = out.replace(/\b(?:um\s+)?carinho\s+virtual\b/gi, 'um carinho bem gostoso');
-    out = out.replace(/\b(?:apoio|presen[cç]a|mundo)\s+virtual\b/gi, 'meu carinho');
-    out = out.replace(/([a-záéíóúâêôãõç])((?:kkk|rsrs)+)\b/gi, '$1 $2');
-    // A interface da Lari é texto puro: sem emojis nem suspense por reticências.
-    out = out.replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\u200D]/gu, '');
-    out = out.replace(/(?:\.{3,}|…+)/gu, '');
-    const mirroredContigo = out.match(/^\s*quero\s+(.+?)\s+contigo\s*[?!.]*\s*$/i);
-    if (mirroredContigo && /^\s*quero\s+.+?\s+contigo\s*[?!.]*\s*$/i.test(String(currentUserText || ''))) {
-        out = `quer ${mirroredContigo[1].trim()} comigo?`;
-    }
-    out = out.replace(/\s+/g, ' ');
-    out = out.replace(/\s+([,.!?])/g, '$1').trim();
-    out = fixGluedWords(out);
-    return out;
-};
+// Transport cleanup only: never rewrite the model's vocabulary or perspective.
+const sanitizeOutgoingMessage = (text: unknown) => extractAiMessageText(text).replace(/\u0000/g, '').trim();
 
 const userAskedToRepeatMedia = (text: string) => /\b(de novo|outra vez|reenviar|reenvia|envia de novo|manda de novo|a mesma foto|o mesmo video|o mesmo vídeo)\b/i.test(text || '');
 
-const isMediaSetupPromise = (message: string) => /\b(vou te mandar|vou mandar|vou separar|vou escolher|separei pra vc|tirei uma foto|fotinha pra vc|videozinho pra vc)\b/i.test(message || '');
 
 const shouldProtectAdultPreview = (asset: any) => {
     if (!asset || typeof asset !== 'object') return false;
@@ -351,167 +278,9 @@ const shouldProtectAdultPreview = (asset: any) => {
     return manuallyProtected || explicitness === 'nude' || nudeOrCoveredNude;
 };
 
-const OPENING_VICES = new Set(['amor', 'anjo', 'vida', 'nossa', 'ai', 'eita', 'perfeito']);
-
-const firstWordOf = (text: string) => {
-    const match = normalizeLoopText(text).match(/^\S+/);
-    return match ? match[0] : '';
-};
-
-const removeOpeningVice = (text: string) => {
-    return (text || '').replace(/^(amor|anjo|vida|nossa|ai|eita|perfeito)[,\s]+/i, '').trim();
-};
-
-const reduceOpeningRepetition = (messages: string[], lastBotContent: string) => {
-    let previousOpening = firstWordOf(lastBotContent);
-    return messages.map((msg) => {
-        const opening = firstWordOf(msg);
-        if (opening && opening === previousOpening && OPENING_VICES.has(opening)) {
-            const cleaned = removeOpeningVice(msg);
-            previousOpening = firstWordOf(cleaned || msg);
-            return cleaned || msg;
-        }
-        previousOpening = opening || previousOpening;
-        return msg;
-    });
-};
-
-const userProbablyProvidedName = (text: string, extractedName?: string | null) => {
-    const t = (text || '').trim();
-    if (extractedName && String(extractedName).trim().length >= 2) return true;
-    if (/\b(meu nome [eé]|me chamo|sou o|sou a|pode me chamar de)\s+[\p{L}]{2,}/iu.test(t)) return true;
-    const compact = t.replace(/[^\p{L}\s]/gu, '').trim();
-    const words = compact.split(/\s+/).filter(Boolean);
-    if (words.length === 1 && words[0].length >= 2 && words[0].length <= 18) {
-        return !/^(oi|ola|ol[aá]|sim|nao|não|bom|boa|tudo|bem|vc|voce|você|amor|anjo|vida)$/iu.test(words[0]);
-    }
-    return false;
-};
-
-const removePrematureNameIntro = (messages: string[], userText: string, extractedName?: string | null) => {
-    if (userProbablyProvidedName(userText, extractedName)) return messages;
-    const filtered = messages.filter((msg) => {
-        const norm = normalizeLoopText(msg);
-        const isIntro = /\b(prazer|muito prazer)\b/i.test(norm) &&
-            /\b(sou|chamo|lari|larissa)\b/i.test(norm);
-        return !isIntro;
-    });
-    return filtered.length > 0 ? filtered : messages;
-};
-
-const userAskedName = (text: string) => /(nome|chamo|chama)/i.test(text || '');
-
 const sessionHasUsefulName = (name: any) => {
     const n = String(name || '').trim().toLowerCase();
     return n.length >= 2 && !['desconhecido', 'anonimo', 'anônimo'].includes(n);
-};
-
-const removeAnsweredNameQuestions = (messages: string[], userText: string, sessionName: any) => {
-    const userComplainedNameWasAsked = /(ja te falei|já te falei|ja falei|já falei|voce nao lembra|você não lembra)/i.test(userText || '');
-    if (!sessionHasUsefulName(sessionName) && !userAskedName(userText) && !userComplainedNameWasAsked) return messages;
-    const filtered = messages.filter((msg) => !/(qual|como).{0,24}(nome|chamo|chama)|nome de vdd/i.test(msg));
-    return filtered.length > 0 ? filtered : messages;
-};
-
-const removeAnsweredCityQuestions = (messages: string[], hasCity: boolean, userAskedCity: boolean) => {
-    if (!hasCity && !userAskedCity) return messages;
-    const filtered = messages.filter((msg) => !/(de onde (vc|voce|você)|vc e de onde|você é de onde|qual (sua|a) cidade|onde (vc|voce|você) mora)/i.test(msg));
-    return filtered.length > 0 ? filtered : messages;
-};
-
-const removeGenericBotPhrases = (messages: string[]) => {
-    const blocked = [
-        /como posso ajudar/i,
-        /em que posso te ajudar/i,
-        /abraço virtual/i,
-        /abraco virtual/i,
-        /beijo virtual/i,
-        /carinho virtual/i,
-        /apoio virtual/i,
-        /mundo virtual/i,
-        /apoio emocional/i,
-        /ajuda psicológica/i,
-        /estou aqui para/i,
-        /vou pedir pra gravarem/i,
-        /vou pedir para gravarem/i,
-        /vou pedir pra equipe/i,
-        /vou pedir para equipe/i,
-        /vou guardar a ideia/i,
-        /vou guardar essa ideia/i,
-    ];
-    return messages.filter((msg) => !blocked.some((pattern) => pattern.test(msg)));
-};
-
-const isPrematureMediaReaction = (message: string) => {
-    const text = normalizeLoopText(message);
-    return /\b(o que achou|oq achou|me fala o que achou|gostou|curtiu|achou gostosa|achou bonita)\b/i.test(text)
-        || /\b(ta aqui|tá aqui|te mandei|acabei de mandar|ja mandei|já mandei|vai aí|vai ai|olha aí|olha ai)\b/i.test(text)
-        || /\b(?:olha|ve|vê|confere|toma)\b.{0,45}\b(?:essa|esse|foto|fotinha|imagem|previa|prévia|video|vídeo|pedacinho)\b/i.test(text)
-        || /\b(?:tirei|separei|escolhi|mandei)\b.{0,45}\b(?:essa|uma|foto|fotinha|imagem|previa|prévia|video|vídeo|pedacinho)\b/i.test(text)
-        || /\b(?:que tal|se liga|dá uma olhada|da uma olhada)\b.{0,35}\b(?:nesse|nessa|esse|essa|pedacinho|foto|previa|prévia)\b/i.test(text)
-        || /\b(?:vou te mandar|to te mandando|tô te mandando|vou mandar|mandando agora)\b/i.test(text)
-        || isMediaSetupPromise(message);
-};
-
-const isMediaAnnouncement = (message: string) => {
-    const text = normalizeLoopText(message);
-    return isPrematureMediaReaction(message)
-        || /\b(?:foto|fotinha|fotos|imagem|imagens|selfie|previa|prévia|video|vídeo|nude|nudes|pedacinho)\b/i.test(text);
-};
-
-const buildNaturalMediaSetup = (userText: string, action?: string, suggested?: string) => {
-    const safeSuggestion = String(suggested || '').trim();
-    if (safeSuggestion && !isMediaAnnouncement(safeSuggestion)) return safeSuggestion;
-
-    if (/video/i.test(String(action || '')) || /\bvideo|vídeo\b/i.test(userText)) {
-        return 'vc falando assim me deixa ainda mais provocada';
-    }
-    if (/\b(leite|condensado|doce|lambuzad)\b/i.test(userText)) {
-        return 'essa ideia foi bem especifica kkk mexeu comigo demais';
-    }
-    if (/\b(bunda|de 4|de quatro|costas|por tras|por trás)\b/i.test(userText)) {
-        return 'so de imaginar essa cena eu ja fico toda arrepiada';
-    }
-    return 'vc falando assim me deixa toda arrepiada';
-};
-
-const removeDuplicateNormalizedMessages = (messages: string[]) => {
-    const seen = new Set<string>();
-    return messages.filter((msg) => {
-        const norm = normalizeLoopText(msg);
-        if (!norm) return false;
-        if (seen.has(norm)) return false;
-        seen.add(norm);
-        return true;
-    });
-};
-
-const removeUserEchoMessages = (messages: string[], userText: string) => {
-    const normUser = normalizeLoopText(userText);
-    if (!normUser || normUser.length < 3) return messages;
-    return messages.filter((msg) => {
-        const normMsg = normalizeLoopText(msg);
-        return normMsg !== normUser && !normUser.includes(normMsg);
-    });
-};
-
-const applyConversationQualityGuards = (messages: string[], opts: {
-    userText: string;
-    sessionName: any;
-    hasCity: boolean;
-    userAskedCity: boolean;
-    extractedName?: string | null;
-    lastBotContent: string;
-}) => {
-    let out = [...messages];
-    out = removeUserEchoMessages(out, opts.userText);
-    out = removeGenericBotPhrases(out);
-    out = removePrematureNameIntro(out, opts.userText, opts.extractedName);
-    out = removeAnsweredNameQuestions(out, opts.userText, opts.sessionName);
-    out = removeAnsweredCityQuestions(out, opts.hasCity, opts.userAskedCity);
-    out = reduceOpeningRepetition(out, opts.lastBotContent);
-    out = removeDuplicateNormalizedMessages(out);
-    return out;
 };
 
 const extractPrices = (text: string) => {
@@ -537,21 +306,6 @@ const summarizePaymentGatewayResult = (payment: any) => ({
         })).slice(0, 6)
         : [],
 });
-
-const enforceSingleFixedCommercialOffer = (
-    messages: string[],
-    sku: CommercialSku,
-) => {
-    const offer = getCommercialOffer(sku);
-    if (!offer) return messages;
-    const priceLike = /R\$\s*\d{1,4}(?:[.,]\d{1,2})?|\b(?:19|29|49|79)[.,]90\b|\b50(?:[.,]00)?\s*reais?\b/iu;
-    const kept = (messages || [])
-        .map((message) => String(message || '').trim())
-        .filter(Boolean)
-        .filter((message) => !priceLike.test(message))
-        .slice(0, 3);
-    return [...kept, renderCommercialOfferMessage(offer)].slice(0, 4);
-};
 
 const PAID_STATUS_WORDS = new Set([
     'approved',
@@ -1082,7 +836,7 @@ export async function POST(req: NextRequest) {
         await new Promise((resolve) => setTimeout(resolve, PROCESSING_LEASE_POLL_MS));
     }
 
-    const processingAttemptStartedAt = new Date().toISOString();
+    let externalDeliveryStarted = false;
 
     try {
         // O worker pode ter esperado outro turno terminar. Confere novamente se
@@ -1228,16 +982,6 @@ export async function POST(req: NextRequest) {
                 occurredAt: lastGroupedUserAt,
             }),
         ]);
-    }
-    // "kkkk" isolado é só reação à última fala. Não volta para a IA, pois ela
-    // pode ressuscitar uma pergunta antiga e produzir texto sem sentido.
-    if (!adultDeclaredNow && groupedUserMessages.length === 1 && isLowSignalLeadReaction(userOnlyText)) {
-        console.log('[PROCESSADOR] Reação curta isolada; aguardando próximo turno do lead.');
-        return NextResponse.json({ status: 'low_signal_ignored' });
-    }
-    if (groupedUserMessages.length === 1 && isLikelyIncompleteLeadMessage(userOnlyText)) {
-        console.log('[PROCESSADOR] Frase interrompida sem complemento; aguardando continuação do lead.');
-        return NextResponse.json({ status: 'incomplete_turn_waiting' });
     }
     // O aprendizado do turno anterior roda em paralelo com a chamada principal.
     // Assim ele melhora a política sem acrescentar latência perceptível ao lead.
@@ -1534,6 +1278,8 @@ export async function POST(req: NextRequest) {
         },
         leadMemory,
         isConversationStart,
+        historyThroughCreatedAt: lastGroupedUserAt,
+        currentTurnMessageIds: groupedUserMessages.map((message: any) => String(message.id)),
     };
 
     const extractFileAndCaption = (input: string) => {
@@ -1546,37 +1292,17 @@ export async function POST(req: NextRequest) {
         return { fileId, caption };
     };
 
-    const priorTurnText = groupedUserMessages.slice(0, -1).map((message: any) => String(message.content || '')).join('\n').trim();
-    const latestLooksLikeShortContinuation = !/[?]/.test(latestUserText)
-        && latestUserText.split(/\s+/).filter(Boolean).length <= 7
-        && !/\b(nao|não|mas|so que|só que|na verdade|quis dizer|mudei|esquece|para)\b/i.test(latestUserText);
-    const pendingUserQuestion = latestLooksLikeShortContinuation
-        ? [...groupedUserMessages.slice(0, -1)]
-            .reverse()
-            .map((message: any) => String(message.content || '').trim())
-            .find((message: string) => /\?|^(quem|qual|quanto|como|onde|quando|por que|porque|pq|com o que|o que)\b/i.test(message)) || ''
-        : '';
     const conversationLanguage = detectConversationLanguage(
         latestUserText,
         leadMemory?.metadata?.redirect_accept_language,
     );
-    let finalUserMessage = `[CONTEXTO ANTERIOR DESTE TURNO]
-${priorTurnText || '(nenhuma mensagem anterior no pacote)'}
-
-[PERGUNTA AINDA NAO RESPONDIDA NESTE PACOTE]
-${pendingUserQuestion || '(nenhuma)'}
-
-[ULTIMA MENSAGEM DO LEAD — RESPOSTA OBRIGATORIA]
-${latestUserText || combinedText}
+    let finalUserMessage = `[MENSAGENS DO LEAD NO MESMO TURNO]
+${sanitizeConversationHistoryText(userOnlyText || combinedText)}
 
 [REGRA DE CONVERSA]
-Trate todas as mensagens do pacote como um unico turno. Se existir PERGUNTA AINDA NAO RESPONDIDA, responda ela antes de reagir ao complemento curto mais recente.
-A ULTIMA MENSAGEM so substitui o assunto anterior quando houver correcao, objecao, negativa ou mudanca real de intencao. Um "muito", "sim", detalhe ou complemento curto nao apaga a pergunta anterior.
-Nunca deixe pergunta direta sem resposta e nunca troque quem contou, estuda, trabalha, sente ou faz alguma coisa.
-IDIOMA DO TURNO: ${conversationLanguage === 'en' ? 'English' : conversationLanguage === 'es' ? 'Español' : 'Português do Brasil'}. Responda somente nesse idioma, salvo se o lead pedir outro.
-Use de 2 a 4 baloes curtos. Em conversa normal, responda e depois conduza o assunto em 2 ou 3 baloes; nunca deixe o lead carregar a conversa sozinho.
-Cada balao deve ter uma funcao e no maximo 85 caracteres. Em flerte, venda ou fantasia adulta reciproca, use 3 ou 4 para fazer a cena ou a decisao avancar.
-VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. Sem pedido explicito, use voz somente perto da conversao (PREVIEW, SALES_PITCH, NEGOTIATION ou CLOSING). Nunca escreva "aqui minha voz", "vou gravar" ou outra promessa de audio nos baloes; o backend confirma a entrega ou troca por uma desculpa natural.`;
+Leia o pacote na ordem e responda ao assunto e perguntas ainda pendentes; um complemento curto não apaga a pergunta anterior. Reação específica primeiro, no máximo uma pergunta opcional. Normalmente 1 ou 2 balões completos, sem tamanho artificial.
+IDIOMA: ${conversationLanguage === 'en' ? 'English' : conversationLanguage === 'es' ? 'Español' : 'Português'}.
+VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento e a capacidade disponível. Não prometa entrega antes do resultado operacional.`;
     let mediaData = undefined;
 
     // Detectar Audio
@@ -1605,7 +1331,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 };
 
                 // Remove o tag interna para a IA não se confundir, ou passamos uma instrução
-                finalUserMessage = "Enviou um áudio de voz.";
+                finalUserMessage += "\n[ANEXO: áudio recebido; ouça o arquivo junto com o texto do turno.]";
             }
         } catch (e) {
             console.error("Erro ao baixar áudio:", e);
@@ -1617,7 +1343,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     if (videoMatch) {
         const { fileId, caption } = extractFileAndCaption(videoMatch[0]);
         // Sempre avise a IA que o video foi recebido.
-        finalUserMessage = "Enviou um v??deo. O sistema confirmou o recebimento do v??deo." + (caption ? `\nLegenda do usu??rio: ${caption}` : '');
+        finalUserMessage += "\n[ANEXO: vídeo recebido.]";
         if (fileId && botToken) {
             try {
                 const { getTelegramFilePath, getTelegramFileDownloadUrl } = await import('@/lib/telegram');
@@ -1690,6 +1416,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 };
 
                 finalUserMessage = [
+                    finalUserMessage,
                     "O lead enviou uma foto. Analise a imagem real antes de responder.",
                     "Prioridade maxima: se a imagem parecer comprovante de PIX, transferencia, recibo, tela de banco, QR pago ou comprovante de pagamento, trate como comprovante e use action check_payment_status.",
                     "Nao presuma que e nude/foto +18. So reaja como foto sensual se a imagem realmente mostrar isso.",
@@ -1740,6 +1467,9 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         action: aiResponse.action,
         state: aiResponse.current_state,
     });
+    const modelAuthoredMessages = normalizeAiMessageList(aiResponse.messages);
+    const modelAuthoredAction = String(aiResponse.action || 'none');
+    const replyCorrections: string[] = [];
     const attemptedPrematurePayment = aiResponse.action === 'generate_pix_payment' && !salesTiming.canGeneratePayment;
     if (attemptedPrematurePayment) {
         console.log('[VENDA] PIX prematuro bloqueado', {
@@ -1751,26 +1481,11 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         aiResponse.payment_details = null;
         aiResponse.current_state = salesTiming.canPitchPrice ? 'SALES_PITCH' : 'HOT_TALK';
     }
-    // Roda em todo turno: mesmo sem contexto comercial, uma saída defeituosa do
-    // modelo nunca pode transformar apresentação ou conversa neutra em anúncio.
-    aiResponse.messages = guardPrematureSaleMessages({
-        messages: Array.isArray(aiResponse.messages) ? aiResponse.messages : [],
-        product: salesTiming.activeProduct,
-        canPitchPrice: salesTiming.canPitchPrice,
-        canGeneratePayment: salesTiming.canGeneratePayment,
-        userText: userOnlyText,
-    });
     if (requestedPaidEroticAudio && !paidEroticAudioEntitled) {
-        const price = Number(offerPlan?.value || 14.90).toFixed(2).replace('.', ',');
         aiResponse.action = 'none';
         aiResponse.current_state = 'SALES_PITCH';
         aiResponse.payment_details = null;
-        aiResponse.messages = [
-            requestedEroticAudioWithName
-                ? 'faço sim... do jeitinho que vc pediu e falando seu nome'
-                : 'faço sim... um áudio só seu e do jeitinho que vc pediu',
-            `esse áudio personalizado fica R$ ${price}, quer que eu faça?`,
-        ];
+        replyCorrections.push('requested_custom_audio_requires_payment');
     }
     const adultCommercialProduct = ['vip', 'video_call', 'erotic_audio', 'custom_photo', 'custom_video', 'custom_request', 'evaluation'].includes(String(salesTiming.activeProduct || ''));
     const adultPaymentVerificationRequired = salesTiming.canGeneratePayment
@@ -1781,14 +1496,14 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         aiResponse.current_state = 'SALES_PITCH';
         aiResponse.next_best_action = 'MAKE_OFFER';
         aiResponse.payment_details = null;
-        aiResponse.messages = renderVipMenuMessages();
+        // The model presents the menu; only its commercial decision is constrained.
     }
     if (adultPaymentVerificationRequired) {
         aiResponse.action = 'none';
         aiResponse.current_state = 'CONNECTION';
         aiResponse.next_best_action = 'ASK';
         aiResponse.payment_details = null;
-        aiResponse.messages = ['antes de gerar o pagamento, confirma pra mim que vc tem 18 anos ou mais?'];
+        replyCorrections.push('adult_verification_required');
     }
     const backendMustGeneratePayment = salesTiming.canGeneratePayment
         && !adultPaymentVerificationRequired
@@ -1810,14 +1525,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     // reaproveitar a cobranca ou o pagamento de um pedido anterior.
     let activeSalesOrder: ActiveSalesOrder | null = salesTiming.activeOrder;
     let responseHasPrice = extractPrices((Array.isArray(aiResponse.messages) ? aiResponse.messages : []).join('\n')).length > 0;
-    const fixedCommercialOffer = getCommercialOffer(offerPlan?.sku as CommercialSku);
-    if (offerPlan && fixedCommercialOffer && !adultPaymentVerificationRequired
-        && (salesTiming.mustStateOfferNow || responseHasPrice || aiResponse.action === 'generate_pix_payment')) {
-        aiResponse.messages = enforceSingleFixedCommercialOffer(aiResponse.messages || [], fixedCommercialOffer.sku);
-        responseHasPrice = true;
-    } else if (offerPlan && responseHasPrice && !fixedCommercialOffer) {
-        aiResponse.messages = canonicalizeSalesOfferMessages(aiResponse.messages || [], offerPlan.value);
-    }
+    responseHasPrice = responseHasPrice || Boolean(offerPlan && salesTiming.mustStateOfferNow && !adultPaymentVerificationRequired);
     if (offerPlan && (responseHasPrice || aiResponse.action === 'generate_pix_payment' || adultPaymentVerificationRequired)) {
         const nextOrderStatus = aiResponse.action === 'generate_pix_payment' || adultPaymentVerificationRequired
             ? 'accepted'
@@ -1878,7 +1586,8 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         postPurchaseCooldownActive: Number.isFinite(cooldownUntil) && cooldownUntil > Date.now(),
         pendingPaymentId: brainRuntime.reality.payment.pendingPaymentId,
     });
-    aiResponse = hardValidation.response;
+    aiResponse = { ...hardValidation.response, messages: modelAuthoredMessages };
+    replyCorrections.push(...hardValidation.corrections);
     responseHasPrice = extractPrices((Array.isArray(aiResponse.messages) ? aiResponse.messages : []).join('\n')).length > 0;
     if (hardValidation.corrections.length > 0) {
         console.log('[HARD VALIDATOR] decisão corrigida:', hardValidation.corrections);
@@ -2011,7 +1720,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         aiResponse.preview_id = null;
         aiResponse.payment_details = null;
         aiResponse.next_best_action = 'ASK';
-        aiResponse.messages = ['antes de continuar, confirma pra mim que vc tem 18 anos ou mais?'];
+        replyCorrections.push('adult_verification_required');
         if (!hardValidation.corrections.includes('adult_verification_required')) {
             hardValidation.corrections.push('adult_verification_required');
         }
@@ -2226,6 +1935,40 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             shouldDeliverMedia = false;
             mediaSuppressedForRepetition = true;
         }
+    }
+
+    const voiceAvailableForReply = elevenLabsSettings.enabled && Boolean(elevenLabsSettings.apiKey) && Boolean(elevenLabsSettings.voiceId);
+    const voiceRequestedByLead = userAskedForElevenLabsAudio(userOnlyText);
+    const voiceAllowedForReply = voiceRequestedByLead || isElevenLabsConversionMoment({
+        stage: String(aiResponse.current_state || ''), canPitchPrice: salesTiming.canPitchPrice, leadHeat: currentLeadHeat,
+    });
+    if (aiResponse.action === 'send_voice_reply' && (!voiceAvailableForReply || !voiceAllowedForReply)) {
+        aiResponse.action = 'none';
+        replyCorrections.push('voice_unavailable_for_this_turn');
+    }
+    const actionFamily = (action: string) => MEDIA_ACTIONS.has(action) ? 'media' : action;
+    const replyContract: ModelReplyContract = {
+        action: String(aiResponse.action || 'none'),
+        adultConfirmationRequired: adultPaymentVerificationRequired || replyCorrections.includes('adult_verification_required'),
+        mustPresentVipMenu: salesTiming.mustPresentVipMenu,
+        offer: offerPlan ? { value: offerPlan.value, description: offerPlan.description } : null,
+        requireOfferPrice: Boolean(offerPlan && (salesTiming.mustStateOfferNow || responseHasPrice)),
+        mediaUnavailable: mediaSuppressedForRepetition || mediaSuppressedForPolicy,
+        voiceUnavailable: !voiceAvailableForReply && (voiceRequestedByLead || modelAuthoredAction === 'send_voice_reply'),
+        // Neste ponto o gateway ainda não executou a cobrança nem liberou a
+        // compra. Recibos e confirmações só nascem do resultado autoritativo.
+        currentPaymentConfirmed: false,
+        pixGenerated: false,
+        fulfillmentReleased: false,
+        operationChanged: actionFamily(modelAuthoredAction) !== actionFamily(String(aiResponse.action || 'none')),
+        corrections: [...new Set(replyCorrections)],
+    };
+    aiResponse.messages = modelAuthoredMessages;
+    const replyIssues = inspectModelReply(aiResponse.messages, replyContract);
+    if (replyIssues.length || replyContract.operationChanged || replyContract.corrections?.length
+        || replyContract.mediaUnavailable || replyContract.voiceUnavailable) {
+        replyContract.corrections = [...(replyContract.corrections || []), ...replyIssues];
+        await repairModelReply(String(session.id), aiResponse, replyContract);
     }
 
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
@@ -2481,126 +2224,11 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         .filter((row: any) => row.sender === 'user')
         .map((row: any) => String(row.content || ''))
         .filter(Boolean);
-    const buildRecoveryMessages = () => buildConversationRecoveryMessages({
-        userText: latestUserText,
-        pendingQuestion: pendingUserQuestion,
-        recentBotTexts,
-        recentUserTexts,
-        action: String(aiResponse.action || 'none'),
-        language: conversationLanguage,
-    });
-
-    const outgoingMessages = normalizeAiMessageList(aiResponse.messages);
-
-    let safeMessages = filterConversationConsistencyMessages(
-        outgoingMessages.length > 0 ? outgoingMessages : buildRecoveryMessages(),
-        {
-            currentUserText: latestUserText,
-            recentUserTexts,
-        },
-    )
-        .map((m) => sanitizeOutgoingMessage(m, latestUserText))
-        .filter(Boolean);
-
+    // No conversational heuristics or canned fallbacks after model generation.
+    // Operational incompatibilities have already been repaired by the model.
+    const safeMessages = normalizeAiMessageList(aiResponse.messages);
     const lastBotContent = lastBotMsg?.content || '';
-    safeMessages = applyConversationQualityGuards(safeMessages, {
-        userText: latestUserText,
-        // O perfil do Telegram nao prova como um lead novo prefere ser chamado.
-        sessionName: lastBotMsg ? session.user_name : null,
-        hasCity,
-        userAskedCity: cityQuestion,
-        extractedName: aiResponse.extracted_user_name,
-        lastBotContent
-    });
-    safeMessages = enforceLatestIntentMessages(safeMessages, {
-        latestUserText,
-        language: conversationLanguage,
-    });
-    safeMessages = enforcePendingUserQuestionMessages(safeMessages, {
-        pendingQuestion: pendingUserQuestion,
-    });
-    safeMessages = enforceRoleOwnershipContinuityMessages(safeMessages, {
-        latestUserText,
-        recentBotTexts,
-    });
-    safeMessages = enforceSemanticTurnContinuityMessages(safeMessages, {
-        latestUserText,
-        recentUserTexts,
-    });
-    safeMessages = safeMessages.map((message) => sanitizeOutgoingMessage(message, latestUserText)).filter(Boolean);
-    const relationshipStageBeforeTurn = String(leadMemory.relationship_stage || 'new').trim().toLowerCase();
-    const episodeStartedAtMs = Date.parse(String(leadMemory.metadata?.conversation_started_at || ''));
-    const episodeLeadTurns = Number.isFinite(episodeStartedAtMs)
-        ? recentSalesHistory.filter((message: any) => message.sender === 'user'
-            && Date.parse(String(message.created_at || '')) >= episodeStartedAtMs).length
-        : Number.POSITIVE_INFINITY;
-    const isEarlyConversationEpisode = isConversationStart || episodeLeadTurns <= 3;
-    // O estado probabilistico pode estar atrasado, mas uma mensagem anterior da
-    // Lari e um fato objetivo. Nunca rebaixe um retorno para primeiro contato.
-    const isActualFirstRelationshipTurn = !lastBotMsg && (isConversationStart
-        || !relationshipStageBeforeTurn
-        || relationshipStageBeforeTurn === 'new'
-        || relationshipStageBeforeTurn === 'unknown'
-        || isEarlyConversationEpisode);
-    if (isActualFirstRelationshipTurn) {
-        safeMessages = refineNewRelationshipMessages(safeMessages, {
-            userText: userOnlyText,
-            lastBotContent,
-            hasKnownName: sessionHasUsefulName(session.user_name) || userProbablyProvidedName(userOnlyText, aiResponse.extracted_user_name),
-            isConversationStart,
-            variationKey: String(session.id),
-        });
-    }
-    if (mediaSuppressedForRepetition || mediaSuppressedForPolicy) {
-        safeMessages = safeMessages.filter((message: string) => !isMediaAnnouncement(message));
-    }
-    if (safeMessages.length === 0 && (!userAskedMedia || mediaSuppressedForRepetition || mediaSuppressedForPolicy)) {
-        safeMessages = mediaSuppressedForRepetition
-            ? ['essa eu já tinha te mandado, me pede outra diferente']
-            : buildRecoveryMessages();
-    }
-
     const stage = String(aiResponse.current_state || '').toUpperCase();
-    const explicitFantasy = hasExplicitSexualFantasyTrigger(userOnlyText);
-    const maxMessagesForTurn = (() => {
-        if (stage === 'PAYMENT_CHECK' || aiResponse.action === 'generate_pix_payment') return 2;
-        if (stage === 'NEGOTIATION' || stage === 'CLOSING' || stage === 'SALES_PITCH') return 3;
-        if (explicitFantasy) return Math.min(4, Math.max(2, Number(aiResponse.recommended_message_count || 2)));
-        if (isEarlyConversationEpisode) return 2;
-        return Math.min(3, Math.max(2, Number(aiResponse.recommended_message_count || 2)));
-    })();
-
-    safeMessages = shapeConversationBubbles(safeMessages, {
-        preferredCount: aiResponse.recommended_message_count || 2,
-        maxBubbles: maxMessagesForTurn,
-        maxChars: aiResponse.max_chars_per_message || 75,
-    });
-
-    safeMessages = filterConversationConsistencyMessages(safeMessages, {
-        currentUserText: latestUserText,
-        recentUserTexts,
-        recentBotTexts,
-    });
-    safeMessages = filterMalformedConversationMessages(safeMessages);
-    if (safeMessages.length === 0 && !MEDIA_ACTIONS.has(String(aiResponse.action || 'none'))) {
-        safeMessages = buildRecoveryMessages();
-    }
-    safeMessages = safeMessages
-        .map((message) => sanitizeOutgoingMessage(message, latestUserText))
-        .filter(Boolean)
-        .slice(0, 4);
-    // Última palavra comercial é sempre do catálogo do backend. Esta etapa roda
-    // depois de todas as revisoras para que nenhuma delas reintroduza preço antigo.
-    if (hardValidation.corrections.includes('adult_verification_required')) {
-        safeMessages = ['antes de continuar, confirma pra mim que vc tem 18 anos ou mais?'];
-    } else if (salesTiming.mustPresentVipMenu) {
-        safeMessages = renderVipMenuMessages();
-    } else if (fixedCommercialOffer
-        && !adultPaymentVerificationRequired
-        && !hardValidation.corrections.includes('adult_verification_required')
-        && (salesTiming.mustStateOfferNow || responseHasPrice || aiResponse.action === 'generate_pix_payment')) {
-        safeMessages = enforceSingleFixedCommercialOffer(safeMessages, fixedCommercialOffer.sku);
-    }
 
     const isMediaDeliveryTurn = MEDIA_ACTIONS.has(String(aiResponse.action || 'none'));
     // Em turno de mídia, nenhum texto que prometa "olha" ou "te mandei" sai
@@ -2609,7 +2237,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     // vídeo. Os demais continuam a conversa depois da entrega, sem repetir a
     // legenda como uma nova mensagem solta.
     const previewCaptionCandidate = isMediaDeliveryTurn
-        ? sanitizeOutgoingMessage(safeMessages[0] || '', latestUserText).slice(0, 85)
+        ? sanitizeOutgoingMessage(safeMessages[0] || '')
         : '';
     const deferredMediaMessages = isMediaDeliveryTurn ? safeMessages.slice(1, 4) : [];
     let outgoingToSend = isMediaDeliveryTurn
@@ -2649,7 +2277,7 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         status: 'delivered' | 'recovered' | 'failed',
         details: { mediaType?: string; mediaUrl?: string; protected?: boolean; caption?: string } = {},
     ) => {
-        const caption = sanitizeOutgoingMessage(details.caption || '', latestUserText).slice(0, 85);
+        const caption = sanitizeOutgoingMessage(details.caption || '');
         const previousCaptionHistory = Array.isArray(operationalLeadMemory.metadata?.preview_caption_history)
             ? operationalLeadMemory.metadata.preview_caption_history.map(String).filter(Boolean)
             : [];
@@ -2736,19 +2364,6 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         && !recentAudio
         && aiResponse.action === 'none';
 
-    if (aiRequestedVoiceAction && !aiSelectedVoice && !userWantsAudio) {
-        // A voz automatica e um recurso de conversao, nao um enfeite de conversa comum.
-        aiResponse.action = 'none';
-        outgoingToSend = outgoingToSend.filter((message: string) => !isElevenLabsDeliveryPromise(message));
-        if (outgoingToSend.length === 0) outgoingToSend = buildRecoveryMessages();
-    }
-    if (userWantsAudio && !voiceReady) {
-        outgoingToSend = [buildElevenLabsUnavailableReply({
-            language: conversationLanguage,
-            seed: `${session.id}:${triggerMessageId || lastGroupedUserAt}:voice-unavailable`,
-        })];
-    }
-
     let preferredAudioIndex = (shouldForceVoice || automaticConversionVoice) ? outgoingToSend.findIndex((message: string) =>
         shouldUseElevenLabsAudio({
             settings: elevenLabsSettings,
@@ -2772,26 +2387,11 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
     const audioMaxWords = userWantsAudio
         ? ELEVENLABS_REQUESTED_AUDIO_MAX_WORDS
         : ELEVENLABS_CONVERSION_AUDIO_MAX_WORDS;
-    const verifiedVoiceLeadName = sessionHasUsefulName(session.user_name)
-        ? String(session.user_name).trim().split(/\s+/)[0].replace(/[^\p{L}'-]/gu, '').slice(0, 30)
-        : '';
-    const paidAudioExplicitlyRequestsName = paidEroticAudioEntitled && requestedEroticAudioWithName;
-    const shouldSayLeadName = Boolean(verifiedVoiceLeadName)
-        && (paidAudioExplicitlyRequestsName
-            || stablePercent(`${session.id}:${triggerMessageId || lastGroupedUserAt}:voice-name`) < 28);
-    if (shouldForceVoice) {
-        const combined = outgoingToSend.slice(0, userWantsAudio ? 2 : 1).join('. ');
-        if (combined.length >= 8 && !isUnsafeForElevenLabsVoice(combined)) {
-            outgoingToSend = [combined];
-            preferredAudioIndex = 0;
-            audioSpokenText = combined;
-        }
+    if (shouldForceVoice && outgoingToSend.length > 0) {
+        preferredAudioIndex = Math.max(0, preferredAudioIndex);
+        audioSpokenText = outgoingToSend[preferredAudioIndex];
     } else if (preferredAudioIndex >= 0) {
         audioSpokenText = outgoingToSend[preferredAudioIndex];
-    }
-    if (audioSpokenText && shouldSayLeadName
-        && !new RegExp(`\\b${verifiedVoiceLeadName}\\b`, 'iu').test(audioSpokenText)) {
-        audioSpokenText = `${verifiedVoiceLeadName}... ${audioSpokenText}`;
     }
     if (audioSpokenText) {
         audioSpokenText = limitElevenLabsSpeechDuration(audioSpokenText, {
@@ -2844,7 +2444,8 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     },
                     relationship: {
                         leadName: session.user_name || null,
-                        sayLeadName: shouldSayLeadName,
+                        // O roteiro preserva a escolha de nome feita pelo modelo.
+                        sayLeadName: Boolean(session.user_name && audioSpokenText.toLocaleLowerCase('pt-BR').includes(String(session.user_name).toLocaleLowerCase('pt-BR'))),
                         paidEroticAudio: paidEroticAudioEntitled,
                         stage,
                         totalPaid: Number(session.total_paid || 0),
@@ -2954,6 +2555,8 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                     console.log(`[PROCESSADOR] Áudio cancelado porque o lead enviou uma mensagem nova: ${interruptedDuringRecording.id}`);
                     return NextResponse.json({ status: 'superseded_during_recording' });
                 }
+                // A partir daqui um retry poderia duplicar uma entrega real.
+                externalDeliveryStarted = true;
                 await sendTelegramVoice(botToken, chatId, preparedAudio.audio);
                 await insertGeneratedMessage({
                     session_id: session.id,
@@ -2976,17 +2579,17 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 }
                 continue;
             } catch (error: any) {
-                console.error('[ELEVENLABS] Falha, usando texto como fallback:', error?.message || error);
+                console.error('[ELEVENLABS] Falha; preservando a fala do modelo em texto:', error?.message || error);
                 await supabase.from('messages').insert({
                     session_id: session.id,
                     sender: 'system',
                     content: `[ELEVENLABS ERROR] ${String(error?.message || error).slice(0, 500)}`,
                 });
-                if (userWantsAudio || aiSelectedVoice || isElevenLabsDeliveryPromise(msgText)) {
-                    textToSend = buildElevenLabsUnavailableReply({
-                        language: conversationLanguage,
-                        seed: `${session.id}:${triggerMessageId || lastGroupedUserAt}:voice-failed`,
+                if (isElevenLabsDeliveryPromise(msgText)) {
+                    const repaired = await repairModelReply(String(session.id), { ...aiResponse, messages: [msgText] }, {
+                        action: 'none', voiceUnavailable: true, corrections: ['voice_generation_failed'],
                     });
+                    textToSend = repaired.join('\n');
                 }
             }
         }
@@ -3004,6 +2607,9 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
             return NextResponse.json({ status: 'superseded_during_typing' });
         }
 
+        // Persistência e envio formam o primeiro efeito visível deste balão.
+        // Depois deste ponto não autorizamos retry automático do turno inteiro.
+        externalDeliveryStarted = true;
         await insertGeneratedMessage({
             session_id: session.id,
             sender: 'bot',
@@ -3058,6 +2664,8 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
 
     // 7. Lidar com Mídia
     if (aiResponse.action !== 'none') {
+        // Pagamento/mídia podem produzir efeitos externos mesmo sem balão de texto.
+        externalDeliveryStarted = true;
         const requestedPreviewSpec = inferRequestedPreviewSpec(userOnlyText, aiResponse.action);
         const actionTags: Record<string, string[]> = {
             send_shower_photo: ['banho', 'chuveiro', 'molhada'],
@@ -3598,17 +3206,8 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
                 asset: any = selectedPreviewAsset,
             ) => {
                 const isVideo = type === 'video';
-                const recentCaptions = Array.isArray(operationalLeadMemory.metadata?.preview_caption_history)
-                    ? operationalLeadMemory.metadata.preview_caption_history.map(String).filter(Boolean)
-                    : [];
-                const generatedCaption = previewCaptionCandidate || buildDeliveredPreviewCaption({
-                    asset,
-                    userText: userOnlyText,
-                    timeZone: String(operationalLeadMemory.metadata?.redirect_timezone || ''),
-                    recentCaptions,
-                    variationKey: `${session.id}:${triggerMessageId || lastGroupedUserAt}`,
-                });
-                const caption = sanitizeOutgoingMessage(generatedCaption, latestUserText).slice(0, 85);
+                const generatedCaption = previewCaptionCandidate;
+                const caption = sanitizeOutgoingMessage(generatedCaption);
                 if (isVideo) {
                     await sendTelegramAction(botToken, chatId, 'upload_video');
                     const heartbeat = setInterval(() => {
@@ -3832,86 +3431,14 @@ VOZ: pedido explicito de audio pode usar send_voice_reply em qualquer estagio. S
         const reason = String(error?.message || error || 'erro desconhecido');
         console.error(`[PROCESSADOR] Falha recuperavel na sessao ${sessionId}:`, reason);
 
-        try {
-            const { data: alreadyDelivered } = await supabase
-                .from('messages')
-                .select('id')
-                .eq('session_id', sessionId)
-                .eq('sender', 'bot')
-                .gte('created_at', processingAttemptStartedAt)
-                .limit(1);
-
-            if (!alreadyDelivered?.length) {
-                const { data: recentRecoveryRows, error: recentRecoveryError } = await supabase
-                    .from('messages')
-                    .select('sender,content,created_at')
-                    .eq('session_id', sessionId)
-                    .in('sender', ['user', 'bot'])
-                    .order('created_at', { ascending: false })
-                    .limit(80);
-                if (recentRecoveryError) throw recentRecoveryError;
-
-                const recentRows = recentRecoveryRows || [];
-                const latestText = String(recentRows.find((row: any) => row.sender === 'user')?.content || '').trim();
-                const recentBotTexts = recentRows
-                    .filter((row: any) => row.sender === 'bot')
-                    .map((row: any) => String(row.content || ''))
-                    .filter(Boolean);
-                const recentUserTexts = recentRows
-                    .filter((row: any) => row.sender === 'user')
-                    .map((row: any) => String(row.content || ''))
-                    .filter(Boolean);
-                const fallbackMessages = buildProcessingFailureRecoveryMessages({
-                    userText: latestText,
-                    recentBotTexts,
-                    recentUserTexts,
-                    isFirstContact: recentBotTexts.length === 0 && recentUserTexts.length <= 1,
-                    language: detectConversationLanguage(latestText),
-                });
-                const safeReason = reason
-                    .replace(/(?:sk|key|token|secret)[-_][a-z0-9_-]{8,}/gi, '[REDACTED]')
-                    .slice(0, 1200);
-                const recoveryDebug = {
-                    timestamp: new Date().toISOString(),
-                    run_id: `local-recovery-${crypto.randomUUID()}`,
-                    model: 'contextual-local-recovery',
-                    provider: 'local',
-                    tier: 'recovery',
-                    duration_ms: Math.max(0, Date.now() - Date.parse(processingAttemptStartedAt)),
-                    system_prompt: 'Recuperação contextual determinística acionada após falha do processamento principal.',
-                    user_prompt: latestText,
-                    clean_history: recentRows.slice().reverse().map((row: any) => ({
-                        role: row.sender === 'bot' ? 'assistant' : 'user',
-                        content: String(row.content || ''),
-                    })),
-                    raw_response: { recovery_reason: safeReason },
-                    final_response: { messages: fallbackMessages, action: 'none', recovered: true },
-                };
-
-                for (let recoveryIndex = 0; recoveryIndex < fallbackMessages.length; recoveryIndex += 1) {
-                    const fallbackMessage = fallbackMessages[recoveryIndex];
-                    await sendTelegramMessage(botToken, chatId, fallbackMessage);
-                    const recoveryInsert = await insertMessageWithAiDebug(supabase, {
-                        session_id: session.id,
-                        sender: 'bot',
-                        content: fallbackMessage,
-                    }, withAiDebugMessageIndex(recoveryDebug, recoveryIndex));
-                    if (recoveryInsert.debugError) {
-                        console.warn('[AI DEBUG] Recuperacao salva sem ai_debug:', errorMessage(recoveryInsert.debugError));
-                    }
-                    if (recoveryInsert.error) {
-                        console.warn('[PROCESSADOR] Falha ao persistir recuperacao:', errorMessage(recoveryInsert.error));
-                    }
-                }
-                console.log(`[PROCESSADOR] Recuperacao contextual enviada para a sessao ${sessionId}.`);
-            } else {
-                console.log(`[PROCESSADOR] Recuperacao local dispensada: a sessao ${sessionId} ja recebeu resposta.`);
-            }
-        } catch (recoveryError: any) {
-            console.error('[PROCESSADOR] Falha ao entregar recuperacao local:', recoveryError?.message || recoveryError);
-        }
-
-        return NextResponse.json({ success: true, recovered: true, reason }, { status: 200 });
+        // Fail observably instead of inventing a reply and reporting success.
+        const retryable = !externalDeliveryStarted;
+        await appendLeadEventSafe({
+            sessionId: String(sessionId), eventType: 'processing_failed', source: 'process_message',
+            sourceId: triggerMessageId ? `failed:${triggerMessageId}` : null,
+            payload: { retryable, canned_reply_sent: false },
+        });
+        return NextResponse.json({ success: false, error: 'ai_response_unavailable', retryable }, { status: 503 });
     } finally {
         await releaseProcessingLease();
     }

@@ -137,6 +137,8 @@ export interface AiDebugData {
         draft?: AiDebugStage;
         review?: AiDebugStage;
         evaluator?: AiDebugStage;
+        operational_repair?: AiDebugStage;
     };
+    history?: { source_messages: number; included_messages: number; excluded_current_turn: number; chars: number; complete: boolean };
     tokens_estimated?: number;
 }

@@ -11,6 +11,7 @@
     "eval:brain-v2": "node scripts/eval-master-brain-v2.cjs",
     "verify:three-brain": "node scripts/verify-three-brain-commerce.cjs",
     "verify:lari-commercial": "node scripts/verify-lari-commercial-contract.cjs",
+    "verify:model-reply": "node scripts/verify-model-reply-contract.cjs",
     "verify:lari-context": "node scripts/verify-lari-prompt-context.cjs && node scripts/verify-lead-memory-evidence.cjs && node scripts/verify-conversation-bubbles.cjs && node scripts/verify-lari-conversation-context.cjs",
     "verify:payment-preview": "node scripts/verify-payment-preview-integrity.cjs",
     "verify:payment-reconciliation": "node scripts/verify-payment-reconciliation-contract.cjs",

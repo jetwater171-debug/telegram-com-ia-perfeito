@@ -194,8 +194,10 @@ assert.equal(
     assert.match(processSource, /mode: userWantsAudio \? 'requested_audio' : 'voice_render'/);
     assert.match(processSource, /ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS/);
     assert.match(processSource, /ELEVENLABS_REQUESTED_AUDIO_MAX_WORDS/);
-    assert.match(processSource, /sayLeadName: shouldSayLeadName/);
-    assert.match(processSource, /buildElevenLabsUnavailableReply/);
+    assert.doesNotMatch(processSource, /sayLeadName: shouldSayLeadName/);
+    assert.match(processSource, /sayLeadName: Boolean\(session\.user_name && audioSpokenText/);
+    assert.doesNotMatch(processSource, /buildElevenLabsUnavailableReply/);
+    assert.match(processSource, /repairModelReply/);
     assert.match(processSource, /getElevenLabsSubscriptionForBudget/);
     assert.match(processSource, /requestedPaidEroticAudio && !paidEroticAudioEntitled/);
     assert.match(processSource, /status: 'delivered'/);

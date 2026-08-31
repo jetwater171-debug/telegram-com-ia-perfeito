@@ -413,7 +413,10 @@ assert.match(adultVoice, /seductively/i);
 
 // Contratos estruturais para não perder o vínculo entre catálogo, rota e gate.
 assert.match(route, /evaluateSalesTiming\(/);
-assert.match(route, /canonicalizeSalesOfferMessages/);
+// O backend valida preço/operação, mas apenas o modelo reformula a fala.
+assert.doesNotMatch(route, /canonicalizeSalesOfferMessages/);
+assert.match(route, /inspectModelReply\(aiResponse\.messages, replyContract\)/);
+assert.match(route, /await repairModelReply\(String\(session\.id\), aiResponse, replyContract\)/);
 assert.match(route, /validateMasterBrainResponse/);
 assert.match(route, /shouldDeliverRequestedMedia/);
 assert.match(route, /lastBotAlreadyDeliveredMedia/);

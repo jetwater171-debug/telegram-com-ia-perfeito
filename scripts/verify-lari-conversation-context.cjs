@@ -110,20 +110,10 @@ assert.equal(JSON.parse(serialized).content, optionalInjection);
 assert.equal(serialized.split('\n').length, 1, 'uma memória não injeta novas seções');
 
 const route = fs.readFileSync(path.join(root, 'src/app/api/process-message/route.ts'), 'utf8');
-const ast = ts.createSourceFile('route.ts', route, ts.ScriptTarget.Latest, true);
-const declaration = ast.statements.find((statement) => ts.isVariableStatement(statement)
-  && statement.declarationList.declarations.some((item) => item.name.getText(ast) === 'removeGenericBotPhrases'));
-assert.ok(declaration);
-const { removeGenericBotPhrases } = loadTs('quality-filter.ts', `export ${declaration.getText(ast)}`);
-assert.deepEqual(removeGenericBotPhrases([
-  'sou a assistente virtual da Lari',
-  'não tenho confirmação da entrega ainda',
-  'não posso confirmar um contato que não está disponível',
-]), [
-  'sou a assistente virtual da Lari',
-  'não tenho confirmação da entrega ainda',
-  'não posso confirmar um contato que não está disponível',
-]);
+// A rota não reescreve mais as falas depois da geração. Incompatibilidades
+// operacionais voltam ao modelo pelo contrato de reparo.
+assert.doesNotMatch(route, /removeGenericBotPhrases/);
+assert.match(route, /inspectModelReply\(aiResponse\.messages, replyContract\)/);
 assert.doesNotMatch(route, /Voce mora na MESMA cidade|forcedCityAnswer|use este bloco como prioridade/);
 assert.match(route, /promptContext:\s*\{\s*operationalInstructions,\s*runtimeState: formatBrainRuntimeContext/);
 assert.match(route, /mergeLeadMemoryPatch\(detectedLeadMemory, aiResponse.lead_memory_patch, userOnlyText\)/);

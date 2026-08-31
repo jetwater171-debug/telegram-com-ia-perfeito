@@ -129,7 +129,7 @@ assert.doesNotMatch(route, /aiResponse\.payment_details\?\.value \?\? inferredVa
 assert.match(route, /payment_data\?\.order_id/);
 assert.match(route, /sendMessageToGemini\(session\.id, finalUserMessage/);
 assert.doesNotMatch(route, /Primeiro contato via \/start: usando saudação inicial padrão sem IA/);
-assert.match(route, /const isActualFirstRelationshipTurn = !lastBotMsg/);
+assert.match(route, /const isConversationStart = receivedStartCommand && !lastBotMsg/);
 assert.match(gateway, /const reviewShouldReplace = reviewedMessages\.length > 0/);
 assert.match(gateway, /review\?\.approved === false \|\| reviewIssues\.length > 0/);
 assert.match(prompts, /Aprovar significa preservar/);
