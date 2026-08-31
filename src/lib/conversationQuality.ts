@@ -137,7 +137,7 @@ export const filterConversationConsistencyMessages = (messages: unknown[], optio
 
 export const asksAboutResponderIdentity = (value: unknown) => {
     const text = lower(value);
-    const identity = '(?:robo|bot|ia|inteligencia artificial|assistente virtual|humana?|pessoa(?: real| de verdade)?)';
+    const identity = '(?:robo|bot|ia|inteligencia artificial|assistente virtual|human[oa]|pessoa(?: real| de verdade)?)';
     const article = '(?:(?:um|uma|a|o)\\s+)?';
     return new RegExp(`\\b(?:voce|vc|tu)\\s+(?:e|eh|es|seria)\\s+${article}${identity}\\b`).test(text)
         || new RegExp(`^(?:afinal[,:]?\\s+)?(?:e|eh|es)\\s+${article}${identity}\\s*[?!.,]*$`).test(text)

@@ -69,7 +69,7 @@ for (const userText of [
 }
 for (const userText of [
   'você é um bot?', 'vc é uma IA?', 'é um robô?',
-  'estou falando com uma pessoa de verdade?', 'vc é humana?',
+  'estou falando com uma pessoa de verdade?', 'vc é humana?', 'vc é um humano?',
   'é a Lari ou uma IA?', 'é bot ou a Larissa?', 'vc é a Lari mesmo?',
   'quem está respondendo?',
 ]) {
