@@ -88,7 +88,7 @@ export const rankMemoryRows = ({
                 id: String(row.id || ''),
                 kind: (['fact', 'hypothesis', 'preference', 'episode', 'outcome'].includes(String(row.kind))
                     ? String(row.kind)
-                    : 'fact') as RetrievedMemory['kind'],
+                    : 'hypothesis') as RetrievedMemory['kind'],
                 status: (String(row.status || 'active') === 'uncertain' ? 'uncertain' : 'active') as RetrievedMemory['status'],
                 key,
                 content,
@@ -111,6 +111,11 @@ export const formatRetrievedMemories = (memories: RetrievedMemory[]) => {
         const epistemic = memory.kind === 'hypothesis' || memory.status === 'uncertain'
             ? `HIPÓTESE ${memory.confidence.toFixed(2)}`
             : `${memory.kind.toUpperCase()} ${memory.confidence.toFixed(2)}`;
-        return `- [${epistemic}] ${memory.content}`;
+        return JSON.stringify({
+            epistemic,
+            key: memory.key,
+            updatedAt: memory.updatedAt,
+            content: memory.content,
+        });
     }).join('\n');
 };

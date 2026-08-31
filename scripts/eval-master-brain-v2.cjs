@@ -19,8 +19,10 @@ const loadTs = (relativePath, stubs = {}) => {
 };
 
 const types = loadTs('src/lib/brain/types.ts', { '@/types': {} });
+const evidence = loadTs('src/lib/leadMemoryEvidence.ts');
 const { validateMasterBrainResponse, detectAdultDeclaration } = loadTs('src/lib/brain/hardValidator.ts', {
   '@/lib/brain/types': types,
+  '@/lib/leadMemoryEvidence': evidence,
 });
 
 const base = (action) => ({

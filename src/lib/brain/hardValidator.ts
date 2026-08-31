@@ -1,4 +1,5 @@
 import { NEXT_BEST_ACTIONS, type HardValidatorResult, type MasterBrainResponse, type NextBestAction } from '@/lib/brain/types';
+import { isCompleteLiteralLeadEvidence } from '@/lib/leadMemoryEvidence';
 
 const MEDIA_ACTIONS = new Set([
     'send_video_preview', 'send_hot_video_preview', 'send_ass_photo_preview', 'send_custom_preview',
@@ -62,7 +63,6 @@ const nextBestActionFor = (response: MasterBrainResponse): NextBestAction => {
 };
 
 const sanitizeMemoryUpdates = (response: MasterBrainResponse, userText: string) => {
-    const literal = normalize(userText);
     response.memory_updates = (response.memory_updates || []).slice(0, 12).map((item) => {
         const content = String(item?.content || '').replace(/\s+/g, ' ').trim().slice(0, 500);
         const key = String(item?.key || '').trim().slice(0, 160);
@@ -72,11 +72,10 @@ const sanitizeMemoryUpdates = (response: MasterBrainResponse, userText: string) 
         if (!['fact', 'hypothesis', 'preference', 'episode', 'outcome'].includes(String(kind))) kind = 'hypothesis';
         if (!['active', 'superseded', 'uncertain', 'expired'].includes(String(status))) status = kind === 'hypothesis' ? 'uncertain' : 'active';
 
-        // Um fato novo precisa ter ancoragem lexical na fala atual. Sem isso ele
-        // continua útil como hipótese, mas nunca ganha autoridade de realidade.
-        const anchors = normalize(content).split(' ').filter((token) => token.length >= 4);
-        const anchored = anchors.length > 0 && anchors.some((token) => literal.includes(token));
-        if (kind === 'fact' && (!anchored || confidence < 0.95)) {
+        // Coincidência de token não prova autoria, negação nem completude da
+        // frase. Sem reprodução literal integral, o fato permanece hipótese.
+        const literalEvidence = isCompleteLiteralLeadEvidence(content, userText);
+        if (kind === 'fact' && (!literalEvidence || confidence < 0.95)) {
             kind = 'hypothesis';
             status = 'uncertain';
             confidence = Math.min(confidence, 0.65);

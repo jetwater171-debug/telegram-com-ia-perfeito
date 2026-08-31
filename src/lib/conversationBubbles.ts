@@ -6,53 +6,26 @@ type ShapeConversationBubblesOptions = {
 
 const compact = (value: string) => String(value || '').replace(/\s+/g, ' ').trim();
 
-const splitByWords = (text: string, maxChars: number) => {
-    const words = compact(text).split(' ').filter(Boolean);
-    const chunks: string[] = [];
-    let current = '';
-
-    for (const word of words) {
-        const candidate = current ? `${current} ${word}` : word;
-        if (candidate.length <= maxChars || !current) {
-            current = candidate;
-            continue;
-        }
-        chunks.push(current);
-        current = word;
-    }
-
-    if (current) chunks.push(current);
-    return chunks;
-};
-
-const findNaturalMidpoint = (text: string) => {
-    const midpoint = text.length / 2;
-    const candidates = Array.from(text.matchAll(/(?:,\s+|\s+(?:mas|so que|só que|agora|entao|então|porque|e ai|e aí|e)\s+)/gi))
-        .map((match) => (match.index || 0) + match[0].length)
-        .filter((index) => index >= 18 && text.length - index >= 18)
-        .sort((a, b) => Math.abs(a - midpoint) - Math.abs(b - midpoint));
-    return candidates[0] || -1;
-};
-
 const splitBubble = (raw: string, maxChars: number) => {
     const text = compact(raw);
     if (!text) return [];
 
-    const naturalParts = text
-        .split(/(?<=[!?])\s+|(?<=\.)\s+|;\s+|\s+[—–-]\s+/u)
+    // Existing short text remains a single bubble, even when it contains
+    // multiple short sentences. The target only authorizes a sentence split
+    // when the complete source message actually needs it.
+    if (text.length <= maxChars) return [text];
+
+    // Sentence boundaries are preferred. maxChars is intentionally a soft
+    // target: an unpunctuated long sentence stays intact instead of being
+    // broken into artificial typing fragments.
+    const sentences = text
+        .split(/(?<=[.!?;])\s+/u)
         .map(compact)
         .filter(Boolean);
 
-    const chunks = naturalParts.flatMap((part) => {
-        if (part.length <= maxChars) return [part];
-        const midpoint = findNaturalMidpoint(part);
-        if (midpoint > 0) {
-            return [part.slice(0, midpoint), part.slice(midpoint)].flatMap((piece) => splitByWords(piece, maxChars));
-        }
-        return splitByWords(part, maxChars);
-    });
-
-    return chunks;
+    // An unpunctuated sentence has no safe boundary, so it stays intact even
+    // when it exceeds maxChars.
+    return sentences.length > 1 ? sentences : [text];
 };
 
 const normalizedKey = (text: string) => compact(text)
@@ -68,17 +41,24 @@ export const shapeConversationBubbles = (
 ) => {
     const preferredCount = Math.max(1, Math.min(6, Number(options.preferredCount || 1)));
     const maxBubbles = Math.max(1, Math.min(6, Number(options.maxBubbles || Math.max(1, preferredCount))));
-    const maxChars = Math.max(55, Math.min(130, Number(options.maxChars || 100)));
     const seen = new Set<string>();
 
-    return messages
-        .flatMap((message) => splitBubble(message, maxChars))
+    const maxChars = Math.max(55, Math.min(130, Number(options.maxChars || 100)));
+    const uniqueMessages = messages
         .map(compact)
         .filter((message) => {
             const key = normalizedKey(message);
             if (!key || seen.has(key)) return false;
             seen.add(key);
             return true;
-        })
-        .slice(0, maxBubbles);
+        });
+    const units = uniqueMessages.flatMap((message) => splitBubble(message, maxChars));
+
+    if (units.length <= maxBubbles) return units;
+
+    // maxBubbles is hard, but content is not discarded: all overflow is kept
+    // in the final bubble, in its original order.
+    const head = units.slice(0, maxBubbles - 1);
+    const overflow = units.slice(maxBubbles - 1).join(' ');
+    return [...head, overflow];
 };

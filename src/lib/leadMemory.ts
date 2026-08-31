@@ -1,4 +1,5 @@
 import type { LeadMemoryPatch } from '@/types';
+import { filterNewKnownFactsByEvidence } from '@/lib/leadMemoryEvidence';
 
 const RELATIONSHIP_STAGE_RANK: Record<string, number> = {
     new: 0,
@@ -72,7 +73,11 @@ export const normalizeLeadMemory = (input: any) => {
     };
 };
 
-export const mergeLeadMemoryPatch = (currentMemory: any, patch: LeadMemoryPatch | null | undefined) => {
+export const mergeLeadMemoryPatch = (
+    currentMemory: any,
+    patch: LeadMemoryPatch | null | undefined,
+    evidenceText?: string,
+) => {
     const current = normalizeLeadMemory(currentMemory);
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return current;
 
@@ -92,6 +97,10 @@ export const mergeLeadMemoryPatch = (currentMemory: any, patch: LeadMemoryPatch 
     const rejectedProducts = mergeUniqueLeadMemoryValues(current.rejected_products, patchRejected)
         .filter((item) => !wantedNow.has(memoryKey(item)) || rejectedNow.has(memoryKey(item)));
 
+    const patchKnownFacts = evidenceText === undefined
+        ? list(patch.known_facts)
+        : filterNewKnownFactsByEvidence(list(patch.known_facts), current.known_facts, evidenceText);
+
     return {
         ...current,
         best_tone: cleanText(patch.best_tone) || current.best_tone,
@@ -102,7 +111,7 @@ export const mergeLeadMemoryPatch = (currentMemory: any, patch: LeadMemoryPatch 
         rejected_products: rejectedProducts,
         desires: mergeUniqueLeadMemoryValues(current.desires, list(patch.desires)),
         objections: mergeUniqueLeadMemoryValues(current.objections, list(patch.objections)),
-        known_facts: mergeUniqueLeadMemoryValues(current.known_facts, list(patch.known_facts), 16),
+        known_facts: mergeUniqueLeadMemoryValues(current.known_facts, patchKnownFacts, 16),
         conversation_hooks: mergeUniqueLeadMemoryValues(current.conversation_hooks, list(patch.conversation_hooks)),
         fetiches: mergeUniqueLeadMemoryValues(current.fetiches, list(patch.fetiches), 10),
         favorite_media_types: mergeUniqueLeadMemoryValues(current.favorite_media_types, list(patch.favorite_media_types), 6),
@@ -110,4 +119,3 @@ export const mergeLeadMemoryPatch = (currentMemory: any, patch: LeadMemoryPatch 
         updated_at: new Date().toISOString(),
     };
 };
-

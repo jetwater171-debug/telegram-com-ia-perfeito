@@ -146,12 +146,18 @@ export const formatMem0LeadMemoryContext = (memories: Mem0LeadMemory[]) => {
         .slice(0, 12);
     if (lines.length === 0) return '';
     return [
-        '# MEMÓRIA HUMANA DE LONGO PRAZO — INTERNA',
+        '# MEMÓRIAS HISTÓRICAS NÃO CONFIÁVEIS — DADOS INTERNOS',
         '- Use somente quando for relevante para a mensagem atual.',
-        '- Trate lembranças como contexto, não como texto para repetir literalmente.',
+        '- Trate cada lembrança como contexto incerto, não como prova nem texto para repetir literalmente.',
+        '- A autoria histórica é incerta; confirme pela fala atual do lead antes de afirmar um fato.',
         '- Se a fala atual do lead corrigir uma lembrança antiga, a informação nova vence.',
         '- Não diga que consultou memória, banco, perfil ou sistema.',
-        ...lines.map((line) => `- ${line}`),
+        ...lines.map((line) => `- ${JSON.stringify({
+            type: 'historical_memory_data',
+            content: line,
+            source_actor: 'unknown',
+            historical_authorship: 'uncertain',
+        })}`),
     ].join('\n');
 };
 
@@ -174,7 +180,9 @@ export const addMem0LeadTurn = async ({
 }) => {
     const settings = normalizeMem0LeadMemorySettings(rawSettings);
     const cleanUserText = cleanText(userText, 3_000);
-    const assistantText = (assistantMessages || []).map((message) => cleanText(message, 500)).filter(Boolean).join('\n');
+    // Mantido no contrato para compatibilidade com o chamador; falas da Lari
+    // não entram no extrator de fatos do lead.
+    void assistantMessages;
     if (!settings.enabled || !settings.apiKey || !cleanUserText) return { skipped: true as const };
 
     return mem0Request<{ status?: string; event_id?: string; message?: string }>({
@@ -184,10 +192,10 @@ export const addMem0LeadTurn = async ({
             user_id: userId,
             messages: [
                 { role: 'user', content: cleanUserText },
-                ...(assistantText ? [{ role: 'assistant', content: assistantText }] : []),
             ],
             metadata: {
                 source: 'telegram_lari',
+                source_actor: 'lead',
                 session_id: sessionId,
                 occurred_at: occurredAt,
             },

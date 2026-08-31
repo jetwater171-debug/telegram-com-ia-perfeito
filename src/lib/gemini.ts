@@ -43,6 +43,7 @@ import {
     buildLariReviewPrompt,
     needsLariReview,
 } from '@/lib/lariConversationPrompts';
+import { composeLariPromptContext, type LariPromptContext } from '@/lib/lariPromptContext';
 
 const readSecret = (value?: string) => {
     const secret = String(value || "").trim();
@@ -315,7 +316,6 @@ export const getSystemInstruction = (
         minute: '2-digit',
     });
     const stats = currentStats || { tarado: 0, carente: 0, sentimental: 0, financeiro: 0 };
-    const list = (value: any) => Array.isArray(value) && value.length > 0 ? value.join(', ') : 'nenhum';
     const memory = leadMemory && typeof leadMemory === 'object' ? leadMemory : {};
     const cleanProfileValue = (value: unknown, max = 260) => String(value || '')
         .replace(/[\r\n]+/g, ' ')
@@ -324,23 +324,43 @@ export const getSystemInstruction = (
         .slice(0, max) || 'desconhecido';
     const compactObject = (value: unknown) => {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return 'nenhum';
-        const entries = Object.entries(value as Record<string, unknown>)
-            .slice(0, 16)
-            .map(([key, item]) => `${cleanProfileValue(key, 60)}=${cleanProfileValue(item, 180)}`);
+        const profileValues = value as Record<string, unknown>;
+        const allowlistedProfile = {
+            userName: profileValues.userName,
+            deviceType: profileValues.deviceType,
+            city: profileValues.city,
+            citySource: profileValues.citySource,
+            country: profileValues.country,
+            region: profileValues.region,
+            timezone: profileValues.timezone,
+            language: profileValues.language,
+        };
+        const entries = Object.entries(allowlistedProfile)
+            .filter(([, item]) => item !== undefined && item !== null && String(item).trim())
+            .map(([key, item]) => [key, cleanProfileValue(item, 180)] as const)
+            .filter(([, item]) => item !== 'desconhecido');
+        return entries.length > 0 ? JSON.stringify(Object.fromEntries(entries)) : 'nenhum';
+    };
+    const list = (value: unknown, maxEntries = 12) => {
+        if (!Array.isArray(value)) return 'nenhum';
+        const entries = value
+            .slice(0, maxEntries)
+            .map((item) => cleanProfileValue(item, 160))
+            .filter((item) => item !== 'desconhecido');
         return entries.length > 0 ? entries.join(', ') : 'nenhum';
     };
     const deviceType = cleanProfileValue(profile.deviceType || (isHighTicketDevice ? 'iPhone' : 'Unknown'), 80);
     const memorySummary = [
-        `tipo dominante: ${cleanProfileValue(memory.dominant_type)}`,
-        `tom que funciona: ${cleanProfileValue(memory.best_tone)}`,
-        `contexto emocional: ${cleanProfileValue(memory.emotional_context)}`,
+        `tipo dominante (hipótese): ${cleanProfileValue(memory.dominant_type)}`,
+        `tom que funciona (hipótese): ${cleanProfileValue(memory.best_tone)}`,
+        `contexto emocional (hipótese): ${cleanProfileValue(memory.emotional_context)}`,
         `estagio da relacao: ${cleanProfileValue(memory.relationship_stage || 'new')}`,
         `proximo passo pessoal: ${cleanProfileValue(memory.next_personal_step)}`,
         `produtos desejados: ${list(memory.wanted_products)}`,
         `produtos recusados: ${list(memory.rejected_products)}`,
         `desejos e preferencias: ${list(memory.desires)}`,
         `objecoes: ${list(memory.objections)}`,
-        `fatos confirmados: ${list(memory.known_facts)}`,
+        `lembranças legadas sem comprovação: ${list(memory.known_facts, 16)}`,
         `ganchos pendentes: ${list(memory.conversation_hooks)}`,
         `sensibilidade a preco: ${cleanProfileValue(memory.price_sensitivity)}`,
         `ultima oferta: ${cleanProfileValue(memory.last_offer)}`,
@@ -1874,11 +1894,13 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     currentStats?: LeadStats | null;
     minutesSinceOffer?: number;
     extraScript?: string;
+    promptContext?: LariPromptContext;
     leadMemory?: any;
     isConversationStart?: boolean;
     leadProfile?: {
         deviceType?: string;
         city?: string;
+        citySource?: string;
         region?: string;
         country?: string;
         timezone?: string;
@@ -1953,7 +1975,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             || Number(b.priority || 0) - Number(a.priority || 0));
 
     const previewsCatalog = rankedPreviewRows
-        .slice(0, 40)
+        .slice(0, 8)
         .map((p: any) => {
             const tags = Array.isArray(p.tags) ? p.tags.join(', ') : '';
             const desc = String(p.description || '').replace(/\s+/g, ' ').slice(0, 160);
@@ -1972,18 +1994,18 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         .map((block: any) => {
             const key = String(block.key || 'bloco');
             const label = String(block.label || key);
-            const content = String(block.content || '').trim().slice(0, 2500);
+            const content = String(block.content || '').trim();
             return content ? `## ${label} (${key})\n${content}` : '';
         })
         .filter(Boolean)
         .join('\n\n');
 
-    const dynamicScript = [
-        // Contexto operacional deste turno vem primeiro para nunca ser cortado por
-        // blocos longos do painel (limite total de 12 mil caracteres).
-        context?.extraScript || "",
-        promptBlocksText,
-    ].filter(Boolean).join('\n\n').slice(0, orchestration.promptBlockMaxChars);
+    const dynamicScript = composeLariPromptContext({
+        promptContext: context?.promptContext,
+        legacyExtraScript: context?.extraScript || '',
+        promptBlocks: promptBlocksText,
+        optionalBudget: orchestration.promptBlockMaxChars,
+    });
 
     // O perfil persistente guarda a historia longa; o modelo recebe apenas a janela recente.
     const dbMessages = [...(messagesResult.data || [])].reverse();
@@ -2031,10 +2053,9 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         .filter(w => ['amor', 'anjo', 'vida', 'nossa', 'imagina', 'perfeito', 'gostoso', 'vip'].includes(w))
         .slice(0, 12);
 
-    const antiRepeatText = [
-        recentBotMessages.length > 0 ? `Ultimas respostas da Lari:\n${recentBotMessages.map(m => `- ${m}`).join('\n')}` : '',
-        recentWords.length > 0 ? `Evite repetir agora: ${recentWords.join(', ')}` : ''
-    ].filter(Boolean).join('\n\n');
+    const antiRepeatText = recentWords.length > 0
+        ? `Evite repetir agora: ${recentWords.join(', ')}`
+        : '';
 
     const baseInstruction = getSystemInstruction(
         context?.userCity,
@@ -2042,7 +2063,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         context?.isHighTicket,
         context?.totalPaid || 0,
         currentStats,
-        context?.minutesSinceOffer || 999,
+        context?.minutesSinceOffer ?? 999,
         previewsCatalog,
         dynamicScript,
         context?.leadMemory || null,
@@ -2181,7 +2202,7 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
             jsonResponse.decision_confidence = Math.max(0, Math.min(1, Number(jsonResponse.decision_confidence ?? strategy?.confidence ?? 0.5)));
             jsonResponse.memory_updates = Array.isArray(jsonResponse.memory_updates) ? jsonResponse.memory_updates.slice(0, 12) : [];
             jsonResponse.offer_id = jsonResponse.offer_id ?? null;
-            jsonResponse.recommended_message_count = Math.max(2, Math.min(4, Number(jsonResponse.messages?.length || strategy?.recommended_message_count || 2)));
+            jsonResponse.recommended_message_count = Math.max(1, Math.min(4, Number(jsonResponse.messages?.length || strategy?.recommended_message_count || 1)));
             jsonResponse.max_chars_per_message = Math.max(45, Math.min(85, Number(Math.max(0, ...(jsonResponse.messages || []).map((message) => String(message || '').length)) || strategy?.max_chars_per_message || 75)));
             strategy = {
                 ...strategy,

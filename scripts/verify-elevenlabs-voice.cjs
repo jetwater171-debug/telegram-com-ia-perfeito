@@ -16,8 +16,10 @@ const compile = (relativePath, customRequire = require) => {
 };
 
 const brainTypes = compile('../src/lib/brain/types.ts');
+const memoryEvidence = compile('../src/lib/leadMemoryEvidence.ts');
 const hardValidator = compile('../src/lib/brain/hardValidator.ts', (id) => {
     if (id === '@/lib/brain/types') return brainTypes;
+    if (id === '@/lib/leadMemoryEvidence') return memoryEvidence;
     return require(id);
 });
 const eleven = compile('../src/lib/elevenLabs.ts', (id) => {

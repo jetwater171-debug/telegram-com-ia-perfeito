@@ -135,7 +135,7 @@ assert.match(gateway, /review\?\.approved === false \|\| reviewIssues\.length > 
 assert.match(prompts, /Aprovar significa preservar/);
 assert.doesNotMatch(gateway, /strategyCallPromise/);
 assert.match(prompts, /MASTER BRAIN ÚNICO DA LARI/);
-assert.match(prompts, /Normalmente responda em 2 a 4 balões curtos/);
+assert.match(prompts, /Normalmente responda em 1 ou 2 balões curtos/);
 assert.match(gateway, /thinking = \{ type: 'disabled' \}/);
 assert.doesNotMatch(gateway, /const isRetryable = gateway\.provider === 'bai'/);
 assert.match(gatewayRouter, /timeoutMs: 10_000/);

@@ -42,7 +42,9 @@ const fakeFetch = async (url, init) => {
     const settings = { apiKey: 'mem0-test-key', enabled: true, topK: 8, timeoutMs: 2_000 };
     const memories = await searchMem0LeadMemories({ settings, userId: 'telegram:12345', query: 'o que ele gosta?', fetcher: fakeFetch });
     assert.deepEqual(memories.map((item) => item.memory), ['O lead gosta de futebol.', 'Trabalha à noite.']);
-    assert.match(formatMem0LeadMemoryContext(memories), /MEMÓRIA HUMANA DE LONGO PRAZO/);
+    const formattedContext = formatMem0LeadMemoryContext(memories);
+    assert.match(formattedContext, /MEMÓRIAS HISTÓRICAS NÃO CONFIÁVEIS/);
+    assert.match(formattedContext, /"type":"historical_memory_data"/);
     assert.equal(calls[0].body.filters.user_id, 'telegram:12345');
     assert.equal(calls[0].body.rerank, true);
 
@@ -56,6 +58,8 @@ const fakeFetch = async (url, init) => {
     });
     assert.equal(added.status, 'PENDING');
     assert.equal(calls[1].body.user_id, 'telegram:12345');
+    assert.deepEqual(calls[1].body.messages, [{ role: 'user', content: 'trabalho à noite' }]);
+    assert.equal(calls[1].body.metadata.source_actor, 'lead');
     assert.equal(calls[1].body.infer, true);
     assert.match(calls[1].body.custom_instructions, /fatos explícitos/);
 

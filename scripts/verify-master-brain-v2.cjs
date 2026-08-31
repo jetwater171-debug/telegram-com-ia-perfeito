@@ -20,7 +20,11 @@ const loadTs = (relativePath, stubs = {}) => {
 
 const memory = loadTs('src/lib/brain/memoryRetriever.ts');
 const types = loadTs('src/lib/brain/types.ts', { '@/types': {} });
-const validator = loadTs('src/lib/brain/hardValidator.ts', { '@/lib/brain/types': types });
+const evidence = loadTs('src/lib/leadMemoryEvidence.ts');
+const validator = loadTs('src/lib/brain/hardValidator.ts', {
+  '@/lib/brain/types': types,
+  '@/lib/leadMemoryEvidence': evidence,
+});
 const bandit = loadTs('src/lib/brain/previewBandit.ts', {
   '@/lib/supabaseServer': { supabaseServer: {} },
 });
