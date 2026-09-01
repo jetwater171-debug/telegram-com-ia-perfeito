@@ -13,6 +13,7 @@
     "verify:lari-commercial": "node scripts/verify-lari-commercial-contract.cjs",
     "verify:model-reply": "node scripts/verify-model-reply-contract.cjs",
     "verify:lari-context": "node scripts/verify-lari-prompt-context.cjs && node scripts/verify-lead-memory-evidence.cjs && node scripts/verify-conversation-bubbles.cjs && node scripts/verify-lari-conversation-context.cjs",
+    "verify:prompt-editor": "node scripts/verify-prompt-visual-editor.cjs",
     "verify:payment-preview": "node scripts/verify-payment-preview-integrity.cjs",
     "verify:payment-reconciliation": "node scripts/verify-payment-reconciliation-contract.cjs",
     "verify:elevenlabs-voice": "node scripts/verify-elevenlabs-voice.cjs",
@@ -21,6 +22,9 @@
     "verify:master-brain": "node scripts/verify-three-brain-commerce.cjs"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.90.1",
     "dotenv": "^17.2.3",

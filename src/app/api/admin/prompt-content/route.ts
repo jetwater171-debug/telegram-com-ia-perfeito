@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import {
     DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE,
+    findDuplicateSystemInstructionTokens,
     findMissingSystemInstructionTokens,
+    findUnknownSystemInstructionTokens,
     hasFullSystemInstructionTemplate,
     normalizeSystemInstructionTemplate,
     REQUIRED_SYSTEM_INSTRUCTION_TOKENS,
@@ -23,6 +25,10 @@ const payloadFor = (type: ContentType, body: Record<string, unknown>) => {
     if (type === 'system-instruction') {
         const missingPlaceholders = findMissingSystemInstructionTokens(content);
         if (missingPlaceholders.length > 0) throw new Error(`placeholders_obrigatorios_ausentes:${missingPlaceholders.join(',')}`);
+        const duplicatePlaceholders = findDuplicateSystemInstructionTokens(content);
+        if (duplicatePlaceholders.length > 0) throw new Error(`placeholders_duplicados:${duplicatePlaceholders.join(',')}`);
+        const unknownPlaceholders = findUnknownSystemInstructionTokens(content);
+        if (unknownPlaceholders.length > 0) throw new Error(`placeholders_desconhecidos:${unknownPlaceholders.join(',')}`);
         return {
             key: SYSTEM_INSTRUCTION_BLOCK_KEY,
             label: SYSTEM_INSTRUCTION_BLOCK_LABEL,

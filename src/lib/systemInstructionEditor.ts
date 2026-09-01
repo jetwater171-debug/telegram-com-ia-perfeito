@@ -175,6 +175,17 @@ export const findMissingSystemInstructionTokens = (content: unknown) => {
     return REQUIRED_SYSTEM_INSTRUCTION_TOKENS.filter((token) => !text.includes(token));
 };
 
+export const findDuplicateSystemInstructionTokens = (content: unknown) => {
+    const text = String(content || '');
+    return REQUIRED_SYSTEM_INSTRUCTION_TOKENS.filter((token) => text.split(token).length - 1 > 1);
+};
+
+export const findUnknownSystemInstructionTokens = (content: unknown) => {
+    const allowed = new Set(REQUIRED_SYSTEM_INSTRUCTION_TOKENS);
+    return Array.from(new Set(String(content || '').match(/\{\{[A-Z0-9_]+\}\}/g) || []))
+        .filter((token) => !allowed.has(token));
+};
+
 export const renderSystemInstructionTemplate = (
     template: string,
     values: Partial<Record<SystemInstructionPlaceholder, string | number>>,
