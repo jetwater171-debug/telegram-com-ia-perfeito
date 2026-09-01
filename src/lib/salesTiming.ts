@@ -501,6 +501,12 @@ const isOrganicVipDesireSignal = (text: string) => {
         || /\b(?:foto|fotinha|previa|conteudo|video|audio|voz|nude|pelada|sem roupa|te ver|ver voce|ver vc|curioso|provoca|provocante|linda|gata|sexy)\b/i.test(value);
 };
 
+const isDirectVipAcquisitionSignal = (text: string) => {
+    const value = normalize(text);
+    return /\b(?:quero|queria|manda|envia|mostra|me mostra|deixa eu ver|posso ver|te ver|ver voce|ver vc)\b.{0,45}\b(?:foto|fotinha|previa|conteudo|video|audio|voz|nude|pelada|sem roupa|voce|vc)\b/i.test(value)
+        || /\b(?:foto|fotinha|previa|conteudo|video|audio|voz|nude|pelada|sem roupa)\b.{0,45}\b(?:manda|envia|mostra|quero|queria|tem|ver)\b/i.test(value);
+};
+
 const isWarmBridgeContinuation = (text: string) => {
     const value = normalize(text).replace(/[.!?]+$/g, '').trim();
     return isOrganicVipDesireSignal(value)
@@ -617,13 +623,13 @@ export const evaluateSalesTiming = ({
         const createdAt = Date.parse(String(message.created_at || ''));
         return Number.isFinite(createdAt) && createdAt >= conversationStartedAt;
     }).length;
-    // Quantidade de mensagens sozinha não prova prontidão. A ponte só existe
-    // quando já houve conversa suficiente e o lead participou do clima em mais
-    // de um momento, ou respondeu positivamente a uma provocação da própria Lari.
-    const organicVipBridge = vipJourneyTurns >= 4 && (
+    // Uma intenção forte no turno atual já autoriza uma oferta pertinente. Para
+    // sinais mais fracos, ainda exigimos continuidade real; quantidade de
+    // mensagens neutras, isoladamente, nunca cria uma ponte comercial.
+    const organicVipBridge = isDirectVipAcquisitionSignal(userText) || (vipJourneyTurns >= 2 && (
         leadDesireTurns >= 2
         || (leadDesireTurns >= 1 && botDesireTurns >= 1 && isWarmBridgeContinuation(userText))
-    );
+    ));
     const recentVipOffer = hasRecentVipOffer(recentMessages, now);
     const proactiveVipOffer = totalPaid <= 0
         && !vipRejected

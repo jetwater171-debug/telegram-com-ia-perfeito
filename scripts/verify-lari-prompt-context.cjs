@@ -69,8 +69,11 @@ const editorModule = loadStandaloneTs('src/lib/systemInstructionEditor.ts', {
 assert.equal(editorModule.findMissingSystemInstructionTokens(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE).length, 0);
 assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# FUNÇÕES DISPONÍVEIS NESTE BACKEND/);
 assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# CATÁLOGO COMERCIAL PRINCIPAL DO BACKEND/);
-assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# MASTER BRAIN ÚNICO DA LARI/);
-assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# FORMATO OBRIGATÓRIO DA RESPOSTA/);
+assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# LARI — AGENTE DE CONVERSA E VENDAS/);
+assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# CONTRATO FINAL DE FORMATO/);
+assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /depois que existir intenção comercial clara, TALK deixa de ser a ação correta/);
+assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /Não diga 'vou ver', 'vou mandar' ou 'gostou\?' sem a entrega realmente acontecer/);
+assert.ok(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE.length < 24_000, 'prompt completo deve permanecer compacto');
 const renderedDefault = editorModule.renderSystemInstructionTemplate(
   editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE,
   Object.fromEntries(editorModule.SYSTEM_INSTRUCTION_PLACEHOLDERS.map((name) => [name, `valor_${name}`])),

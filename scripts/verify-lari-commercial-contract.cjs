@@ -171,6 +171,19 @@ assert.equal(earnedVipBridge.proactiveVipOffer, true);
 assert.equal(earnedVipBridge.selectedSku, 'vip_monthly');
 assert.equal(earnedVipBridge.mustStateOfferNow, true);
 
+const directDesireWithoutLongWarmup = evaluateSalesTiming({
+  userText: 'quero ver suas fotos sem roupa',
+  now,
+  recentMessages: [
+    { sender: 'user', content: '/start', created_at: '2026-08-28T12:00:00.000Z' },
+    { sender: 'bot', content: 'oii, tudo bem?', created_at: '2026-08-28T12:00:05.000Z' },
+  ],
+  leadMemory: { metadata: { conversation_started_at: '2026-08-28T12:00:00.000Z' } },
+});
+assert.equal(directDesireWithoutLongWarmup.organicVipBridge, true);
+assert.equal(directDesireWithoutLongWarmup.proactiveVipOffer, true);
+assert.equal(directDesireWithoutLongWarmup.mustStateOfferNow, true);
+
 assert.deepEqual(guardPrematureSaleMessages({
   messages: ['leo é um nome bonito', 'o VIP mensal fica R$ 29,90'],
   product: null,

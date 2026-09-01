@@ -2067,13 +2067,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             let evaluatorResultInfo: any = null;
             const draftPrompt = baseInstruction;
 
-            const draftParts: any[] = [{
-                text: `${userMessage}
-
-[MODO MASTER BRAIN]
-Resolva agora, em uma unica decisao, entendimento, continuidade, estrategia comercial, memoria, ferramenta e resposta final.
-Use somente fatos e opcoes do backend. Nao espere outra IA completar seu trabalho.`
-            }];
+            const draftParts: any[] = [{ text: userMessage }];
             if (media) draftParts.push(currentMessageParts[1]);
             let mediaRecoveryUsed = false;
             let draftResult: Awaited<ReturnType<typeof callAiGatewayJson<AIResponse>>>;
