@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { adminFetchJson } from '@/lib/adminApiClient';
 import PromptVisualEditor from './PromptVisualEditor';
 
@@ -19,17 +19,6 @@ export default function AdminScriptsPage() {
     const [message, setMessage] = useState('');
     const [saving, setSaving] = useState(false);
     const [loading, setLoading] = useState(true);
-
-    const placeholderValidation = useMemo(() => {
-        if (!template) return { missing: [], duplicated: [], unknown: [] };
-        const known = new Set(template.requiredTokens);
-        return {
-            missing: template.requiredTokens.filter((token) => !template.content.includes(token)),
-            duplicated: template.requiredTokens.filter((token) => template.content.split(token).length - 1 > 1),
-            unknown: Array.from(new Set(template.content.match(/\{\{[A-Z0-9_]+\}\}/g) || [])).filter((token) => !known.has(token)),
-        };
-    }, [template]);
-    const hasPlaceholderError = placeholderValidation.missing.length > 0 || placeholderValidation.duplicated.length > 0 || placeholderValidation.unknown.length > 0;
 
     const loadTemplate = async () => {
         try {
@@ -54,10 +43,6 @@ export default function AdminScriptsPage() {
     const saveTemplate = async () => {
         if (!template?.content.trim()) {
             setMessage('O system instruction não pode ficar vazio.');
-            return;
-        }
-        if (hasPlaceholderError) {
-            setMessage('Mantenha cada variável automática exatamente uma vez antes de salvar.');
             return;
         }
         setSaving(true);
@@ -111,9 +96,6 @@ export default function AdminScriptsPage() {
                     content={template.content}
                     hasOverride={template.hasOverride}
                     updatedAt={template.updated_at}
-                    missingPlaceholders={placeholderValidation.missing}
-                    duplicatePlaceholders={placeholderValidation.duplicated}
-                    unknownPlaceholders={placeholderValidation.unknown}
                     saving={saving}
                     onContentChange={(content) => setTemplate((current) => current ? { ...current, content } : current)}
                     onSave={saveTemplate}

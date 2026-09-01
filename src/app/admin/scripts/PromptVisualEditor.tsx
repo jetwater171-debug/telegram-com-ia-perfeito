@@ -210,16 +210,13 @@ type PromptVisualEditorProps = {
     content: string;
     hasOverride: boolean;
     updatedAt: string | null;
-    missingPlaceholders: string[];
-    duplicatePlaceholders: string[];
-    unknownPlaceholders: string[];
     saving: boolean;
     onContentChange: (content: string) => void;
     onSave: () => void;
     onRestore: () => void;
 };
 
-export default function PromptVisualEditor({ content, hasOverride, updatedAt, missingPlaceholders, duplicatePlaceholders, unknownPlaceholders, saving, onContentChange, onSave, onRestore }: PromptVisualEditorProps) {
+export default function PromptVisualEditor({ content, hasOverride, updatedAt, saving, onContentChange, onSave, onRestore }: PromptVisualEditorProps) {
     const [mode, setMode] = useState<'visual' | 'raw'>('visual');
     const [blocks, setBlocks] = useState<PromptVisualBlock[]>(() => parsePromptVisualBlocks(content));
     const [expanded, setExpanded] = useState<Set<string>>(() => new Set(parsePromptVisualBlocks(content)
@@ -289,7 +286,6 @@ export default function PromptVisualEditor({ content, hasOverride, updatedAt, mi
     const totalFunctions = useMemo(() => blocks.reduce((total, block) => total + parsePromptFunctionItems(block.content).length, 0), [blocks]);
     const totalVariables = useMemo(() => extractPromptTokens(content).length, [content]);
     const changed = content !== savedSnapshot;
-    const hasPlaceholderError = missingPlaceholders.length > 0 || duplicatePlaceholders.length > 0 || unknownPlaceholders.length > 0;
 
     return (
         <div>
@@ -301,7 +297,7 @@ export default function PromptVisualEditor({ content, hasOverride, updatedAt, mi
                     </div>
                     <div className="flex items-center gap-2">
                         {changed && <span className="hidden text-xs font-semibold text-amber-200 sm:inline">alterações não salvas</span>}
-                        <button type="button" onClick={onSave} disabled={saving || hasPlaceholderError} className="rounded-xl border border-emerald-300/30 bg-emerald-400/15 px-4 py-2.5 text-sm font-bold text-emerald-100 hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-40">{saving ? 'salvando...' : 'Salvar alterações'}</button>
+                        <button type="button" onClick={onSave} disabled={saving} className="rounded-xl border border-emerald-300/30 bg-emerald-400/15 px-4 py-2.5 text-sm font-bold text-emerald-100 hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-40">{saving ? 'salvando...' : 'Salvar alterações'}</button>
                     </div>
                 </div>
             </div>
@@ -311,10 +307,6 @@ export default function PromptVisualEditor({ content, hasOverride, updatedAt, mi
                 <div className="rounded-2xl border border-pink-400/20 bg-pink-400/[0.055] p-4"><p className="text-2xl font-semibold text-pink-100">{totalFunctions}</p><p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-pink-200/60">funções reais</p></div>
                 <div className="rounded-2xl border border-violet-400/20 bg-violet-400/[0.055] p-4"><p className="text-2xl font-semibold text-violet-100">{totalVariables}</p><p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-violet-200/60">variáveis automáticas</p></div>
             </div>
-
-            {missingPlaceholders.length > 0 && <div className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-100"><strong>Faltam dados automáticos obrigatórios.</strong> Coloque estes itens de volta antes de salvar: {missingPlaceholders.map((token) => PROMPT_TOKEN_LABELS[token] || token).join(', ')}.</div>}
-            {duplicatePlaceholders.length > 0 && <div className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100"><strong>Existem variáveis repetidas.</strong> Deixe cada uma apenas uma vez: {duplicatePlaceholders.map((token) => PROMPT_TOKEN_LABELS[token] || token).join(', ')}.</div>}
-            {unknownPlaceholders.length > 0 && <div className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-100"><strong>Existem variáveis que o backend não reconhece.</strong> Remova: {unknownPlaceholders.join(', ')}.</div>}
 
             {mode === 'visual' ? <div className="mt-5">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
