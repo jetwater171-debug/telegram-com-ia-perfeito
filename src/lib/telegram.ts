@@ -123,19 +123,24 @@ export const sendTelegramAction = async (token: string, chatId: string, action: 
     }
 }
 
+export const sendTelegramCopyableCodeStrict = async (token: string, chatId: string, code: string) => {
+    if (!token) throw new Error('Telegram sem token');
+    const escaped = String(code || '')
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    if (!escaped) throw new Error('Código copiável vazio');
+    const bot = new Telegraf(token);
+    await bot.telegram.sendMessage(chatId, `<code>${escaped}</code>`, { parse_mode: 'HTML' });
+};
+
 export const sendTelegramCopyableCode = async (token: string, chatId: string, code: string) => {
-    if (!token) return;
     try {
-        const bot = new Telegraf(token);
-        const escaped = code
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
-        await bot.telegram.sendMessage(chatId, `<code>${escaped}</code>`, { parse_mode: 'HTML' });
+        await sendTelegramCopyableCodeStrict(token, chatId, code);
     } catch (e) {
         console.error("Failed to send copyable code to Telegram:", e);
     }
-}
+};
 
 export const sendTelegramVoice = async (token: string, chatId: string, audio: Buffer, caption?: string) => {
     if (!token) throw new Error('Telegram sem token');

@@ -1,10 +1,9 @@
 import { NEXT_BEST_ACTIONS, type HardValidatorResult, type MasterBrainResponse, type NextBestAction } from '@/lib/brain/types';
 import { isCompleteLiteralLeadEvidence } from '@/lib/leadMemoryEvidence';
-import { AI_ACTION_NAMES, AI_EXPLICIT_MEDIA_ACTION_NAMES, AI_MEDIA_ACTION_NAMES } from '@/lib/aiActions';
+import { AI_EXPLICIT_MEDIA_ACTION_NAMES, AI_MEDIA_ACTION_NAMES, normalizeAiAction } from '@/lib/aiActions';
 
 const MEDIA_ACTIONS = new Set<string>(AI_MEDIA_ACTION_NAMES);
 const EXPLICIT_MEDIA_ACTIONS = new Set<string>(AI_EXPLICIT_MEDIA_ACTION_NAMES);
-const VALID_ACTIONS = new Set<string>(AI_ACTION_NAMES);
 
 const normalize = (value: unknown) => String(value || '')
     .normalize('NFD')
@@ -114,7 +113,7 @@ export const validateMasterBrainResponse = ({
     response.messages = Array.isArray(response.messages)
         ? response.messages.map((message) => String(message || '').trim()).filter(Boolean).slice(0, 4)
         : [];
-    response.action = VALID_ACTIONS.has(String(response.action || '')) ? response.action : 'none';
+    response.action = normalizeAiAction(response.action);
     response.next_best_action = nextBestActionFor(response);
     response.decision_confidence = clamp01(response.decision_confidence, 0.55);
     response.offer_id = response.offer_id || offer?.id || null;

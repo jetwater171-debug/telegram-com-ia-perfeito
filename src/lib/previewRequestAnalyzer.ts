@@ -64,17 +64,27 @@ const clamp = (value: unknown, min: number, max: number, fallback: number) => {
     return Number.isFinite(numeric) ? Math.min(max, Math.max(min, numeric)) : fallback;
 };
 
-const PHOTO_WORDS = /\b(foto|fotinha|fotos|selfie|selfies|imagem|imagens|retrato|retratos|nude|nudes|pelada|nua|sem roupa)\b/i;
-const PHOTO_PHRASES = /\b(manda|mostra|envia|quero ver|deixa ver|posta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia)\b/i;
-const VIDEO_WORDS = /\b(video|vídeo|videos|vídeos|filmagem|gravacao|gravação|gravado|rebolando|dancando|dançando)\b/i;
+const PHOTO_WORDS = /\b(foto|fotinha|fotos|selfie|selfies|imagem|imagens|retrato|retratos|nude|nudes|pelada|nua|sem roupa|previa|prévia)\b/i;
+const VIDEO_WORDS = /\b(video|vídeo|videos|vídeos|filmagem|gravacao|gravação)\b/i;
+const REQUEST_VERBS = /\b(manda|mande|mandar|mostra|mostre|mostrar|envia|envie|enviar|quero|queria|deixa ver|posso ver|solta|posta|passa|cad[eê]|tem|tens)\b/i;
+const DIRECT_MEDIA_REQUEST = /\b(?:manda|mande|mandar|mostra|mostre|mostrar|envia|envie|enviar|quero|queria|deixa ver|posso ver|solta|posta|passa|cad[eê]|tem|tens)\b.{0,48}\b(?:foto|fotinha|fotos|selfie|selfies|imagem|imagens|retrato|retratos|nude|nudes|previa|prévia|video|vídeo|videos|vídeos|filmagem|gravacao|gravação)\b|\b(?:foto|fotinha|selfie|nude|previa|prévia|video|vídeo)\b.{0,36}\b(?:manda|mostra|envia|quero|queria|cad[eê]|tem|tens)\b/i;
+const STANDALONE_MEDIA_REQUEST = /^\s*(?:(?:manda|mostra|envia|solta|quero|cad[eê])\s+)?(?:(?:uma|um|outra|outro|mais uma|mais um)\s+)?(?:foto|fotinha|selfie|nude|previa|prévia|video|vídeo)\s*(?:sua|seu|pra mim|para mim|agora|a[ií])?\s*[!?.]*\s*$/i;
+
+export const isExplicitMediaRequest = (text: string) => {
+    const raw = String(text || '').trim();
+    if (!raw) return false;
+    if (STANDALONE_MEDIA_REQUEST.test(raw) || DIRECT_MEDIA_REQUEST.test(raw)) return true;
+    return /\b(?:quero (?:te ver|ver (?:vc|voce|você))|me mostra (?:vc|voce|você)|manda qualquer foto|qualquer foto sua)\b/i.test(raw)
+        || (/\b(?:foto|video|vídeo|previa|prévia)\b/i.test(raw) && REQUEST_VERBS.test(raw));
+};
 
 export const classifyRequestedMediaLocally = (text: string, _action?: string) => {
     const raw = String(text || '').trim();
-    if (!raw) return 'not_media' as const;
-    const hasPhoto = PHOTO_WORDS.test(raw) || PHOTO_PHRASES.test(raw);
+    if (!raw || !isExplicitMediaRequest(raw)) return 'not_media' as const;
+    const hasPhoto = PHOTO_WORDS.test(raw);
     const hasVideo = VIDEO_WORDS.test(raw);
     if (hasVideo && !hasPhoto) return 'video' as const;
-    if (hasPhoto) return 'photo' as const;
+    if (hasPhoto || /\b(?:quero (?:te ver|ver (?:vc|voce|você))|me mostra (?:vc|voce|você))\b/i.test(raw)) return 'photo' as const;
     return 'not_media' as const;
 };
 

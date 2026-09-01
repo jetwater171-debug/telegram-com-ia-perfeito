@@ -5,7 +5,7 @@ import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini, repairModelReply } from '@/lib/gemini';
 import { inspectModelReply, type ModelReplyContract } from '@/lib/modelReplyContract';
 import { sanitizeConversationHistoryText } from '@/lib/fullConversationHistory';
-import { sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCode, sendTelegramVoice, type TelegramMediaProtection } from '@/lib/telegram';
+import { sendTelegramMessage, sendTelegramMessageStrict, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCodeStrict, sendTelegramVoice, type TelegramMediaProtection } from '@/lib/telegram';
 import { createPaymentMultiGateway, getPaymentStatusMultiGateway } from '@/lib/paymentGatewayService';
 import { reconcilePaymentMessage, reconcilePendingPayments } from '@/lib/paymentReconciliation';
 import { calculateLeadScore, parseLeadScore, toStoredLeadScore } from '@/lib/leadScoring';
@@ -92,7 +92,7 @@ import { trackLeadResponseOutcomesSafe } from '@/lib/brain/outcomeTracker';
 import { markSessionSalesOrderPaidSafe, recordCustomOrderSafe } from '@/lib/customOrders';
 import { isTrustedAdultVerificationSource } from '@/lib/adultVerification';
 import { humanAudioRecordingDelayMs, humanTextDelayMs } from '@/lib/humanDeliveryTiming';
-import { AI_ACTION_STAGE_MAP, AI_MEDIA_ACTION_NAMES } from '@/lib/aiActions';
+import { AI_ACTION_STAGE_MAP, AI_MEDIA_ACTION_NAMES, buildAiToolRuntimePrompt } from '@/lib/aiActions';
 
 export const maxDuration = 120;
 
@@ -1238,6 +1238,20 @@ export async function POST(req: NextRequest) {
         targetSku: salesTiming.selectedSku || null,
         vipJourneyStage: salesTiming.vipJourneyStage,
     };
+    const toolRuntimeDirective = buildAiToolRuntimePrompt({
+        adultVerified: brainRuntime.reality.adultVerified,
+        voiceConfigured: elevenLabsSettings.enabled
+            && Boolean(elevenLabsSettings.apiKey)
+            && Boolean(elevenLabsSettings.voiceId),
+        voiceRequested: userAskedForElevenLabsAudio(userOnlyText),
+        canGeneratePayment: salesTiming.canGeneratePayment,
+        hasPendingPayment: Boolean(brainRuntime.reality.payment.pendingPaymentId || salesTiming.activeOrder?.paymentId),
+        selectedOffer: offerPlan ? {
+            sku: offerPlan.sku,
+            value: offerPlan.value,
+            description: offerPlan.description,
+        } : null,
+    });
     let retrievedMemory = '';
 
     if (mem0Settings.enabled && mem0Settings.apiKey && userOnlyText.trim()) {
@@ -1290,7 +1304,7 @@ export async function POST(req: NextRequest) {
         currentStats: session.lead_score,
         minutesSinceOffer,
         promptContext: {
-            operationalInstructions,
+            operationalInstructions: [operationalInstructions, toolRuntimeDirective].join('\n\n'),
             runtimeState: formatBrainRuntimeContext(brainRuntime),
             retrievedMemory,
             styleInstructions,
@@ -1569,18 +1583,17 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
     const lastBotAlreadyDeliveredMedia = Boolean(lastBotMsg?.media_url);
     const lastBotExplicitlyOfferedMedia = !lastBotAlreadyDeliveredMedia
         && /\b(?:quer|quero que vc|posso|deixa eu)\b.{0,32}\b(?:ver|mostrar|mandar|enviar)\b.{0,20}\b(?:foto|fotinha|previa|prévia|video|vídeo|uma)|\b(?:quer|posso)\b.{0,20}\b(?:foto|fotinha|previa|prévia|video|vídeo)\b/i.test(String(lastBotMsg?.content || ''));
-    const userAffirmedMedia = /^\s*(?:sim|quero|eu quero|manda|manda ai|manda aí|pode mandar|manda sim|mostra|deixa ver|solta|quero sim|claro|com certeza|bora|pode ser)\s*[!?.]*\s*$/i.test(userOnlyText)
+    const userAffirmedMedia = /^\s*(?:sim|quero|eu quero|manda|manda ai|manda aí|manda (?:o que|oq) (?:vc|voce|você)?\s*tem|manda qualquer uma|qualquer uma|pode mandar|manda sim|mostra|deixa ver|solta|quero sim|claro|com certeza|bora|pode ser)\s*[!?.]*\s*$/i.test(userOnlyText)
         && lastBotExplicitlyOfferedMedia;
 
     const userMediaKind = classifyRequestedMediaLocally(userOnlyText);
     const userAskedPhoto = userMediaKind === 'photo' || (userAffirmedMedia && !/video/i.test(userOnlyText));
+    const asksAnotherMedia = /\b(?:manda|mostra|quero|tem)\b.{0,14}\b(?:outra|mais uma|mais)\b/i.test(userOnlyText)
+        && lastBotAlreadyDeliveredMedia;
     const userAskedMedia = userMediaKind !== 'not_media'
         || userAskedPhoto
         || userAffirmedMedia
-        || /\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|video|vídeo|previa|prévia)\b/i.test(userOnlyText)
-        || /\b(manda|mostra|envia|quero ver|deixa ver|solta)\b.*\b(foto|fotinha|fotos|selfie|selfies|nude|nudes|pelada|nua|sem roupa|previa|prévia|video|vídeo|uma)\b/i.test(userOnlyText)
-        || /\b(?:manda|mostra|tem|quero)\b.{0,14}\b(?:outra|mais uma|mais)\b/i.test(userOnlyText)
-        || /\b(quero te ver|qualquer foto|manda qualquer|manda (?:o que|oq) (?:vc|voce|você)?\s*(?:tem)?|me mostra vc|me mostra você|kd a foto|cadê a foto|cade a foto)\b/i.test(userOnlyText)
+        || asksAnotherMedia
         || userReportsMissingMedia;
 
     const botMessagesPromiseMedia = (Array.isArray(aiResponse.messages) ? aiResponse.messages : []).some((msg: string) =>
@@ -1647,6 +1660,10 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
     // confirmacao real de Telegram/gateway.
     const persistBrainAfterTurn = async () => {
         const responseOutcome = await responseOutcomePromise;
+        const finalValidatorCorrections = [...new Set([
+            ...hardValidation.corrections,
+            ...replyCorrections,
+        ])];
         if (responseOutcome.previewId) {
             await recordPreviewReactionSafe(responseOutcome.previewId, responseOutcome.positive);
         }
@@ -1679,8 +1696,8 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                 retrieved_memory_ids: brainRuntime.memories.map((memory) => memory.id),
             },
             validatorResult: {
-                allowed: hardValidation.allowed,
-                corrections: hardValidation.corrections,
+                allowed: finalValidatorCorrections.length === 0,
+                corrections: finalValidatorCorrections,
             },
         });
         await appendLeadEventSafe({
@@ -1692,9 +1709,10 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                 decision_id: decisionId,
                 next_best_action: aiResponse.next_best_action || 'TALK',
                 action: aiResponse.action || 'none',
+                model_action: modelAuthoredAction,
                 preview_id: aiResponse.preview_id || null,
                 offer_id: aiResponse.offer_id || null,
-                validator_corrections: hardValidation.corrections,
+                validator_corrections: finalValidatorCorrections,
             },
         });
     };
@@ -2585,6 +2603,18 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                     content: preparedAudio.script.spokenText,
                     media_type: 'audio',
                 });
+                await appendLeadEventSafe({
+                    sessionId: String(session.id),
+                    eventType: 'voice_sent',
+                    source: 'backend',
+                    sourceId: `${triggerMessageId || lastGroupedUserAt}:voice:${preferredAudioIndex}`,
+                    payload: {
+                        action: 'send_voice_reply',
+                        requested_by_lead: userWantsAudio,
+                        source: userWantsAudio ? 'requested' : aiSelectedVoice ? 'ai_selected' : 'automatic_conversion',
+                        spoken_chars: preparedAudio.script.spokenText.length,
+                    },
+                });
                 if (paidEroticAudioEntitled && paidEroticAudioOrder?.id) {
                     const deliveredAt = new Date().toISOString();
                     const deliveryUpdate = await supabase.from('custom_orders').update({
@@ -2599,6 +2629,17 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                 continue;
             } catch (error: any) {
                 console.error('[ELEVENLABS] Falha; preservando a fala do modelo em texto:', error?.message || error);
+                await appendLeadEventSafe({
+                    sessionId: String(session.id),
+                    eventType: 'voice_failed',
+                    source: 'backend',
+                    sourceId: `${triggerMessageId || lastGroupedUserAt}:voice-failed:${preferredAudioIndex}`,
+                    payload: {
+                        action: 'send_voice_reply',
+                        requested_by_lead: userWantsAudio,
+                        reason: String(error?.message || error).slice(0, 300),
+                    },
+                });
                 await supabase.from('messages').insert({
                     session_id: session.id,
                     sender: 'system',
@@ -2947,6 +2988,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                     break;
 
             case 'generate_pix_payment':
+                let recoverablePaymentExists = false;
                 try {
                     const authoritativeOrder = readActiveSalesOrder(operationalLeadMemory.metadata?.sales_active_order);
                     if (!authoritativeOrder || !['accepted', 'payment_pending'].includes(authoritativeOrder.status)) {
@@ -3003,6 +3045,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                     }
 
                     if (sameValue && sameProduct && sameSku && sameGateway && notPaid && lastPixCode) {
+                        recoverablePaymentExists = true;
                         const pendingOrder = {
                             ...authoritativeOrder,
                             status: 'payment_pending',
@@ -3038,8 +3081,23 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                             }
                         }
                         await persistSalesOrderState(pendingOrder);
-                        await sendTelegramMessage(botToken, chatId, `${description} por ${formatBrl(value)}. ta aqui o pix de novo`);
-                        await sendTelegramCopyableCode(botToken, chatId, lastPixCode);
+                        await sendTelegramMessageStrict(botToken, chatId, `${description} por ${formatBrl(value)}. ta aqui o pix de novo`);
+                        await sendTelegramCopyableCodeStrict(botToken, chatId, lastPixCode);
+                        await appendLeadEventSafe({
+                            sessionId: String(session.id),
+                            eventType: 'payment_code_sent',
+                            source: 'backend',
+                            sourceId: `${lastPaymentId || orderId}:code-resent`,
+                            payload: {
+                                order_id: orderId,
+                                payment_id: lastPaymentId || null,
+                                gateway: lastPaymentData.gateway || null,
+                                product: paymentProduct,
+                                sku: paymentSku,
+                                amount: value,
+                                resent: true,
+                            },
+                        });
 
                         await supabase.from('messages').insert({
                             session_id: session.id,
@@ -3132,6 +3190,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                         if (paymentRecordWrite.error || !paymentRecordWrite.data?.id) {
                             throw new Error(`payment_record_insert_failed:${paymentRecordWrite.error?.message || 'missing_id'}`);
                         }
+                        recoverablePaymentExists = true;
                         if (requiresAdminFulfillment) {
                             const customOrderReady = await recordCustomOrderSafe({
                                 sessionId: String(session.id),
@@ -3186,12 +3245,26 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                             payment: { pendingPaymentId: String(payment.paymentId) },
                             commercial: { currentOrder: pendingOrder },
                         });
-                        paymentCreatedThisTurn = true;
-                        await sendTelegramMessage(botToken, chatId, `${description} por ${formatBrl(value)}. ta aqui o pix`);
+                        await sendTelegramMessageStrict(botToken, chatId, `${description} por ${formatBrl(value)}. ta aqui o pix`);
                         if (payment.gateway === 'pushinpay') {
-                            await sendTelegramMessage(botToken, chatId, "aviso rapidinho: a PushinPay so processa o pagamento, a entrega e suporte continuam comigo.");
+                            await sendTelegramMessageStrict(botToken, chatId, "aviso rapidinho: a PushinPay so processa o pagamento, a entrega e suporte continuam comigo.");
                         }
-                        await sendTelegramCopyableCode(botToken, chatId, payment.pixCopiaCola);
+                        await sendTelegramCopyableCodeStrict(botToken, chatId, payment.pixCopiaCola);
+                        paymentCreatedThisTurn = true;
+                        await appendLeadEventSafe({
+                            sessionId: String(session.id),
+                            eventType: 'payment_code_sent',
+                            source: 'backend',
+                            sourceId: `${payment.paymentId}:code-sent`,
+                            payload: {
+                                order_id: orderId,
+                                payment_id: payment.paymentId,
+                                gateway: payment.gateway,
+                                product: paymentProduct,
+                                sku: paymentSku,
+                                amount: value,
+                            },
+                        });
                     } else {
                         await sendTelegramMessage(botToken, chatId, "amor o sistema caiu aqui rapidinho, tenta daqui a pouco?");
                     }
@@ -3204,7 +3277,9 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                         content: `[DEBUG] Erro Gateway PIX: ${err.message || JSON.stringify(err)}`
                     });
 
-                    await sendTelegramMessage(botToken, chatId, "amor nao consegui gerar o pix agora, que raiva");
+                    await sendTelegramMessage(botToken, chatId, recoverablePaymentExists
+                        ? "o pix ficou salvo, mas nao consegui te entregar o codigo agora. me pede de novo que eu recupero a mesma cobranca"
+                        : "amor nao consegui gerar o pix agora, que raiva");
                 }
                 break;
             }

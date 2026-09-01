@@ -42,7 +42,7 @@ import {
 } from '@/lib/lariConversationPrompts';
 import { composeLariPromptContext, type LariPromptContext } from '@/lib/lariPromptContext';
 import { inspectModelReply, type ModelReplyContract } from '@/lib/modelReplyContract';
-import { AI_ACTION_NAMES } from '@/lib/aiActions';
+import { AI_ACTION_NAMES, normalizeAiAction } from '@/lib/aiActions';
 import { serializeLeadPromptProfile, type LeadPromptProfileInput } from '@/lib/leadPromptContext';
 import {
     hasFullSystemInstructionTemplate,
@@ -1197,9 +1197,9 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings, tier?: AiI
     // ordenando todos os fallbacks, mas não pode acidentalmente deslocar o
     // Master Brain; mídia incompatível é roteada ao Gemini acima desta camada.
     // Mantem o DeepSeek V4 da B.AI em primeiro. Se ele estiver sem saldo,
-    // prioriza fallbacks de qualidade (DeepSeek via OpenRouter e Groq) antes de
-    // chegar no Gemini Lite, que deve ser somente a ultima rede de seguranca.
-    const qualityFallbacks: AiProvider[] = ['openrouter', 'groq', 'gemini'];
+    // prioriza fallbacks de qualidade com contexto amplo antes de chegar no
+    // Gemini gratuito, que deve ser somente a ultima rede de seguranca.
+    const qualityFallbacks: AiProvider[] = ['openrouter', 'groq', 'mistral', 'gemini'];
     const providerPreference = [
         'bai' as AiProvider,
         ...qualityFallbacks,
@@ -1596,7 +1596,17 @@ const callAiGatewayJson = async <T,>(options: {
         openRouterHistory,
         options.mediaPart ? '[media]' : '',
     );
-    const candidates: GatewayRouteCandidate<AiGatewayConfig>[] = gateways.map((gateway, priority) => {
+    const providerCandidateCounts = new Map<AiProvider, number>();
+    const boundedGateways = gateways.filter((gateway) => {
+        const count = providerCandidateCounts.get(gateway.provider) || 0;
+        // Modelos do mesmo provedor compartilham chave, rede e normalmente o
+        // mesmo incidente. Duas tentativas preservam fallback sem consumir todo
+        // o prazo da função em uma cascata de timeouts idênticos.
+        if (count >= 2) return false;
+        providerCandidateCounts.set(gateway.provider, count + 1);
+        return true;
+    });
+    const candidates: GatewayRouteCandidate<AiGatewayConfig>[] = boundedGateways.map((gateway, priority) => {
         const policy = gateway.policy || resolveGatewayRatePolicy(gateway.provider, gateway.model);
         return {
             key: `${gateway.provider}:${gateway.model}`,
@@ -1607,6 +1617,13 @@ const callAiGatewayJson = async <T,>(options: {
             policy,
             value: { ...gateway, policy },
         };
+    }).filter((candidate) => {
+        const fitsProviderWindow = estimatedTokens <= candidate.policy.tpm
+            && estimatedTokens <= candidate.policy.tpd;
+        if (!fitsProviderWindow) {
+            attempts.push(`${candidate.provider}:${candidate.model} pulado: prompt estimado em ${estimatedTokens} tokens excede a capacidade configurada`);
+        }
+        return fitsProviderWindow;
     });
     const excluded = new Set<string>();
     const tierQueueMs: Record<AiIntelligenceTier, number> = { starter: 2_200, buyer: 3_200, premium: 4_000, elite: 5_000 };
@@ -2137,6 +2154,7 @@ Reconheca o envio de forma natural e reaja ao clima real da legenda.`;
             if (!jsonResponse || typeof jsonResponse !== 'object') {
                 throw new Error('Rascunho da IA nao retornou um objeto JSON');
             }
+            jsonResponse.action = normalizeAiAction(jsonResponse.action);
             jsonResponse.messages = normalizeAiMessageList(jsonResponse.messages);
             jsonResponse.lead_memory_patch = mergeBrainAndDraftMemory(strategy?.memory_patch, jsonResponse.lead_memory_patch);
             jsonResponse.next_best_action = jsonResponse.next_best_action || strategy?.next_best_action || 'TALK';

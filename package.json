@@ -16,6 +16,7 @@
     "verify:prompt-editor": "node scripts/verify-prompt-visual-editor.cjs",
     "verify:payment-preview": "node scripts/verify-payment-preview-integrity.cjs",
     "verify:payment-reconciliation": "node scripts/verify-payment-reconciliation-contract.cjs",
+    "verify:ai-tools": "node scripts/verify-ai-tools-contract.cjs",
     "verify:elevenlabs-voice": "node scripts/verify-elevenlabs-voice.cjs",
     "verify:elevenlabs-budget": "node scripts/verify-elevenlabs-budget.cjs",
     "verify:bai-router": "node scripts/verify-bai-chat-router.cjs && node scripts/verify-bai-media-routing.cjs && node scripts/verify-ai-gateway-router.cjs",
