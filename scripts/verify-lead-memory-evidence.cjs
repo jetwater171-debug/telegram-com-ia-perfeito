@@ -19,11 +19,13 @@ const loadTs = (relativePath, stubs = {}) => {
 };
 
 const evidence = loadTs('src/lib/leadMemoryEvidence.ts');
+const aiActions = loadTs('src/lib/aiActions.ts');
 const memory = loadTs('src/lib/leadMemory.ts', { '@/types': {} , '@/lib/leadMemoryEvidence': evidence });
 const brainTypes = loadTs('src/lib/brain/types.ts', { '@/types': {} });
 const validator = loadTs('src/lib/brain/hardValidator.ts', {
   '@/lib/brain/types': brainTypes,
   '@/lib/leadMemoryEvidence': evidence,
+  '@/lib/aiActions': aiActions,
 });
 const mem0 = loadTs('src/lib/mem0LeadMemory.ts');
 

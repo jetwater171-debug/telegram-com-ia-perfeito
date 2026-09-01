@@ -122,6 +122,7 @@ const gateway = fs.readFileSync(path.join(root, 'src/lib/gemini.ts'), 'utf8');
 const gatewayRouter = fs.readFileSync(path.join(root, 'src/lib/aiGatewayRouter.ts'), 'utf8');
 const prompts = fs.readFileSync(path.join(root, 'src/lib/lariConversationPrompts.ts'), 'utf8');
 const types = fs.readFileSync(path.join(root, 'src/types.ts'), 'utf8');
+const aiActions = fs.readFileSync(path.join(root, 'src/lib/aiActions.ts'), 'utf8');
 const migration = fs.readFileSync(path.join(root, 'custom_orders_migration.sql'), 'utf8');
 assert.match(route, /recordCustomOrderSafe/);
 assert.match(route, /const idempotencyKey = `\$\{session\.id\}:\$\{orderId\}`/);
@@ -142,7 +143,8 @@ assert.match(gatewayRouter, /timeoutMs: 10_000/);
 assert.match(route, /aiRequestedVoiceAction = aiResponse\.action === 'send_voice_reply'/);
 assert.match(route, /aiSelectedVoice = aiRequestedVoiceAction && conversionVoiceMoment/);
 assert.match(prompts, /FERRAMENTAS REAIS DO BACKEND/);
-assert.match(types, /"send_voice_reply"/);
+assert.match(types, /action: AiAction/);
+assert.match(aiActions, /name: 'send_voice_reply'/);
 assert.match(migration, /CREATE TABLE IF NOT EXISTS custom_orders/i);
 assert.ok(fs.existsSync(path.join(root, 'src/app/admin/orders/page.tsx')));
 

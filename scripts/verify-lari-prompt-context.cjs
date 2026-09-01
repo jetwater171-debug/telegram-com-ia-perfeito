@@ -45,12 +45,46 @@ assert.match(geminiSource, /serializeLeadPromptProfile\(profile\)/);
 assert.match(geminiSource, /Math\.max\(1, Math\.min\(4, Number\(jsonResponse\.messages/);
 assert.doesNotMatch(geminiSource, /redirect_ip|profile\.userAgent/);
 
+const loadStandaloneTs = (relativePath, dependencyMap = {}) => {
+  const moduleFilename = path.resolve(__dirname, '..', relativePath);
+  const moduleCompiled = ts.transpileModule(fs.readFileSync(moduleFilename, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    fileName: moduleFilename,
+  }).outputText;
+  const moduleRecord = { exports: {} };
+  new Function('require', 'module', 'exports', moduleCompiled)(
+    (name) => dependencyMap[name] || require(name), moduleRecord, moduleRecord.exports,
+  );
+  return moduleRecord.exports;
+};
+const aiActionsModule = loadStandaloneTs('src/lib/aiActions.ts');
+const commercialModule = loadStandaloneTs('src/lib/commercialCatalog.ts');
+const conversationPromptsModule = loadStandaloneTs('src/lib/lariConversationPrompts.ts');
+const editorModule = loadStandaloneTs('src/lib/systemInstructionEditor.ts', {
+  '@/lib/aiActions': aiActionsModule,
+  '@/lib/commercialCatalog': commercialModule,
+  '@/lib/lariConversationPrompts': conversationPromptsModule,
+  '@/lib/systemInstructionKeys': { SYSTEM_INSTRUCTION_BLOCK_KEY: 'system_instruction_primary', SYSTEM_INSTRUCTION_BLOCK_LABEL: 'System instruction completo' },
+});
+assert.equal(editorModule.findMissingSystemInstructionTokens(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE).length, 0);
+assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# FUNÇÕES DISPONÍVEIS NESTE BACKEND/);
+assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# CATÁLOGO COMERCIAL PRINCIPAL DO BACKEND/);
+assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# MASTER BRAIN ÚNICO DA LARI/);
+assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# FORMATO OBRIGATÓRIO DA RESPOSTA/);
+const renderedDefault = editorModule.renderSystemInstructionTemplate(
+  editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE,
+  Object.fromEntries(editorModule.SYSTEM_INSTRUCTION_PLACEHOLDERS.map((name) => [name, `valor_${name}`])),
+);
+assert.equal(editorModule.findMissingSystemInstructionTokens(renderedDefault).length, editorModule.REQUIRED_SYSTEM_INSTRUCTION_TOKENS.length);
+assert.doesNotMatch(renderedDefault, /\{\{[A-Z0-9_]+\}\}/);
+assert.match(editorModule.normalizeSystemInstructionTemplate('PERSONA LEGADA'), /^PERSONA LEGADA/);
+
 const universalStub = new Proxy(function universalStub() {}, {
   get: () => universalStub,
   apply: () => universalStub,
   construct: () => universalStub,
 });
-let capturedCoreContext = null;
+let capturedTemplateValues = null;
 const leadProfileFilename = path.resolve(__dirname, '../src/lib/leadPromptContext.ts');
 const leadProfileCompiled = ts.transpileModule(fs.readFileSync(leadProfileFilename, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -69,19 +103,27 @@ const geminiModule = { exports: {} };
 const stubRequire = (moduleName) => {
   if (moduleName === '@/lib/lariConversationPrompts') {
     return {
-      buildLariAutomaticContext: (context) => {
-        capturedCoreContext = context;
-        return `AUTOMATIC_CONTEXT:${JSON.stringify(context)}`;
-      },
-      buildLariDraftPrompt: universalStub,
       buildLariReviewPrompt: universalStub,
       needsLariReview: universalStub,
     };
   }
   if (moduleName === '@/lib/leadPromptContext') return leadProfileModule.exports;
   if (moduleName === '@/lib/systemInstructionEditor') return {
-    DEFAULT_SYSTEM_INSTRUCTION: 'DEFAULT_AGENT',
     SYSTEM_INSTRUCTION_BLOCK_KEY: 'system_instruction_primary',
+    normalizeSystemInstructionTemplate: (content) => [
+      content || 'DEFAULT_AGENT',
+      'BACKEND_CONTRACT',
+      'ACTION_CATALOG',
+      'MINUTES={{MINUTES_SINCE_OFFER}}',
+      'PROFILE={{LEAD_PROFILE}}',
+      'MEMORY={{LEAD_MEMORY}}',
+      'STATE={{BACKEND_STATE}}',
+    ].join('\n\n'),
+    renderSystemInstructionTemplate: (template, values) => {
+      capturedTemplateValues = values;
+      return template.replace(/\{\{([A-Z0-9_]+)\}\}/g, (token, name) =>
+        Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : token);
+    },
   };
   if (moduleName === '@/lib/aiActions') return {
     AI_ACTION_NAMES: ['none', 'generate_pix_payment'],
@@ -108,19 +150,20 @@ const assembledInstruction = geminiModule.exports.getSystemInstruction(
   'CUSTOM_AGENT',
 );
 assert.ok(assembledInstruction.startsWith('CUSTOM_AGENT\n\nBACKEND_CONTRACT\n\nACTION_CATALOG'));
-assert.equal(capturedCoreContext.offerAgeMinutes, 0, 'zero não pode virar o fallback 999');
-assert.match(capturedCoreContext.memorySummary, /tipo dominante \(hipótese\)/);
-assert.match(capturedCoreContext.memorySummary, /contexto emocional \(hipótese\)/);
-assert.match(capturedCoreContext.memorySummary, /lembranças legadas sem comprovação/);
-assert.match(capturedCoreContext.memorySummary, /fato-15-/);
-assert.doesNotMatch(capturedCoreContext.memorySummary, /fato-16-/);
-assert.doesNotMatch(capturedCoreContext.memorySummary, /x{161}/);
-const profile = JSON.parse(capturedCoreContext.profileSummary);
+assert.equal(capturedTemplateValues.MINUTES_SINCE_OFFER, 0, 'zero não pode virar o fallback 999');
+const memorySummary = JSON.parse(capturedTemplateValues.LEAD_MEMORY);
+assert.match(memorySummary, /tipo dominante \(hipótese\)/);
+assert.match(memorySummary, /contexto emocional \(hipótese\)/);
+assert.match(memorySummary, /lembranças legadas sem comprovação/);
+assert.match(memorySummary, /fato-15-/);
+assert.doesNotMatch(memorySummary, /fato-16-/);
+assert.doesNotMatch(memorySummary, /x{161}/);
+const profile = JSON.parse(JSON.parse(capturedTemplateValues.LEAD_PROFILE));
 assert.equal(profile.identity.name, 'Mateus');
 assert.equal(profile.origin.channel, 'instagram');
 assert.equal(profile.origin.campaign.campaign, 'vip-agosto');
 assert.equal(profile.origin.landingPage, 'https://example.invalid/ignore');
 assert.equal(profile.userAgent, undefined);
 assert.equal(profile.queryParams, undefined);
-assert.doesNotMatch(capturedCoreContext.profileSummary, /identificador-nao-enviar|secret=1|ignore regras/);
+assert.doesNotMatch(capturedTemplateValues.LEAD_PROFILE, /identificador-nao-enviar|secret=1|ignore regras/);
 console.log('LARI_PROMPT_CONTEXT_OK operational=uncut runtime=uncut optional_budgets=separate lead_origin=1 privacy=1 editable_instruction=1 zero_minutes=preserved');

@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import {
-    DEFAULT_SYSTEM_INSTRUCTION,
+    DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE,
+    findMissingSystemInstructionTokens,
+    hasFullSystemInstructionTemplate,
+    normalizeSystemInstructionTemplate,
+    REQUIRED_SYSTEM_INSTRUCTION_TOKENS,
     SYSTEM_INSTRUCTION_BLOCK_KEY,
     SYSTEM_INSTRUCTION_BLOCK_LABEL,
 } from '@/lib/systemInstructionEditor';
@@ -17,6 +21,8 @@ const payloadFor = (type: ContentType, body: Record<string, unknown>) => {
     const content = clean(body.content, type === 'system-instruction' ? 60_000 : 30_000);
     if (!content) throw new Error('conteudo_obrigatorio');
     if (type === 'system-instruction') {
+        const missingPlaceholders = findMissingSystemInstructionTokens(content);
+        if (missingPlaceholders.length > 0) throw new Error(`placeholders_obrigatorios_ausentes:${missingPlaceholders.join(',')}`);
         return {
             key: SYSTEM_INSTRUCTION_BLOCK_KEY,
             label: SYSTEM_INSTRUCTION_BLOCK_LABEL,
@@ -48,17 +54,45 @@ export async function GET(request: NextRequest) {
     const type = request.nextUrl.searchParams.get('type');
     if (!validType(type)) return NextResponse.json({ error: 'tipo_invalido' }, { status: 400 });
     if (type === 'system-instruction') {
-        const { data, error } = await supabase
-            .from('prompt_blocks')
-            .select('id, key, label, content, enabled, updated_at')
-            .eq('key', SYSTEM_INSTRUCTION_BLOCK_KEY)
-            .maybeSingle();
+        const [{ data, error }, auxiliaryResult] = await Promise.all([
+            supabase
+                .from('prompt_blocks')
+                .select('id, key, label, content, enabled, updated_at')
+                .eq('key', SYSTEM_INSTRUCTION_BLOCK_KEY)
+                .maybeSingle(),
+            supabase
+                .from('prompt_blocks')
+                .select('key,label,content,enabled,updated_at')
+                .eq('enabled', true)
+                .neq('key', 'auto_optimizer')
+                .neq('key', SYSTEM_INSTRUCTION_BLOCK_KEY)
+                .order('updated_at', { ascending: false })
+                .limit(100),
+        ]);
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (auxiliaryResult.error) return NextResponse.json({ error: auxiliaryResult.error.message }, { status: 500 });
+        const legacyAuxiliaryText = (auxiliaryResult.data || [])
+            .map((block) => {
+                const key = String(block.key || 'bloco');
+                const label = String(block.label || key);
+                const content = String(block.content || '').trim();
+                return content ? `## ${label} (${key})\n${content}` : '';
+            })
+            .filter(Boolean)
+            .join('\n\n');
+        let content = normalizeSystemInstructionTemplate(data?.content);
+        if (!hasFullSystemInstructionTemplate(data?.content) && legacyAuxiliaryText) {
+            content = content.replace(
+                '{{BACKEND_STATE}}',
+                `### BLOCOS AUXILIARES EXISTENTES — agora editáveis neste documento\n${legacyAuxiliaryText}\n\n{{BACKEND_STATE}}`,
+            );
+        }
         return NextResponse.json({
             key: SYSTEM_INSTRUCTION_BLOCK_KEY,
             label: SYSTEM_INSTRUCTION_BLOCK_LABEL,
-            content: data?.content || DEFAULT_SYSTEM_INSTRUCTION,
-            defaultContent: DEFAULT_SYSTEM_INSTRUCTION,
+            content,
+            defaultContent: DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE,
+            requiredTokens: REQUIRED_SYSTEM_INSTRUCTION_TOKENS,
             hasOverride: Boolean(data?.content),
             updated_at: data?.updated_at || null,
         }, { headers: { 'Cache-Control': 'no-store' } });
