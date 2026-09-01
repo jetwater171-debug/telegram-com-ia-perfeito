@@ -50,4 +50,14 @@ assert.deepEqual(editor.findUnknownSystemInstructionTokens(editor.DEFAULT_FULL_S
 assert.deepEqual(editor.findDuplicateSystemInstructionTokens(`${editor.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE}\n{{LEAD_MEMORY}}`), ['{{LEAD_MEMORY}}']);
 assert.deepEqual(editor.findUnknownSystemInstructionTokens(`${editor.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE}\n{{NAO_EXISTE}}`), ['{{NAO_EXISTE}}']);
 
+const plainCopied = editor.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE
+  .replace(/^#{1,3}\s+/gm, '')
+  .replace(/^-\s+/gm, '');
+const plainBlocks = visual.parsePromptVisualBlocks(plainCopied);
+const plainFunctionBlock = plainBlocks.find(block => block.kind === 'functions');
+assert.ok(plainBlocks.length >= 12, 'texto copiado sem Markdown também precisa virar blocos');
+assert.ok(plainFunctionBlock, 'funções sem bullets continuam reconhecidas');
+assert.equal(visual.parsePromptFunctionItems(plainFunctionBlock.content).length, actions.AI_ACTION_DEFINITIONS.length);
+assert.equal(visual.composePromptVisualBlocks(plainBlocks), plainCopied, 'editor visual não altera o texto colado');
+
 console.log(`PROMPT_VISUAL_EDITOR_OK blocks=${blocks.length} functions=${functionItems.length} variables=${editor.REQUIRED_SYSTEM_INSTRUCTION_TOKENS.length} lossless=1`);

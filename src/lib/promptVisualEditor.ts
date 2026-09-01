@@ -25,7 +25,13 @@ const slug = (value: string) => normalize(value)
     .replace(/^-|-$/g, '')
     .slice(0, 54) || 'bloco';
 
-const headingOf = (content: string) => content.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim() || 'Bloco livre';
+const PLAIN_HEADING = String.raw`(?:\d+\.\s+)?[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ][A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ0-9 _.,:+&/()“”'’—→-]{3,}`;
+const promptHeadingPattern = () => new RegExp(`^(?:#{1,3}\\s+.+|${PLAIN_HEADING})$`, 'gm');
+
+const headingOf = (content: string) => {
+    const firstLine = String(content || '').split('\n')[0]?.trim() || '';
+    return firstLine.replace(/^#{1,3}\s+/, '').trim() || 'Bloco livre';
+};
 
 const metadataFor = (heading: string): Pick<PromptVisualBlock, 'friendlyName' | 'description' | 'tone' | 'kind'> => {
     const value = normalize(heading);
@@ -49,7 +55,10 @@ const metadataFor = (heading: string): Pick<PromptVisualBlock, 'friendlyName' | 
 export const parsePromptVisualBlocks = (content: unknown): PromptVisualBlock[] => {
     const text = String(content || '').replace(/\r\n/g, '\n').trim();
     if (!text) return [];
-    const headings = [...text.matchAll(/^#{1,3}\s+.+$/gm)];
+    // O botão de copiar de alguns renderizadores remove os marcadores Markdown
+    // (#, bullets e numeração de listas). O editor aceita as duas formas para
+    // que o mesmo prompt continue dividido e arrastável depois de ser colado.
+    const headings = [...text.matchAll(promptHeadingPattern())];
     if (headings.length === 0) {
         const heading = 'Bloco livre';
         return [{ id: 'section-0-bloco-livre', heading, content: text, ...metadataFor(heading) }];
@@ -92,24 +101,27 @@ export const movePromptItem = <T,>(items: T[], from: number, to: number) => {
 
 export const parsePromptFunctionItems = (content: unknown): PromptFunctionItem[] => String(content || '')
     .split('\n')
-    .map((line) => line.match(/^- ([a-z][a-z0-9_]*)\s+—\s+(.+)$/))
+    .map((line) => line.match(/^(?:-\s+)?([a-z][a-z0-9_]*)\s+—\s+(.+)$/))
     .filter((match): match is RegExpMatchArray => Boolean(match))
     .map((match) => ({ name: match[1], content: match[2].trim() }));
 
 export const updatePromptFunctionItem = (content: string, name: string, nextContent: string) => content
     .split('\n')
-    .map((line) => line.match(new RegExp(`^- ${name}\\s+—\\s+`))
-        ? `- ${name} — ${String(nextContent || '').replace(/\s*\n\s*/g, ' ').trim()}`
-        : line)
+    .map((line) => {
+        const match = line.match(new RegExp(`^(-\\s+)?${name}\\s+—\\s+`));
+        return match
+            ? `${match[1] || ''}${name} — ${String(nextContent || '').replace(/\s*\n\s*/g, ' ').trim()}`
+            : line;
+    })
     .join('\n');
 
 export const reorderPromptFunctionItems = (content: string, activeName: string, overName: string) => {
     const lines = content.split('\n');
     const positions = lines
-        .map((line, index) => (/^- [a-z][a-z0-9_]*\s+—\s+/.test(line) ? index : -1))
+        .map((line, index) => (/^(?:-\s+)?[a-z][a-z0-9_]*\s+—\s+/.test(line) ? index : -1))
         .filter((index) => index >= 0);
     const actionLines = positions.map((index) => lines[index]);
-    const names = actionLines.map((line) => line.match(/^- ([a-z][a-z0-9_]*)/)?.[1] || '');
+    const names = actionLines.map((line) => line.match(/^(?:-\s+)?([a-z][a-z0-9_]*)/)?.[1] || '');
     const from = names.indexOf(activeName);
     const to = names.indexOf(overName);
     const reordered = movePromptItem(actionLines, from, to);
