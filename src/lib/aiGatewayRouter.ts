@@ -82,7 +82,7 @@ const providerDefaults = (provider: string, model: string): GatewayRatePolicy =>
             // O V4 continua sendo sempre o primeiro, mas um canal lento nao
             // pode segurar uma chamada critica e seu fallback. Depois deste limite o
             // roteador usa imediatamente o proximo fallback configurado.
-            timeoutMs: 10_000,
+            timeoutMs: 20_000,
             maxQueueMs: 1_000,
         };
     }
