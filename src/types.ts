@@ -1,3 +1,5 @@
+import type { AiAction } from '@/lib/aiActions';
+
 export enum Type {
     OBJECT = 'OBJECT',
     STRING = 'STRING',
@@ -62,19 +64,7 @@ export interface AIResponse {
     | "CLOSING"
     | "PAYMENT_CHECK";
     messages: string[];
-    action:
-    | "none"
-    | "send_video_preview"
-    | "send_hot_video_preview"
-    | "send_ass_photo_preview"
-    | "send_custom_preview"
-    | "generate_pix_payment"
-    | "check_payment_status"
-    | "send_shower_photo"
-    | "send_lingerie_photo"
-    | "send_wet_finger_photo"
-    | "send_voice_reply"
-    ;
+    action: AiAction;
     payment_details?: PaymentDetails | null;
     preview_id?: string | null;
     preview_request?: {

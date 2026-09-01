@@ -92,6 +92,7 @@ import { trackLeadResponseOutcomesSafe } from '@/lib/brain/outcomeTracker';
 import { markSessionSalesOrderPaidSafe, recordCustomOrderSafe } from '@/lib/customOrders';
 import { isTrustedAdultVerificationSource } from '@/lib/adultVerification';
 import { humanAudioRecordingDelayMs, humanTextDelayMs } from '@/lib/humanDeliveryTiming';
+import { AI_ACTION_STAGE_MAP, AI_MEDIA_ACTION_NAMES } from '@/lib/aiActions';
 
 export const maxDuration = 120;
 
@@ -412,18 +413,7 @@ const stageIndex = (stage?: string | null) => {
     return FUNNEL_STEPS.indexOf(stage.toUpperCase());
 };
 
-const ACTION_STAGE_MAP: Record<string, string> = {
-    send_shower_photo: 'TRIGGER_PHASE',
-    send_lingerie_photo: 'TRIGGER_PHASE',
-    send_wet_finger_photo: 'TRIGGER_PHASE',
-    send_ass_photo_preview: 'PREVIEW',
-    send_video_preview: 'PREVIEW',
-    send_hot_video_preview: 'PREVIEW',
-    send_custom_preview: 'PREVIEW',
-    send_voice_reply: 'CONNECTION',
-    generate_pix_payment: 'PAYMENT_CHECK',
-    check_payment_status: 'PAYMENT_CHECK'
-};
+const ACTION_STAGE_MAP: Record<string, string> = AI_ACTION_STAGE_MAP;
 
 const inferStageFromText = (text: string) => {
     const t = (text || '').toLowerCase();
@@ -434,15 +424,7 @@ const inferStageFromText = (text: string) => {
     return null;
 };
 
-const MEDIA_ACTIONS = new Set([
-    'send_shower_photo',
-    'send_lingerie_photo',
-    'send_wet_finger_photo',
-    'send_ass_photo_preview',
-    'send_video_preview',
-    'send_hot_video_preview',
-    'send_custom_preview'
-]);
+const MEDIA_ACTIONS = new Set<string>(AI_MEDIA_ACTION_NAMES);
 
 const resolveContextualMediaAction = (userText: string, currentAction?: string) => {
     const t = (userText || '').toLowerCase();
@@ -1284,13 +1266,25 @@ export async function POST(req: NextRequest) {
         isHighTicket: false,
         leadProfile: {
             userName: verifiedLeadName,
+            telegramUsername: String(leadMemory.metadata?.telegram_username || ''),
+            telegramFirstName: String(leadMemory.metadata?.telegram_first_name || ''),
+            telegramLastName: String(leadMemory.metadata?.telegram_last_name || ''),
+            telegramLanguage: String(leadMemory.metadata?.telegram_language_code || ''),
             deviceType: String(session.device_type || 'Unknown'),
             city: userCity || '',
             citySource: detectedCity ? 'lead_current_message' : 'stored_or_technical_unverified',
+            technicalCity: String(leadMemory.metadata?.redirect_city || ''),
             region: String(leadMemory.metadata?.redirect_region || ''),
             country: String(leadMemory.metadata?.redirect_country || ''),
             timezone: String(leadMemory.metadata?.redirect_timezone || ''),
             language: String(leadMemory.metadata?.redirect_accept_language || ''),
+            sourceUrl: String(leadMemory.metadata?.redirect_source_url || ''),
+            referer: String(leadMemory.metadata?.redirect_referer || ''),
+            redirectCode: String(leadMemory.metadata?.redirect_code || ''),
+            clickedAt: String(leadMemory.metadata?.redirect_clicked_at || ''),
+            startPayload: String(leadMemory.metadata?.start_payload || ''),
+            utm: leadMemory.metadata?.redirect_utm || {},
+            queryParams: leadMemory.metadata?.redirect_query_params || {},
         },
         totalPaid: session.total_paid || 0,
         currentStats: session.lead_score,

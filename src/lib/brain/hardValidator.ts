@@ -1,14 +1,10 @@
 import { NEXT_BEST_ACTIONS, type HardValidatorResult, type MasterBrainResponse, type NextBestAction } from '@/lib/brain/types';
 import { isCompleteLiteralLeadEvidence } from '@/lib/leadMemoryEvidence';
+import { AI_ACTION_NAMES, AI_EXPLICIT_MEDIA_ACTION_NAMES, AI_MEDIA_ACTION_NAMES } from '@/lib/aiActions';
 
-const MEDIA_ACTIONS = new Set([
-    'send_video_preview', 'send_hot_video_preview', 'send_ass_photo_preview', 'send_custom_preview',
-    'send_shower_photo', 'send_lingerie_photo', 'send_wet_finger_photo',
-]);
-const EXPLICIT_MEDIA_ACTIONS = new Set(['send_hot_video_preview', 'send_wet_finger_photo', 'send_ass_photo_preview']);
-const VALID_ACTIONS = new Set([
-    'none', ...MEDIA_ACTIONS, 'send_voice_reply', 'generate_pix_payment', 'check_payment_status',
-]);
+const MEDIA_ACTIONS = new Set<string>(AI_MEDIA_ACTION_NAMES);
+const EXPLICIT_MEDIA_ACTIONS = new Set<string>(AI_EXPLICIT_MEDIA_ACTION_NAMES);
+const VALID_ACTIONS = new Set<string>(AI_ACTION_NAMES);
 
 const normalize = (value: unknown) => String(value || '')
     .normalize('NFD')

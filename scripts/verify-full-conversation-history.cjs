@@ -25,6 +25,7 @@ const {
     buildGeminiConversationHistory,
     buildProviderConversationHistory,
     loadFullConversationHistory,
+    selectRecentConversationHistory,
 } = loadPureTypeScriptModule('../src/lib/fullConversationHistory.ts');
 
 const compareIds = (left, right) => {
@@ -169,6 +170,12 @@ const makeMockSupabase = (allRows, serverPageCap = Number.POSITIVE_INFINITY) => 
     ]), [{ role: 'assistant', content: 'formato já compatível' }]);
     assert.ok(result.diagnostics.rowsIncluded > 2_000);
 
+    const recentWindow = selectRecentConversationHistory(result.messages, { maxMessages: 18, maxChars: 800 });
+    assert.ok(recentWindow.length <= 18, 'janela recente respeita quantidade');
+    assert.ok(recentWindow.reduce((total, message) => total + message.text.length, 0) <= 800, 'janela recente respeita caracteres');
+    assert.equal(recentWindow.at(-1).id, result.messages.at(-1).id, 'janela preserva a fala mais recente');
+    assert.equal(recentWindow.some((message) => message.id === result.messages[0].id), false, 'passado antigo fica para memória estruturada');
+
     let failedPage = 0;
     const failingSupabase = makeMockSupabase(rows);
     const originalFrom = failingSupabase.from;
@@ -192,7 +199,7 @@ const makeMockSupabase = (allRows, serverPageCap = Number.POSITIVE_INFINITY) => 
         'erro no meio da paginação deve abortar a operação sem parcial',
     );
 
-    console.log(`FULL_CONVERSATION_HISTORY_OK pages=${result.diagnostics.pagesFetched} fetched=${result.diagnostics.rowsFetched} included=${result.diagnostics.rowsIncluded} grouped=${history.length}`);
+    console.log(`FULL_CONVERSATION_HISTORY_OK pages=${result.diagnostics.pagesFetched} fetched=${result.diagnostics.rowsFetched} included=${result.diagnostics.rowsIncluded} recent=${recentWindow.length} grouped=${history.length}`);
 })().catch((error) => {
     console.error(error);
     process.exitCode = 1;

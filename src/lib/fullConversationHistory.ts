@@ -62,6 +62,11 @@ export type LoadFullConversationHistoryOptions = {
     currentTurnMessageIds?: ReadonlyArray<string | number>;
 };
 
+export type ConversationHistoryWindowOptions = {
+    maxMessages: number;
+    maxChars: number;
+};
+
 const MAX_PAGE_SIZE = 1_000;
 const DEFAULT_PAGE_SIZE = 500;
 
@@ -278,6 +283,35 @@ export const loadFullConversationHistory = async ({
             lastCreatedAt: messages.at(-1)?.createdAt || null,
         },
     };
+};
+
+/**
+ * Seleciona a janela recente que vai ao modelo. A memória estruturada resume o
+ * passado durável; repetir toda a sessão em cada turno só aumenta custo e ruído.
+ */
+export const selectRecentConversationHistory = (
+    messages: FullConversationMessage[],
+    { maxMessages, maxChars }: ConversationHistoryWindowOptions,
+) => {
+    const safeMessageLimit = Math.max(1, Math.floor(Number(maxMessages) || 1));
+    const safeCharLimit = Math.max(500, Math.floor(Number(maxChars) || 500));
+    const selected: FullConversationMessage[] = [];
+    let chars = 0;
+
+    for (let index = (messages || []).length - 1; index >= 0; index -= 1) {
+        if (selected.length >= safeMessageLimit) break;
+        const message = messages[index];
+        const text = sanitizeConversationHistoryText(message?.text);
+        if (!text) continue;
+        const remaining = safeCharLimit - chars;
+        if (remaining <= 0) break;
+        if (text.length > remaining && selected.length > 0) break;
+        const visibleText = text.length <= remaining ? text : text.slice(-remaining).trimStart();
+        selected.push({ ...message, text: visibleText });
+        chars += visibleText.length;
+    }
+
+    return selected.reverse();
 };
 
 /**

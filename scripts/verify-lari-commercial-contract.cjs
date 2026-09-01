@@ -15,6 +15,7 @@ const aliasToFile = (id) => {
     '@/lib/brain/types': 'src/lib/brain/types.ts',
     '@/lib/brain/hardValidator': 'src/lib/brain/hardValidator.ts',
     '@/lib/leadMemoryEvidence': 'src/lib/leadMemoryEvidence.ts',
+    '@/lib/aiActions': 'src/lib/aiActions.ts',
     '@/types': 'src/types.ts',
   };
   return aliases[id] ? path.join(root, aliases[id]) : null;

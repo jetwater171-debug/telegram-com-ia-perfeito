@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { adminFetchJson } from '@/lib/adminApiClient';
+import { SYSTEM_INSTRUCTION_BLOCK_KEY } from '@/lib/systemInstructionKeys';
 
 type PromptBlock = {
     id: string;
@@ -9,6 +10,15 @@ type PromptBlock = {
     content: string;
     enabled: boolean;
     updated_at: string;
+};
+
+type SystemInstruction = {
+    key: string;
+    label: string;
+    content: string;
+    defaultContent: string;
+    hasOverride: boolean;
+    updated_at: string | null;
 };
 
 const EMPTY_BLOCK = {
@@ -21,6 +31,7 @@ const EMPTY_BLOCK = {
 export default function AdminScriptsPage() {
     const [blocks, setBlocks] = useState<PromptBlock[]>([]);
     const [draft, setDraft] = useState(EMPTY_BLOCK);
+    const [systemInstruction, setSystemInstruction] = useState<SystemInstruction | null>(null);
     const [msg, setMsg] = useState('');
     const [saving, setSaving] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -31,8 +42,12 @@ export default function AdminScriptsPage() {
 
     const loadBlocks = async () => {
         try {
-            const data = await adminFetchJson<{ items: PromptBlock[] }>('/api/admin/prompt-content?type=blocks');
-            setBlocks(data.items || []);
+            const [blocksData, systemData] = await Promise.all([
+                adminFetchJson<{ items: PromptBlock[] }>('/api/admin/prompt-content?type=blocks'),
+                adminFetchJson<SystemInstruction>('/api/admin/prompt-content?type=system-instruction'),
+            ]);
+            setBlocks(blocksData.items || []);
+            setSystemInstruction(systemData);
         } catch (error: any) {
             setMsg(`Erro ao carregar: ${error?.message || error}`);
         } finally {
@@ -41,6 +56,10 @@ export default function AdminScriptsPage() {
     };
 
     const createBlock = async () => {
+        if (draft.key.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_') === SYSTEM_INSTRUCTION_BLOCK_KEY) {
+            setMsg('Essa key é reservada para a instrução principal acima. Edite por lá.');
+            return;
+        }
         if (!draft.key.trim() || !draft.content.trim()) {
             setMsg("Preencha key e conteudo.");
             return;
@@ -54,6 +73,43 @@ export default function AdminScriptsPage() {
             await loadBlocks();
         } catch (error: any) {
             setMsg(`Erro ao salvar: ${error?.message || error}`);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const saveSystemInstruction = async () => {
+        if (!systemInstruction?.content.trim()) {
+            setMsg('A instrução principal não pode ficar vazia. Restaure o padrão se precisar.');
+            return;
+        }
+        setSaving(true);
+        setMsg('');
+        try {
+            await adminFetchJson('/api/admin/prompt-content', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'system-instruction', content: systemInstruction.content }),
+            });
+            setMsg('Instrução principal salva. Ela entrará no início do próximo turno processado.');
+            await loadBlocks();
+        } catch (error: any) {
+            setMsg(`Erro ao salvar a instrução principal: ${error?.message || error}`);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const restoreSystemDefault = async () => {
+        if (!systemInstruction || !confirm('Restaurar o texto padrão da instrução principal? A sua versão salva será removida.')) return;
+        setSaving(true);
+        setMsg('');
+        try {
+            await adminFetchJson('/api/admin/prompt-content?type=system-instruction', { method: 'DELETE' });
+            setMsg('Padrão restaurado. Nenhuma instrução auxiliar foi alterada.');
+            await loadBlocks();
+        } catch (error: any) {
+            setMsg(`Erro ao restaurar o padrão: ${error?.message || error}`);
         } finally {
             setSaving(false);
         }
@@ -97,10 +153,49 @@ export default function AdminScriptsPage() {
             </div>
 
             <main className="mx-auto w-full max-w-6xl px-6 py-10">
-                <header className="admin-page-header mb-5"><p className="admin-eyebrow">Comportamento</p><h1 className="admin-page-title">Instruções dinâmicas</h1><p className="admin-page-subtitle">Ajustes operacionais entram no contexto sem precisar de novo deploy. Use regras curtas, objetivas e testáveis.</p></header>
+                <header className="admin-page-header mb-5"><p className="admin-eyebrow">Comportamento</p><h1 className="admin-page-title">Instruções da IA</h1><p className="admin-page-subtitle">Edite a persona e o objetivo central sem misturar dados de cada lead. O backend completa o restante a cada turno.</p></header>
+
+                <section className="admin-card mb-6 p-6">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">Ordem enviada ao modelo</p>
+                            <h2 className="mt-1 text-lg font-semibold">A instrução principal vem primeiro</h2>
+                            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">Você escreve a personalidade, o objetivo e as regras centrais aqui. O contrato operacional continua abaixo dela e o backend fecha o prompt com dados reais, sem você precisar copiar essas informações para o texto.</p>
+                        </div>
+                        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${systemInstruction?.hasOverride ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200' : 'border-cyan-400/30 bg-cyan-400/10 text-cyan-100'}`}>{systemInstruction?.hasOverride ? 'Versão personalizada ativa' : 'Usando texto padrão'}</span>
+                    </div>
+
+                    <div className="mt-5 grid gap-3 md:grid-cols-3">
+                        <PromptOrderCard number="1" title="Sua instrução" description="Persona, objetivo e tom da Lari. Editável neste painel." tone="cyan" />
+                        <PromptOrderCard number="2" title="Contrato e regras" description="Limites e validações fixos do sistema, aplicados antes da resposta." tone="violet" />
+                        <PromptOrderCard number="3" title="Pacote automático" description="Funções, memória, dados do lead, estado e catálogo relevante." tone="emerald" />
+                    </div>
+
+                    <div className="mt-5 rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] p-4 text-sm leading-6 text-amber-100">
+                        Não escreva aqui localização, origem (Instagram/TikTok), histórico, PIX, mídia, memória ou catálogo como dados fixos. O backend injeta essas informações atualizadas no final do prompt e valida toda função antes de executá-la.
+                    </div>
+
+                    {systemInstruction ? <>
+                        <textarea
+                            value={systemInstruction.content}
+                            onChange={(e) => setSystemInstruction({ ...systemInstruction, content: e.target.value })}
+                            rows={22}
+                            className="mt-5 w-full rounded-2xl border border-cyan-400/25 bg-black/30 px-4 py-3 font-mono text-sm leading-6 text-slate-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                            aria-label="Instrução principal da Lari"
+                        />
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
+                            <span>{systemInstruction.content.length.toLocaleString('pt-BR')} caracteres {systemInstruction.updated_at ? `· salvo em ${new Date(systemInstruction.updated_at).toLocaleString('pt-BR')}` : '· padrão do código'}</span>
+                            <div className="flex gap-3">
+                                <button type="button" onClick={restoreSystemDefault} disabled={saving} className="rounded-2xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-white/5 disabled:opacity-50">Restaurar padrão</button>
+                                <button type="button" onClick={saveSystemInstruction} disabled={saving} className="rounded-2xl border border-cyan-500/30 bg-cyan-500/20 px-4 py-2 text-sm font-semibold text-cyan-100 disabled:opacity-50">{saving ? 'salvando...' : 'salvar instrução principal'}</button>
+                            </div>
+                        </div>
+                    </> : <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-slate-400">Carregando a instrução principal...</div>}
+                </section>
+
                 <div className="admin-card mb-6 p-6">
-                    <h2 className="text-lg font-semibold">Nova instrução</h2>
-                    <p className="mt-2 text-sm text-gray-400">Evite repetir regras do contrato central; adicione somente conhecimento específico da operação.</p>
+                    <h2 className="text-lg font-semibold">Blocos auxiliares</h2>
+                    <p className="mt-2 text-sm text-gray-400">Entram como complementos subordinados. Use apenas regras operacionais específicas que não pertençam à instrução principal.</p>
 
                     <div className="mt-4 grid gap-4 md:grid-cols-2">
                         <input
@@ -217,4 +312,17 @@ export default function AdminScriptsPage() {
             </main>
         </div>
     );
+}
+
+function PromptOrderCard({ number, title, description, tone }: { number: string; title: string; description: string; tone: 'cyan' | 'violet' | 'emerald' }) {
+    const tones = {
+        cyan: 'border-cyan-300/25 bg-cyan-300/[0.06] text-cyan-100',
+        violet: 'border-violet-300/25 bg-violet-300/[0.06] text-violet-100',
+        emerald: 'border-emerald-300/25 bg-emerald-300/[0.06] text-emerald-100',
+    };
+    return <div className={`rounded-2xl border p-4 ${tones[tone]}`}>
+        <span className="text-xs font-black tracking-[0.18em] opacity-70">{number}</span>
+        <h3 className="mt-2 text-sm font-semibold">{title}</h3>
+        <p className="mt-1 text-xs leading-5 opacity-75">{description}</p>
+    </div>;
 }

@@ -228,6 +228,36 @@ export async function POST(req: NextRequest) {
             session = newSession;
         }
 
+        // Preserva o perfil que o próprio Telegram entrega. Esses campos ajudam
+        // continuidade e idioma, mas continuam dados citados: não autorizam
+        // inferir identidade, idade, localização ou poder de compra.
+        const telegramMemory = normalizeLeadMemory(session.lead_memory);
+        const telegramProfilePatch = Object.fromEntries(Object.entries({
+            telegram_user_id: message.from?.id ? String(message.from.id) : '',
+            telegram_username: message.from?.username ? String(message.from.username) : '',
+            telegram_first_name: message.from?.first_name ? String(message.from.first_name) : '',
+            telegram_last_name: message.from?.last_name ? String(message.from.last_name) : '',
+            telegram_language_code: message.from?.language_code ? String(message.from.language_code) : '',
+            telegram_chat_type: message.chat?.type ? String(message.chat.type) : '',
+        }).filter(([, value]) => value));
+        const telegramProfileChanged = Object.entries(telegramProfilePatch)
+            .some(([key, value]) => telegramMemory.metadata?.[key] !== value);
+        if (telegramProfileChanged) {
+            const leadMemoryWithTelegramProfile = {
+                ...telegramMemory,
+                metadata: {
+                    ...(telegramMemory.metadata || {}),
+                    ...telegramProfilePatch,
+                },
+                updated_at: new Date().toISOString(),
+            };
+            const { error: telegramProfileError } = await supabase
+                .from('sessions')
+                .update({ lead_memory: leadMemoryWithTelegramProfile })
+                .eq('id', session.id);
+            if (!telegramProfileError) session = { ...session, lead_memory: leadMemoryWithTelegramProfile };
+        }
+
         // Também cura sessões criadas antes deste contrato. O switch de ambiente
         // permite reativar a confirmação no chat se o funil de entrada mudar.
         if (presellAdultVerified) {
