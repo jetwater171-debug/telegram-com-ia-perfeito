@@ -115,7 +115,7 @@ const route = fs.readFileSync(path.join(root, 'src/app/api/process-message/route
 assert.doesNotMatch(route, /removeGenericBotPhrases/);
 assert.match(route, /inspectModelReply\(aiResponse\.messages, replyContract\)/);
 assert.doesNotMatch(route, /Voce mora na MESMA cidade|forcedCityAnswer|use este bloco como prioridade/);
-assert.match(route, /promptContext:\s*\{\s*operationalInstructions,\s*runtimeState: formatBrainRuntimeContext/);
+assert.match(route, /promptContext:\s*\{\s*operationalInstructions:\s*\[operationalInstructions, toolRuntimeDirective\]\.join\([^)]*\),\s*runtimeState: formatBrainRuntimeContext/);
 assert.match(route, /mergeLeadMemoryPatch\(detectedLeadMemory, aiResponse.lead_memory_patch, userOnlyText\)/);
 assert.ok(prompts.buildLariDraftPrompt(core).length - core.length < 1600, 'draft não repete o contrato inteiro');
 

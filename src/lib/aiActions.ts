@@ -172,6 +172,12 @@ export const buildAiActionCatalogPrompt = () => [
     'Escolha no máximo uma action por turno. A action é um pedido de execução: o backend ainda valida autorização, dados, disponibilidade, idempotência e resultado. Nunca anuncie sucesso antes do retorno operacional.',
     ...AI_ACTION_DEFINITIONS.map((action) =>
         `- ${action.name} — ${action.label}. Faz: ${action.description} Requisito: ${action.requirements} Resultado: ${action.backendResult}`),
+    '',
+    '## COMO O BACKEND USA MESSAGES EM CADA FUNÇÃO',
+    '- none: todos os balões aprovados são enviados como texto.',
+    '- actions de mídia: messages[0] é a legenda específica da mídia; balões adicionais só continuam depois que o backend tentar enviar o ativo real.',
+    '- send_voice_reply: o primeiro balão elegível é a fala curta que será transformada em áudio; se a voz falhar, o backend preserva texto seguro.',
+    '- generate_pix_payment e check_payment_status: o backend cria ou consulta a cobrança e compõe o resultado real; não escreva código PIX, confirmação ou promessa de sucesso em messages.',
 ].join('\n');
 
 export const buildAiToolRuntimePrompt = (input: {

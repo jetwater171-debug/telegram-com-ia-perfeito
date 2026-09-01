@@ -166,6 +166,8 @@ const responseSchema = {
                 objections: { type: "ARRAY", items: { type: "STRING" } },
                 known_facts: { type: "ARRAY", items: { type: "STRING" } },
                 conversation_hooks: { type: "ARRAY", items: { type: "STRING" } },
+                fetiches: { type: "ARRAY", items: { type: "STRING" } },
+                favorite_media_types: { type: "ARRAY", items: { type: "STRING" } },
                 notes: { type: "ARRAY", items: { type: "STRING" } }
             }
         },

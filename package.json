@@ -14,6 +14,7 @@
     "verify:model-reply": "node scripts/verify-model-reply-contract.cjs",
     "verify:lari-context": "node scripts/verify-lari-prompt-context.cjs && node scripts/verify-lead-memory-evidence.cjs && node scripts/verify-conversation-bubbles.cjs && node scripts/verify-lari-conversation-context.cjs",
     "verify:prompt-editor": "node scripts/verify-prompt-visual-editor.cjs",
+    "verify:sales-prompt": "node scripts/verify-sales-prompt-evidence.cjs",
     "verify:payment-preview": "node scripts/verify-payment-preview-integrity.cjs",
     "verify:payment-reconciliation": "node scripts/verify-payment-reconciliation-contract.cjs",
     "verify:ai-tools": "node scripts/verify-ai-tools-contract.cjs",
