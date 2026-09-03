@@ -20,7 +20,7 @@ const {
     findLatestConversationStartAt,
     hasConversationStartCommand,
 } = loadPureTypeScriptModule('../src/lib/conversationEpisode.ts');
-const { refineNewRelationshipMessages } = loadPureTypeScriptModule('../src/lib/conversationQuality.ts');
+const { refineNewRelationshipMessages, isTrafficSourceDiscoveryQuestion } = loadPureTypeScriptModule('../src/lib/conversationQuality.ts');
 const { buildLariCorePrompt, needsLariReview } = loadPureTypeScriptModule('../src/lib/lariConversationPrompts.ts');
 const { buildCleanAiHistory } = loadPureTypeScriptModule('../src/lib/aiHistory.ts');
 
@@ -77,6 +77,10 @@ assert.equal(needsLariReview({
     messages: ['aí sim kkk ficou bom?', 'qual corte vc fez?'],
     strategyConfidence: 0.9,
 }), false);
+assert.equal(isTrafficSourceDiscoveryQuestion('como você chegou aqui?'), true);
+assert.equal(isTrafficSourceDiscoveryQuestion('onde vc me conheceu?'), true);
+assert.equal(isTrafficSourceDiscoveryQuestion('como você chegou em casa?'), false);
+assert.equal(isTrafficSourceDiscoveryQuestion('me conta mais de você'), false);
 
 const eightyMessages = Array.from({ length: 80 }, (_, index) => ({
     sender: index % 2 === 0 ? 'user' : 'bot',
@@ -101,5 +105,7 @@ assert.match(processSource, /RETOMADA DE CONVERSA/);
 assert.match(processSource, /shapeConversationBubbles/);
 assert.match(processSource, /lowercaseStart: true/);
 assert.match(processSource, /isPresellAdultVerificationGuaranteed/);
+assert.match(processSource, /never_ask_traffic_source_or_how_the_lead_arrived/);
+assert.match(processSource, /filter\(\(message\) => !isTrafficSourceDiscoveryQuestion\(message\)\)/);
 
 console.log('CONVERSATION_BRAIN_OK history=80 single_draft=1 adaptive_review=1 episode_reset=1 first_contact=1 persona=1');

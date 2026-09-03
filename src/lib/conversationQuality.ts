@@ -24,6 +24,14 @@ export const detectConversationLanguage = (value: unknown, acceptLanguage?: unkn
     return 'pt';
 };
 
+/** Dados de aquisição pertencem ao analytics, nunca ao papo visível da Lari. */
+export const isTrafficSourceDiscoveryQuestion = (value: unknown) => {
+    const text = lower(value);
+    if (!text || !/[?]/u.test(String(value || ''))) return false;
+    return /\b(?:como|onde|de onde|por onde)\b.{0,30}\b(?:chegou aqui|veio parar aqui|me achou|me encontrou|me conheceu|conheceu meu perfil)\b/u.test(text)
+        || /\b(?:qual|por qual)\b.{0,24}\b(?:anuncio|campanha|link|pagina|perfil|indicacao)\b.{0,24}\b(?:viu|clicou|chegou|encontrou|conheceu)\b/u.test(text);
+};
+
 const stableChoice = <T>(values: T[], key: unknown): T => {
     const seed = normalize(key) || 'default';
     let hash = 0;

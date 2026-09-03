@@ -14,7 +14,7 @@ import { findLatestConversationStartAt } from '@/lib/conversationEpisode';
 import {
     isLikelyIncompleteLeadMessage,
 } from '@/lib/conversationTurn';
-import { detectConversationLanguage } from '@/lib/conversationQuality';
+import { detectConversationLanguage, isTrafficSourceDiscoveryQuestion } from '@/lib/conversationQuality';
 import {
     mergeLeadMemoryPatch,
     mergeUniqueLeadMemoryValues as mergeUnique,
@@ -1479,7 +1479,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
         finalUserMessage = `${finalUserMessage}\n\n[OBSERVACAO INTERNA: o admin pediu para iniciar a venda agora. Use o contexto da conversa e leve para proposta/preco de forma natural.]`;
     }
     if (isConversationStart) {
-        finalUserMessage = `${finalUserMessage}\n\n[INICIO DE CONVERSA: /start e uma entrada tecnica. Trate como primeiro contato desta conversa. Nao diga sumido, saudade, voltou, finalmente ou qualquer frase de reencontro. Nao existe resposta fixa: apenas converse no estagio real de desconhecidos.]`;
+        finalUserMessage = `${finalUserMessage}\n\n[INICIO DE CONVERSA: /start e uma entrada tecnica. Trate como primeiro contato desta conversa. Nao diga sumido, saudade, voltou, finalmente ou qualquer frase de reencontro. Cumprimente naturalmente e use no maximo uma pergunta social leve. Nunca pergunte como a pessoa chegou, de onde veio, onde conheceu a Lari, qual anuncio, link, campanha ou indicacao viu. Dados de aquisicao nao sao assunto de conversa.]`;
     } else if (receivedStartCommand) {
         finalUserMessage = `${finalUserMessage}\n\n[RETOMADA DE CONVERSA: /start e apenas um comando tecnico. Este lead ja conversou com voce. Ignore o comando na fala, preserve a memoria, a intimidade e o assunto que ja existem e responda como uma menina de 19 anos responderia naturalmente naquele momento. Nao se apresente de novo, nao pergunte o nome outra vez e nao use uma saudacao fixa.]`;
     }
@@ -1517,6 +1517,9 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
     const modelAuthoredMessages = normalizeAiMessageList(aiResponse.messages);
     const modelAuthoredAction = String(aiResponse.action || 'none');
     const replyCorrections: string[] = [];
+    if (modelAuthoredMessages.some(isTrafficSourceDiscoveryQuestion)) {
+        replyCorrections.push('never_ask_traffic_source_or_how_the_lead_arrived');
+    }
     if (modelCanPriceCustom) {
         const displayedPrices = extractPrices(modelAuthoredMessages.join('\n'));
         const modelProposedValue = Number(aiResponse.payment_details?.value) || displayedPrices[0] || null;
@@ -2297,7 +2300,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
         .filter(Boolean);
     // No conversational heuristics or canned fallbacks after model generation.
     // Operational incompatibilities have already been repaired by the model.
-    const safeMessages = shapeConversationBubbles(
+    const shapedMessages = shapeConversationBubbles(
         normalizeAiMessageList(aiResponse.messages),
         {
             preferredCount: Number(aiResponse.recommended_message_count || 2),
@@ -2306,6 +2309,8 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
             lowercaseStart: true,
         },
     );
+    const safeMessages = shapedMessages.filter((message) => !isTrafficSourceDiscoveryQuestion(message));
+    if (isConversationStart && safeMessages.length === 0) safeMessages.push('oii, tudo bem?');
     aiResponse.messages = safeMessages;
     const lastBotContent = lastBotMsg?.content || '';
     const stage = String(aiResponse.current_state || '').toUpperCase();

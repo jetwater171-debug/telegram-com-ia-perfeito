@@ -144,7 +144,7 @@ export const PROMPT_TOKEN_LABELS: Record<string, string> = {
     '{{STAT_CONNECTION_NEED}}': 'Necessidade de conexão',
     '{{STAT_EMOTIONAL_SENSITIVITY}}': 'Sensibilidade emocional',
     '{{STAT_COMMERCIAL_READINESS}}': 'Prontidão para comprar',
-    '{{LEAD_PROFILE}}': 'Perfil e origem',
+    '{{LEAD_PROFILE}}': 'Perfil do lead',
     '{{LEAD_MEMORY}}': 'Memória do lead',
     '{{PREVIEW_CATALOG}}': 'Catálogo de prévias',
     '{{ANTI_REPEAT}}': 'Evitar repetições',
