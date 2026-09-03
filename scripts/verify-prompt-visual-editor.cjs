@@ -17,9 +17,11 @@ const loadTs = (relativePath, dependencyMap = {}) => {
 const visual = loadTs('src/lib/promptVisualEditor.ts');
 const actions = loadTs('src/lib/aiActions.ts');
 const commercial = loadTs('src/lib/commercialCatalog.ts');
+const conversationPrompts = loadTs('src/lib/lariConversationPrompts.ts');
 const editor = loadTs('src/lib/systemInstructionEditor.ts', {
   '@/lib/aiActions': actions,
   '@/lib/commercialCatalog': commercial,
+  '@/lib/lariConversationPrompts': conversationPrompts,
   '@/lib/systemInstructionKeys': {},
 });
 

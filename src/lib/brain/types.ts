@@ -45,7 +45,17 @@ export type RealityState = {
 
 export type LeadTwinState = {
     relationship: { stage: string; familiarity: number };
-    conversationStyle: { messageLength: string; humor: number; directness: number };
+    conversationStyle: {
+        messageLength: string;
+        humor: number;
+        directness: number;
+        samples?: number;
+        averageWords?: number;
+        lowercaseRate?: number;
+        abbreviationRate?: number;
+        emojiRate?: number;
+        laughStyle?: string | null;
+    };
     interests: Record<string, number>;
     mediaPreferences: Record<string, number>;
     commercial: {

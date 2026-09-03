@@ -40,16 +40,20 @@ const core = prompts.buildLariCorePrompt({
 
 assert.ok(core.length > 6_500, 'o contrato central precisa cobrir os cenários essenciais');
 assert.match(core, /pacote literal mais recente/i);
-assert.match(core, /Primeiro contato:/i);
-assert.match(core, /Conversa cotidiana continua cotidiana/i);
-assert.match(core, /Mídia é ação, não promessa/i);
-assert.match(core, /Pergunta de preço recebe preço/i);
+assert.match(core, /PROMPT_VERSION: lari-whatsapp-memory-v1/i);
+assert.match(core, /Comece todos os balões visíveis com letra minúscula/i);
+assert.match(core, /4 a 7 palavras/i);
+assert.match(core, /Conversa comum continua comum/i);
+assert.match(core, /Mídia e áudio são actions, não promessas/i);
+assert.match(core, /Se o lead pedir VIP, preço ou compra, responda sem enrolar/i);
 assert.match(core, /mensal R\$ 29,90/i);
 assert.match(core, /vitalício R\$ 49,90/i);
 assert.match(core, /R\$ 79,90/i);
 assert.match(core, /chamada.*R\$ 50,00/i);
 assert.doesNotMatch(core, /VIP custa exatamente R\$ 19,90/i);
-assert.match(core, /não sexualize uma saudação/i);
+assert.match(core, /Nunca no primeiro contato, em conversa neutra/i);
+assert.match(core, /Nunca diga que é IA, bot, automação ou assistente virtual/i);
+assert.match(core, /Não existe oferta obrigatória no terceiro turno/i);
 assert.doesNotMatch(core, /Churrasco \/ Picanha|Academia \/ Treino|MULTIMODALIDADE CONTÍNUA|SEDUÇÃO HIPNÓTICA/i);
 
 const start = quality.refineNewRelationshipMessages(
@@ -84,7 +88,7 @@ assert.deepEqual(
     'mensagens duplicadas devem ser removidas',
 );
 
-assert.equal(prompts.needsLariReview({ isConversationStart: true, relationshipStage: 'new', messages: ['oiii'] }), true);
+assert.equal(prompts.needsLariReview({ isConversationStart: true, relationshipStage: 'new', messages: ['oiii'] }), false);
 assert.equal(prompts.needsLariReview({
     relationshipStage: 'familiar',
     userText: 'quero o mensal, manda o pix',
@@ -98,6 +102,12 @@ assert.equal(prompts.needsLariReview({
     messages: ['aí sim kkk ficou bom?', 'qual corte vc fez?'],
     strategyConfidence: 0.95,
 }), false);
+assert.equal(prompts.needsLariReview({
+    relationshipStage: 'familiar',
+    userText: 'não quero foto',
+    messages: ['amor olha essa'],
+    strategyConfidence: 0.95,
+}), true);
 
 const starter = orchestration.resolveAiOrchestrationPlan(0);
 assert.equal(starter.separateStrategy, false);
@@ -141,11 +151,18 @@ const routeSource = fs.readFileSync(path.resolve(__dirname, '../src/app/api/proc
 assert.match(geminiSource, /extractLeadTextFromPrompt/);
 assert.match(geminiSource, /needsLariReview/);
 assert.doesNotMatch(geminiSource, /const useSeparateReviewCall = false/);
-assert.match(routeSource, /isEarlyConversationEpisode/);
 assert.match(routeSource, /const DEBOUNCE_WAIT_MS = 4000/);
 assert.match(routeSource, /humanTextDelayMs\(\{/);
 assert.doesNotMatch(routeSource, /modelDurationMs >= 8_000\s*\?\s*150/);
-assert.match(routeSource, /preferredCount: aiResponse\.recommended_message_count \|\| 2/);
+assert.match(routeSource, /shapeConversationBubbles\(/);
+assert.match(routeSource, /preferredCount: Number\(aiResponse\.recommended_message_count \|\| 2\)/);
+assert.match(routeSource, /lowercaseStart: true/);
+assert.match(routeSource, /decideFreePreviewDelivery\(\{/);
+assert.match(routeSource, /deterministicScoreForTurn\.score\.tarado/);
+assert.match(routeSource, /currentStage: currentBackendStage/);
+assert.match(routeSource, /free_preview_limit_reached_offer_vip_or_custom/);
+assert.match(routeSource, /aiResponse\.next_best_action = 'MAKE_OFFER'/);
+assert.match(routeSource, /withPresellAdultVerification/);
 assert.doesNotMatch(routeSource, /amor já te mandei várias prévias|calma amor, assim vc me deixa sem fôlego/);
 
 console.log('LARI_HUMANIZATION_OK prompt=1 start=1 gradual=1 no_templates=1 bubbles=1 review=1 media=1 sales=1');

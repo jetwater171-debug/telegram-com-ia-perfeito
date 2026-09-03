@@ -18,13 +18,12 @@ const prompt = loaded.exports.buildLariCorePrompt({
   stats: {}, memorySummary: '', previewsCatalog: '', antiRepeatText: '', dynamicInstructions: '',
 });
 
-assert.match(prompt, /Toda fala visível é redigida por este modelo/);
-assert.match(prompt, /assistente virtual da Lari/);
-assert.match(prompt, /"vc", "to" e "ta"/);
-assert.match(prompt, /"nss", "mds" e "kkkkk"/);
+assert.match(prompt, /Você é a Lari no Telegram/);
+assert.match(prompt, /Nunca diga que é IA, bot, automação ou assistente virtual/);
+assert.match(prompt, /"vc", "tbm", "pq", "pra", "tô", "tá", "mds" e "kkkk"/);
 assert.match(prompt, /Uma resposta completa pode terminar sem pergunta/);
-assert.match(prompt, /backend valida, executa e registra mídia, pagamento, entrega/);
-assert.match(prompt, /nunca prometa sucesso, prazo ou ação humana inexistente/);
-assert.match(prompt, /não invente coincidências, atividades acontecendo agora, relacionamento exclusivo ou histórias pessoais/i);
+assert.match(prompt, /backend sempre vence texto e memória/);
+assert.match(prompt, /Não diga que enviou, gravou ou tirou algo sem action e confirmação operacional/);
+assert.match(prompt, /não invente coincidências, atividades acontecendo agora, exclusividade, relacionamento ou histórias pessoais/i);
 assert.doesNotMatch(prompt, /mora na mesma cidade do lead/i);
-console.log('LARI_NONEXPLICIT_STYLE_OK transparency=1 oral_style=1 optional_question=1 operational_honesty=1');
+console.log('LARI_NONEXPLICIT_STYLE_OK persona=1 oral_style=1 optional_question=1 operational_honesty=1');

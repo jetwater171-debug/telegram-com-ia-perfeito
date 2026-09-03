@@ -1,5 +1,6 @@
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import type { BrainRuntimeState, StructuredMemoryUpdate } from '@/lib/brain/types';
+import { evolveConversationStyle } from '@/lib/brain/conversationStyle';
 
 const missingArchitectureRelation = (error: any) => {
     const code = String(error?.code || '');
@@ -246,14 +247,19 @@ export const persistMemoryUpdatesSafe = async ({
             }
 
             const priorIds = matching.map((item: any) => item.id).filter(Boolean);
+            const nextMemoryId = crypto.randomUUID();
+            const insertResult = await supabase.from('lead_memory_items').insert({ ...row, id: nextMemoryId });
+            if (insertResult.error) throw insertResult.error;
             if (priorIds.length > 0) {
                 const supersedeResult = await supabase.from('lead_memory_items')
-                    .update({ status: 'superseded', updated_at: row.updated_at })
+                    .update({
+                        status: 'superseded',
+                        superseded_by: nextMemoryId,
+                        updated_at: row.updated_at,
+                    })
                     .in('id', priorIds);
                 if (supersedeResult.error) throw supersedeResult.error;
             }
-            const insertResult = await supabase.from('lead_memory_items').insert(row);
-            if (insertResult.error) throw insertResult.error;
             persisted += 1;
         }
         return persisted;
@@ -357,10 +363,7 @@ export const persistBrainProjectionsSafe = async ({
         }
         if (update.kind === 'outcome' && update.content) importantOutcomes.add(update.content.slice(0, 180));
     }
-    const trimmedUserText = String(userText || '').replace(/\s+/g, ' ').trim();
-    const messageLength = trimmedUserText.length <= 45 ? 'short' : trimmedUserText.length >= 180 ? 'long' : 'medium';
-    const humorSignal = /\b(k{2,}|rs+|haha|kkk)\b/i.test(trimmedUserText) ? 0.75 : state.twin.conversationStyle.humor;
-    const directSignal = /\b(quero|manda|faz|quanto|pix|agora|sim|nao|não)\b/i.test(trimmedUserText) ? 0.8 : state.twin.conversationStyle.directness;
+    const conversationStyle = evolveConversationStyle(state.twin.conversationStyle, userText);
 
     try {
         const [closeResult, twinResult, episodeResult] = await Promise.all([
@@ -372,7 +375,7 @@ export const persistBrainProjectionsSafe = async ({
             supabase.from('lead_twins').upsert({
                 session_id: sessionId,
                 relationship: { stage, familiarity: familiarityByStage[stage] ?? state.twin.relationship.familiarity },
-                conversation_style: { messageLength, humor: humorSignal, directness: directSignal },
+                conversation_style: conversationStyle,
                 interests,
                 media_preferences: mediaPreferences,
                 commercial: state.twin.commercial,

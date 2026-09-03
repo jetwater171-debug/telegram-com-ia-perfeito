@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractAiMessageText, normalizeAiMessageList } from '@/lib/aiMessageNormalization';
+import { shapeConversationBubbles } from '@/lib/conversationBubbles';
 import { errorMessage, insertMessageWithAiDebug, withAiDebugMessageIndex } from '@/lib/aiDebug';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { sendMessageToGemini, repairModelReply } from '@/lib/gemini';
@@ -60,15 +61,18 @@ import { scorePreviewForContext, upsertMissingPreviewRequest } from '@/lib/previ
 import { analyzeMissingPhotoRequest, classifyRequestedMediaLocally } from '@/lib/previewRequestAnalyzer';
 import { isPhotoTakenNow, isPreviewAssetExplicitForUnverifiedLead, rankPreviewCandidatesByMoment } from '@/lib/previewMoment';
 import {
+    decideFreePreviewDelivery,
     filterUnsentPreviewAssets,
     normalizePreviewMediaKey as normalizeMediaUrlKey,
     shouldDeliverRequestedMedia,
 } from '@/lib/previewDeliveryPolicy';
 import {
+    buildModelPricedCustomOffer,
     buildSalesOrderSnapshot,
     evaluateSalesTiming,
     readActiveSalesOrder,
     type ActiveSalesOrder,
+    type AdaptiveOfferPlan,
 } from '@/lib/salesTiming';
 import {
     addMem0LeadTurn,
@@ -90,7 +94,11 @@ import { confirmsAdultDeclarationPrompt, isExplicitSexualContext, validateMaster
 import { applyPreviewBanditRanking, recordPreviewReactionSafe, recordPreviewSentSafe } from '@/lib/brain/previewBandit';
 import { trackLeadResponseOutcomesSafe } from '@/lib/brain/outcomeTracker';
 import { markSessionSalesOrderPaidSafe, recordCustomOrderSafe } from '@/lib/customOrders';
-import { isTrustedAdultVerificationSource } from '@/lib/adultVerification';
+import {
+    isPresellAdultVerificationGuaranteed,
+    isTrustedAdultVerificationSource,
+    withPresellAdultVerification,
+} from '@/lib/adultVerification';
 import { humanAudioRecordingDelayMs, humanTextDelayMs } from '@/lib/humanDeliveryTiming';
 import { AI_ACTION_STAGE_MAP, AI_MEDIA_ACTION_NAMES, buildAiToolRuntimePrompt } from '@/lib/aiActions';
 
@@ -153,15 +161,6 @@ const normalizeTelegramImageMimeType = (contentType: string | null, filePath: st
 };
 
 const randomBetween = (min: number, max: number) => Math.floor(min + Math.random() * (max - min + 1));
-
-const stablePercent = (value: string) => {
-    let hash = 2166136261;
-    for (let index = 0; index < value.length; index += 1) {
-        hash ^= value.charCodeAt(index);
-        hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0) % 100;
-};
 
 const detectCityFromText = (input: string): string | null => {
     const match = input.match(/\b(?:sou|moro)\s+(?:de|do|da|em)\s+([\p{L}\s]{2,40})/iu);
@@ -1031,6 +1030,15 @@ export async function POST(req: NextRequest) {
 
     const detectedCity = detectCityFromText(userOnlyText);
     let leadMemory = normalizeLeadMemory(session.lead_memory);
+    if (isPresellAdultVerificationGuaranteed()
+        && !isTrustedAdultVerificationSource(leadMemory.metadata?.adult_verification_source)) {
+        leadMemory = {
+            ...leadMemory,
+            metadata: withPresellAdultVerification(leadMemory.metadata),
+            updated_at: new Date().toISOString(),
+        };
+        await supabase.from('sessions').update({ lead_memory: leadMemory }).eq('id', session.id);
+    }
     const missingAttribution = !leadMemory.metadata?.redirect_timezone
         || !leadMemory.metadata?.redirect_user_agent
         || !leadMemory.metadata?.redirect_country;
@@ -1150,7 +1158,10 @@ export async function POST(req: NextRequest) {
         leadScore: session.lead_score,
         deviceType: session.device_type,
     });
-    const offerPlan = salesTiming.offerPlan;
+    let offerPlan: AdaptiveOfferPlan | null = salesTiming.offerPlan;
+    const modelCanPriceCustom = salesTiming.activeProduct === 'custom_request'
+        && !salesTiming.activeOrder
+        && salesTiming.explicitBudget === null;
     const requestedPaidEroticAudio = isPaidPersonalizedEroticAudioRequest(userOnlyText);
     const requestedEroticAudioWithName = /\b(?:meu\s+nome|o\s+meu\s+nome|me\s+chama\s+pelo\s+nome|falando\s+(?:o\s+)?meu\s+nome)\b/iu.test(userOnlyText);
     const paidEroticAudioEntitled = requestedPaidEroticAudio && Boolean(paidEroticAudioOrder?.id);
@@ -1175,7 +1186,9 @@ export async function POST(req: NextRequest) {
         salesTiming.mustPresentVipMenu
             ? `- MENU OBRIGATORIO DO BACKEND: ${formatVipCatalog()}. Mostre as tres opções e não gere PIX até o lead escolher uma.`
             : '',
-        offerPlan
+        modelCanPriceCustom
+            ? '- PREÇO PERSONALIZADO LIVRE: escolha a proposta deste pedido entre R$ 5,00 e R$ 5.000,00 conforme o briefing e registre o valor em payment_details. Ignore qualquer preço padrão interno.'
+            : offerPlan
             ? `- Oferta indicada: ${offerPlan.format}, R$ ${offerPlan.value.toFixed(2).replace('.', ',')} (${offerPlan.description}).`
             : '- Ainda nao existe oferta definida; mantenha a conversa natural e deixe desejo/contexto aparecerem sem pergunta de qualificacao.',
         salesTiming.customRequestBrief
@@ -1208,8 +1221,8 @@ export async function POST(req: NextRequest) {
         userText: userOnlyText,
         recentMessages: recentSalesHistory,
     });
-    // Chat id, /start e clique em redirecionador não provam idade. Somente uma
-    // declaração explícita ou confirmação de presell com evidência é confiável.
+    // Este funil confirma maioridade no presell. A chave de emergência permite
+    // restaurar o gate no chat sem nova publicação se essa garantia mudar.
     const adultVerificationSource = String(leadMemory.metadata?.adult_verification_source || '');
     const trustedAdultVerification = adultDeclaredNow || (
         leadMemory.metadata?.adult_verified === true
@@ -1246,7 +1259,8 @@ export async function POST(req: NextRequest) {
         voiceRequested: userAskedForElevenLabsAudio(userOnlyText),
         canGeneratePayment: salesTiming.canGeneratePayment,
         hasPendingPayment: Boolean(brainRuntime.reality.payment.pendingPaymentId || salesTiming.activeOrder?.paymentId),
-        selectedOffer: offerPlan ? {
+        allowModelCustomPrice: modelCanPriceCustom,
+        selectedOffer: offerPlan && !modelCanPriceCustom ? {
             sku: offerPlan.sku,
             value: offerPlan.value,
             description: offerPlan.description,
@@ -1503,6 +1517,12 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
     const modelAuthoredMessages = normalizeAiMessageList(aiResponse.messages);
     const modelAuthoredAction = String(aiResponse.action || 'none');
     const replyCorrections: string[] = [];
+    if (modelCanPriceCustom) {
+        const displayedPrices = extractPrices(modelAuthoredMessages.join('\n'));
+        const modelProposedValue = Number(aiResponse.payment_details?.value) || displayedPrices[0] || null;
+        const modelPricedOffer = buildModelPricedCustomOffer(modelProposedValue, salesTiming.customRequestBrief);
+        if (modelPricedOffer) offerPlan = modelPricedOffer;
+    }
     const attemptedPrematurePayment = aiResponse.action === 'generate_pix_payment' && !salesTiming.canGeneratePayment;
     if (attemptedPrematurePayment) {
         console.log('[VENDA] PIX prematuro bloqueado', {
@@ -1718,35 +1738,54 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
     };
 
     const modelAttemptedMedia = botMessagesPromiseMedia || MEDIA_ACTIONS.has(String(aiResponse.action || ''));
-    const requestedMediaDelivery = shouldDeliverRequestedMedia({
+    const requestedMediaByLead = shouldDeliverRequestedMedia({
         userAskedMedia,
         userAffirmedMedia,
         isInitialGreeting,
     });
     const lastDeliveredMedia = recentConversationWindow.find((message: any) => message.sender === 'bot' && message.media_url);
     const lastDeliveredMediaAt = Date.parse(String(lastDeliveredMedia?.created_at || ''));
-    const hoursSinceLastMedia = Number.isFinite(lastDeliveredMediaAt)
-        ? Math.max(0, (Date.now() - lastDeliveredMediaAt) / 3_600_000)
+    const userMessagesSinceLastMedia = Number.isFinite(lastDeliveredMediaAt)
+        ? recentSalesHistory.filter((message: any) => message.sender === 'user'
+            && Date.parse(String(message.created_at || '')) > lastDeliveredMediaAt).length
         : Number.POSITIVE_INFINITY;
-    const currentLeadHeat = Number(aiResponse.lead_stats?.tarado || 0);
-    const currentAiStage = String(aiResponse.current_state || '').toUpperCase();
+    const deterministicScoreForTurn = calculateLeadScore([{ content: userOnlyText }], {
+        initial: session.lead_score,
+        totalPaid: Number(session.total_paid || 0),
+        includeContextBoosts: false,
+    });
+    const currentLeadHeat = Number(deterministicScoreForTurn.score.tarado || 0);
+    const currentBackendStage = String(currentStage || 'WELCOME').toUpperCase();
     const currentTextIsHot = hasExplicitSexualFantasyTrigger(userOnlyText)
         || isExplicitSexualContext(userOnlyText);
-    const enoughConversationForSurprise = recentSalesHistory.filter((message: any) => message.sender === 'user').length >= 6;
+    const userTurnsInWindow = recentSalesHistory.filter((message: any) => message.sender === 'user').length;
     const leadMessageHasSubstance = userOnlyText.trim().split(/\s+/).filter(Boolean).length >= 3;
     const blocksSurprise = /\b(nao|não|para|chega|trabalho|familia|família|triste|problema|doente|hospital|morreu|pix|pagar|caro|dinheiro)\b/i.test(userOnlyText);
-    const unsolicitedPreviewAllowed = modelAttemptedMedia
-        && !requestedMediaDelivery
-        && !lastBotAlreadyDeliveredMedia
-        && hoursSinceLastMedia >= 24
-        && enoughConversationForSurprise
-        && leadMessageHasSubstance
-        && !blocksSurprise
-        && currentTextIsHot
-        && ['HOT_TALK', 'PREVIEW'].includes(currentAiStage)
-        && currentLeadHeat >= 70
-        && stablePercent(`${session.id}:${triggerMessageId || lastGroupedUserAt}:unsolicited-preview`) < 8;
-    let shouldDeliverMedia = requestedMediaDelivery || unsolicitedPreviewAllowed;
+    const sentPreviewCount = new Set(brainRuntime.reality.media.sentPreviewIds || []).size;
+    const freePreviewDecision = decideFreePreviewDelivery({
+        requestedByLead: requestedMediaByLead,
+        recoveryRequest: userReportsMissingMedia,
+        modelAttemptedMedia,
+        lastBotDeliveredMedia: lastBotAlreadyDeliveredMedia,
+        adultVerified: brainRuntime.reality.adultVerified,
+        sentPreviewCount,
+        userMessagesSinceLastMedia,
+        userTurnsInWindow,
+        leadHeat: currentLeadHeat,
+        currentTextIsHot,
+        leadMessageHasSubstance,
+        blocksInitiative: blocksSurprise,
+        currentStage: currentBackendStage,
+    });
+    const requestedMediaDelivery = freePreviewDecision.requestedDeliveryAllowed;
+    const unsolicitedPreviewAllowed = freePreviewDecision.contextualInitiativeAllowed;
+    let shouldDeliverMedia = freePreviewDecision.shouldDeliver;
+    if (requestedMediaByLead && !freePreviewDecision.budgetAvailable && !userReportsMissingMedia) {
+        replyCorrections.push('free_preview_limit_reached_offer_vip_or_custom');
+        aiResponse.action = 'none';
+        aiResponse.current_state = 'SALES_PITCH';
+        aiResponse.next_best_action = 'MAKE_OFFER';
+    }
     // Todo o catalogo desta operacao e adulto. Mesmo uma solicitacao generica
     // de foto precisa passar pela confirmacao 18+ antes de resolver ou enviar
     // qualquer asset; isso tambem impede que a correcao do hard validator seja
@@ -1763,7 +1802,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
         }
     }
     if (unsolicitedPreviewAllowed) {
-        console.log('[PREVIAS] Surpresa rara autorizada por calor, profundidade e cooldown de 24h.');
+        console.log('[PREVIAS] Iniciativa contextual autorizada por reciprocidade, estágio e orçamento de prévias.');
     }
 
     let generatedMessageIndex = 0;
@@ -1796,9 +1835,8 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
     let sentMediaUrlsForSession: string[] = [];
     let sentMediaKeysForSession = new Set<string>();
 
-    // A Lari pode oferecer uma prévia na conversa, mas o arquivo só sai depois
-    // que o lead pede ou confirma. Isso corta mídia espontânea sem mudar o texto
-    // ou o raciocínio do cérebro.
+    // O arquivo só sai quando a política contextual autoriza pedido, reentrega
+    // ou iniciativa quente. Fora disso, a escolha vira conversa sem promessa.
     if (!shouldDeliverMedia && MEDIA_ACTIONS.has(String(aiResponse.action || ''))) {
         console.log('[PREVIAS] Ação de mídia sem pedido explícito foi convertida em conversa.');
         aiResponse.action = 'none';
@@ -2011,11 +2049,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
 
     // 5. Atualizar Stats & Salvar Pensamentos
-    const deterministicScore = calculateLeadScore([{ content: userOnlyText }], {
-        initial: session.lead_score,
-        totalPaid: Number(session.total_paid || 0),
-        includeContextBoosts: false,
-    });
+    const deterministicScore = deterministicScoreForTurn;
     const deterministicStoredScore = toStoredLeadScore(deterministicScore);
     const brainScore = parseLeadScore(aiResponse.lead_stats, deterministicScore.score);
     const previousScore = parseLeadScore(session.lead_score);
@@ -2263,7 +2297,16 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
         .filter(Boolean);
     // No conversational heuristics or canned fallbacks after model generation.
     // Operational incompatibilities have already been repaired by the model.
-    const safeMessages = normalizeAiMessageList(aiResponse.messages);
+    const safeMessages = shapeConversationBubbles(
+        normalizeAiMessageList(aiResponse.messages),
+        {
+            preferredCount: Number(aiResponse.recommended_message_count || 2),
+            maxBubbles: 4,
+            maxChars: Number(aiResponse.max_chars_per_message || 84),
+            lowercaseStart: true,
+        },
+    );
+    aiResponse.messages = safeMessages;
     const lastBotContent = lastBotMsg?.content || '';
     const stage = String(aiResponse.current_state || '').toUpperCase();
 

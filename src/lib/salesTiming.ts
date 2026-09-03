@@ -22,7 +22,7 @@ export type AdaptiveOfferPlan = {
     description: string;
     format: string;
     explicitBudget: number | null;
-    valueSource: 'explicit_budget' | 'accepted_offer' | 'purchase_history' | 'standard';
+    valueSource: 'explicit_budget' | 'accepted_offer' | 'model_proposed' | 'purchase_history' | 'standard';
     requestBrief: string | null;
 };
 
@@ -347,6 +347,27 @@ export const buildCustomRequestBrief = (text: string) => String(text || '')
     .trim()
     .slice(0, 500);
 
+export const buildModelPricedCustomOffer = (
+    proposedValue: unknown,
+    requestBrief?: string | null,
+): AdaptiveOfferPlan | null => {
+    const parsed = Number(proposedValue);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    const value = Math.round(Math.min(5_000, Math.max(5, parsed)) * 100) / 100;
+    const tier = value >= 99.90 ? 'premium' : value >= 59.90 ? 'core' : 'entry';
+    return {
+        product: 'custom_request',
+        sku: `custom_request_${tier}`,
+        tier,
+        value,
+        description: 'Pedido Personalizado Lari',
+        format: requestBrief || 'um pedido personalizado conforme combinado',
+        explicitBudget: null,
+        valueSource: 'model_proposed',
+        requestBrief: requestBrief || null,
+    };
+};
+
 export type LeadScoreInput = {
     tarado?: number;
     financeiro?: number;
@@ -437,19 +458,12 @@ const createOfferPlan = ({
     }
 
     if (product === 'custom_request' && (explicitBudget || acceptedOfferValue)) {
-        const acceptedValue = Math.min(5_000, Math.max(5, Number(explicitBudget || acceptedOfferValue)));
-        const tier = acceptedValue >= 99.90 ? 'premium' : acceptedValue >= 59.90 ? 'core' : 'entry';
-        return {
-            product,
-            sku: `custom_request_${tier}`,
-            tier,
-            value: Math.round(acceptedValue * 100) / 100,
-            description: 'Pedido Personalizado Lari',
-            format: customRequestBrief || 'um pedido personalizado conforme combinado',
+        const customOffer = buildModelPricedCustomOffer(explicitBudget || acceptedOfferValue, customRequestBrief);
+        return customOffer ? {
+            ...customOffer,
             explicitBudget,
             valueSource: explicitBudget ? 'explicit_budget' : 'accepted_offer',
-            requestBrief: customRequestBrief || null,
-        };
+        } : null;
     }
 
     const catalog = PRODUCT_OFFERS[product];

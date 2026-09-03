@@ -58,11 +58,19 @@ const corePrompt = buildLariCorePrompt({
     localTime: '21:30', localPeriod: 'noite', city: 'São Paulo', deviceType: 'Android', totalPaid: 0,
     stats: {}, memorySummary: 'nome: Leo', previewsCatalog: 'foto-1', antiRepeatText: 'oiii', dynamicInstructions: 'nenhuma',
 });
-assert.match(corePrompt, /NÚCLEO HUMANO QUE VALE EM QUALQUER SITUAÇÃO/);
-assert.match(corePrompt, /INTELIGÊNCIA SOCIAL POR TRÁS DA LARI/);
-assert.match(corePrompt, /revisão silenciosa/i);
+assert.match(corePrompt, /LARI — MASTER BRAIN DE CONVERSA/);
+assert.match(corePrompt, /PRIORIDADE E VERDADE/);
+assert.match(corePrompt, /Antes de finalizar, confira silenciosamente/i);
+assert.match(corePrompt, /messages deve conter de 1 a 4 balões/i);
+assert.match(corePrompt, /Nunca diga que é IA, bot, automação ou assistente virtual/i);
 assert.doesNotMatch(corePrompt, /Churrasco \/ Picanha|MULTIMODALIDADE CONTÍNUA|mande fotos com frequência/i);
-assert.equal(needsLariReview({ relationshipStage: 'new', messages: ['oi amor'] }), true);
+assert.equal(needsLariReview({ relationshipStage: 'new', messages: ['oi amor'] }), false);
+assert.equal(needsLariReview({
+    relationshipStage: 'familiar',
+    userText: 'não quero isso, eu disse para parar',
+    messages: ['tá bom amor'],
+    strategyConfidence: 0.9,
+}), true);
 assert.equal(needsLariReview({
     relationshipStage: 'familiar',
     userText: 'fiz churrasco hoje',
@@ -81,19 +89,17 @@ assert.match(cleanHistory.at(-1).parts[0].text, /mensagem 80/);
 
 const geminiSource = fs.readFileSync(path.resolve(__dirname, '../src/lib/gemini.ts'), 'utf8');
 const processSource = fs.readFileSync(path.resolve(__dirname, '../src/app/api/process-message/route.ts'), 'utf8');
-assert.match(geminiSource, /buildLariCorePrompt/);
+assert.match(geminiSource, /getSystemInstruction/);
 assert.doesNotMatch(geminiSource, /buildLariStrategyPrompt/);
-assert.match(geminiSource, /buildLariDraftPrompt/);
 assert.match(geminiSource, /buildLariReviewPrompt/);
 assert.doesNotMatch(geminiSource, /const useSeparateReviewCall = false/);
 assert.match(geminiSource, /filterConversationEpisodeMessages/);
-assert.match(geminiSource, /Mensagens do lead neste episodio/);
-assert.match(geminiSource, /isNewRelationship/);
-assert.match(processSource, /refineNewRelationshipMessages/);
-assert.match(processSource, /isEarlyConversationEpisode/);
+assert.match(geminiSource, /episodeLeadMessageCount/);
 assert.match(processSource, /const receivedStartCommand = Boolean\(conversationStartAt\)/);
 assert.match(processSource, /const isConversationStart = receivedStartCommand && !lastBotMsg/);
 assert.match(processSource, /RETOMADA DE CONVERSA/);
-assert.match(processSource, /const isActualFirstRelationshipTurn = !lastBotMsg/);
+assert.match(processSource, /shapeConversationBubbles/);
+assert.match(processSource, /lowercaseStart: true/);
+assert.match(processSource, /isPresellAdultVerificationGuaranteed/);
 
 console.log('CONVERSATION_BRAIN_OK history=80 single_draft=1 adaptive_review=1 episode_reset=1 first_contact=1 persona=1');

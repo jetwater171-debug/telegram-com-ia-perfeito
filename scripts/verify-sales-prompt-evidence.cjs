@@ -21,6 +21,7 @@ const commercial = loadTs('src/lib/commercialCatalog.ts');
 const editor = loadTs('src/lib/systemInstructionEditor.ts', {
   '@/lib/aiActions': actions,
   '@/lib/commercialCatalog': commercial,
+  '@/lib/lariConversationPrompts': loadTs('src/lib/lariConversationPrompts.ts'),
   '@/lib/systemInstructionKeys': {
     SYSTEM_INSTRUCTION_BLOCK_KEY: 'system_instruction_primary',
     SYSTEM_INSTRUCTION_BLOCK_LABEL: 'Instrução principal da Lari',
@@ -28,7 +29,7 @@ const editor = loadTs('src/lib/systemInstructionEditor.ts', {
 });
 
 const prompt = editor.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE;
-assert.ok(prompt.length >= 14_000 && prompt.length < 24_000, `tamanho inesperado: ${prompt.length}`);
+assert.ok(prompt.length >= 10_000 && prompt.length < 20_000, `tamanho inesperado: ${prompt.length}`);
 assert.deepEqual(editor.findMissingSystemInstructionTokens(prompt), []);
 assert.deepEqual(editor.findDuplicateSystemInstructionTokens(prompt), []);
 assert.deepEqual(editor.findUnknownSystemInstructionTokens(prompt), []);
@@ -37,13 +38,15 @@ for (const action of actions.AI_ACTION_DEFINITIONS) {
   assert.match(prompt, new RegExp(`^- ${action.name}\\s+—\\s+`, 'm'), `action ausente: ${action.name}`);
 }
 
-assert.match(prompt, /pedido de PIX vence flerte/);
+assert.match(prompt, /Quando produto, valor e aceite estiverem inequívocos.*generate_pix_payment/);
 assert.match(prompt, /Perguntar preço não autoriza PIX/);
 assert.match(prompt, /messages\[0\] é a legenda curta e específica/);
-assert.match(prompt, /Depois de uma foto.*não autoriza outra/s);
-assert.match(prompt, /Nunca crie link, telefone, WhatsApp, Telegram/);
-assert.match(prompt, /Só diga “pagamento confirmado” quando o backend confirmar/);
-assert.match(prompt, /“manda o pix” após oferta única.*generate_pix_payment/s);
+assert.match(prompt, /Depois de uma foto.*não autoriza(?:m)? outra/s);
+assert.match(prompt, /4 a 7 palavras/);
+assert.match(prompt, /Não existe oferta obrigatória no terceiro turno/);
+assert.match(prompt, /Nunca diga que é IA, bot, automação ou assistente virtual/);
+assert.match(prompt, /Nunca invente arquivo, link, código PIX/);
+assert.match(prompt, /Nunca anuncie sucesso antes do retorno operacional/);
 assert.doesNotMatch(prompt, /R\$\s*19[,.]90/);
 
 const superseded = [
@@ -55,6 +58,9 @@ const superseded = [
 ].join('\n');
 assert.equal(editor.isSupersededSeptemberPrompt(superseded), true);
 assert.equal(editor.normalizeSystemInstructionTemplate(superseded), prompt);
+const rigidLegacy = '# LARI — AGENTE DE CONVERSA E VENDAS\nA REGRA QUE NUNCA PODE SER QUEBRADA: AVANÇAR';
+assert.equal(editor.isLegacyRigidSalesPrompt(rigidLegacy), true);
+assert.equal(editor.normalizeSystemInstructionTemplate(rigidLegacy), prompt);
 
 const geminiSource = fs.readFileSync(path.resolve(__dirname, '../src/lib/gemini.ts'), 'utf8');
 assert.match(geminiSource, /fetiches:\s*\{\s*type:\s*"ARRAY"/);

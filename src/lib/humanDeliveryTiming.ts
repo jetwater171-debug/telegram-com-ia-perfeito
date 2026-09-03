@@ -1,8 +1,9 @@
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-const randomBetween = (min: number, max: number, random: () => number) => (
-    Math.floor(min + clamp(random(), 0, 0.999999) * (max - min + 1))
-);
+const randomBetween = (min: number, max: number, random: () => number) => {
+    const sample = Number(random());
+    return Math.floor(min + clamp(Number.isFinite(sample) ? sample : 0, 0, 0.999999) * (max - min + 1));
+};
 
 export const humanTextDelayMs = ({
     text,
@@ -16,18 +17,19 @@ export const humanTextDelayMs = ({
     random?: () => number;
 }) => {
     const raw = String(text || '').trim();
+    const safeBubbleIndex = Number.isFinite(bubbleIndex) ? Math.max(0, Math.floor(bubbleIndex)) : 0;
     const length = raw.length;
     const wordCount = raw.split(/\s+/).filter(Boolean).length;
 
     // Mesmo quando o modelo já levou alguns segundos, o Telegram precisa exibir
     // uma pequena ação de digitação antes do primeiro balão. Sem isso, a resposta
     // aparece pronta demais e quebra a ilusão de conversa ao vivo.
-    if (bubbleIndex === 0 && modelDurationMs >= 8_000) {
+    if (safeBubbleIndex === 0 && modelDurationMs >= 8_000) {
         return randomBetween(850, 1_350, random);
     }
 
     const typingTimeMs = (length * 30) + (wordCount * 65) + randomBetween(220, 520, random);
-    if (bubbleIndex === 0) return clamp(typingTimeMs, 900, 2_900);
+    if (safeBubbleIndex === 0) return clamp(typingTimeMs, 900, 2_900);
 
     // Balões seguintes incluem a micro pausa de leitura/decisão e o tempo de
     // digitação do novo texto. O teto mantém o worker dentro da janela da rota.

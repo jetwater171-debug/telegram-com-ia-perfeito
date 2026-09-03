@@ -17,6 +17,7 @@ const loadTypeScript = (relativePath, stubs = {}) => {
   const aliases = {
     '@/lib/commercialCatalog': 'src/lib/commercialCatalog.ts',
     '@/lib/paymentStatus': 'src/lib/paymentStatus.ts',
+    '@/lib/brain/conversationStyle': 'src/lib/brain/conversationStyle.ts',
   };
   const localRequire = (id) => {
     if (Object.prototype.hasOwnProperty.call(stubs, id)) return stubs[id];

@@ -35,6 +35,30 @@ assert.deepEqual(
     ['não quero não, obrigado.'],
 );
 
+// The public ceiling is four bubbles, even if a caller asks for more. Lowercase
+// is opt-in and only applies to conversational openers, never proper-looking
+// names, URLs or payment values.
+assert.equal(
+    shapeConversationBubbles(['um.', 'dois.', 'três.', 'quatro.', 'cinco.'], { maxBubbles: 6 }).length,
+    4,
+);
+assert.deepEqual(
+    shapeConversationBubbles(['Olá Leo, tudo bem?', 'https://example.com/PixABC'], { lowercaseStart: true, maxBubbles: 4 }),
+    ['olá Leo, tudo bem?', 'https://example.com/PixABC'],
+);
+assert.deepEqual(
+    shapeConversationBubbles(['PIX ABC123', 'VIP mensal', 'R$ 29,90'], { lowercaseStart: true, maxBubbles: 4 }),
+    ['pix ABC123', 'vip mensal', 'R$ 29,90'],
+);
+assert.deepEqual(
+    shapeConversationBubbles(['Oi. Tudo certo?'], { lowercaseStart: true, maxChars: Number.NaN, maxBubbles: 4 }),
+    ['oi. Tudo certo?'],
+);
+assert.deepEqual(
+    shapeConversationBubbles(['Adorei isso\nMe conta mais'], { lowercaseStart: true, maxChars: 40, maxBubbles: 4 }),
+    ['adorei isso', 'me conta mais'],
+);
+
 // Complete sentences are preferred, while answer, question and price survive
 // the hard bubble limit in their original order.
 const commercial = shapeConversationBubbles(

@@ -148,13 +148,6 @@ export const asksAboutResponderIdentity = (value: unknown) => {
         || /(?:^|[.!?]\s*)(?:afinal[, ]+)?quem\s+(?:(?:esta|ta)\s+)?(?:respondendo|responde|fala|falando)(?:\s+(?:aqui|comigo|ai|por aqui))?\s*[?!.,]*$/.test(text);
 };
 
-const hasHonestResponderIdentity = (value: unknown) => {
-    const text = lower(value);
-    const identifiesAutomation = /\bsou\s+(?:(?:a|uma|o|um)\s+)?(?:assistente virtual|ia|inteligencia artificial|bot|robo|versao virtual)\b/.test(text);
-    const deniesAutomation = /\bnao\s+sou\s+(?:(?:a|uma|o|um)\s+)?(?:assistente virtual|ia|inteligencia artificial|bot|robo)\b/.test(text);
-    return identifiesAutomation && !deniesAutomation;
-};
-
 export const enforceLatestIntentMessages = (messages: string[], options: {
     latestUserText?: string;
     language?: ConversationLanguage;
@@ -163,11 +156,8 @@ export const enforceLatestIntentMessages = (messages: string[], options: {
     const combined = lower(messages.join(' '));
     if (options.language !== 'pt') return messages;
 
-    // Uma referência a tecnologia ou uma crítica ao estilo não é, sozinha,
-    // pergunta sobre identidade. Preserve respostas corretas já contextualizadas.
-    if (asksAboutResponderIdentity(latest) && !hasHonestResponderIdentity(combined)) {
-        return ['sou a assistente virtual da Lari aqui no Telegram'];
-    }
+    // Identidade é tratada pela própria Lari no contexto da conversa. Esta
+    // barreira não injeta apresentação técnica nem substitui a fala do modelo.
 
     const reportsContradiction = /\b(contradicao|contradição|se contradiz|se contradisse|entrou em contradicao|entrou em contradição)\b/i.test(latest);
     if (reportsContradiction) {

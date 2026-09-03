@@ -12,7 +12,7 @@
     "verify:three-brain": "node scripts/verify-three-brain-commerce.cjs",
     "verify:lari-commercial": "node scripts/verify-lari-commercial-contract.cjs",
     "verify:model-reply": "node scripts/verify-model-reply-contract.cjs",
-    "verify:lari-context": "node scripts/verify-lari-prompt-context.cjs && node scripts/verify-lead-memory-evidence.cjs && node scripts/verify-conversation-bubbles.cjs && node scripts/verify-lari-conversation-context.cjs",
+    "verify:lari-context": "node scripts/verify-lari-prompt-context.cjs && node scripts/verify-lead-memory-evidence.cjs && node scripts/verify-memory-retriever.cjs && node scripts/verify-conversation-style-memory.cjs && node scripts/verify-conversation-bubbles.cjs && node scripts/verify-free-preview-policy.cjs && node scripts/verify-custom-pricing.cjs && node scripts/verify-lari-conversation-context.cjs",
     "verify:prompt-editor": "node scripts/verify-prompt-visual-editor.cjs",
     "verify:sales-prompt": "node scripts/verify-sales-prompt-evidence.cjs",
     "verify:payment-preview": "node scripts/verify-payment-preview-integrity.cjs",

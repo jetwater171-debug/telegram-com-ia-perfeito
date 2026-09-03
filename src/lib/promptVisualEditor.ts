@@ -36,9 +36,9 @@ const headingOf = (content: string) => {
 const metadataFor = (heading: string): Pick<PromptVisualBlock, 'friendlyName' | 'description' | 'tone' | 'kind'> => {
     const value = normalize(heading);
     if (value.includes('funcoes disponiveis')) return { friendlyName: 'Funções reais', description: 'PIX, áudio, prévias e consultas que a IA pode solicitar.', tone: 'pink', kind: 'functions' };
-    if (value.includes('motor de conversao')) return { friendlyName: 'Como vender', description: 'Quando conversar, oferecer, fechar e gerar o pagamento.', tone: 'emerald', kind: 'section' };
-    if (value.includes('agente de conversa')) return { friendlyName: 'Quem é a Lari', description: 'Identidade, missão e objetivo principal da agente.', tone: 'cyan', kind: 'section' };
-    if (value.includes('prioridades')) return { friendlyName: 'Prioridades do turno', description: 'A ordem que a Lari segue antes de responder.', tone: 'blue', kind: 'section' };
+    if (value.includes('motor de conversao') || value.includes('venda natural')) return { friendlyName: 'Como vender', description: 'Quando conversar, oferecer, fechar e gerar o pagamento.', tone: 'emerald', kind: 'section' };
+    if (value.includes('agente de conversa') || value.includes('master brain de conversa')) return { friendlyName: 'Quem é a Lari', description: 'Identidade, missão e objetivo principal da agente.', tone: 'cyan', kind: 'section' };
+    if (value.includes('prioridades') || value.includes('prioridade e verdade')) return { friendlyName: 'Prioridades do turno', description: 'A ordem que a Lari segue antes de responder.', tone: 'blue', kind: 'section' };
     if (value.includes('voz, relacao') || value.includes('conteudo adulto')) return { friendlyName: 'Tom, relação e +18', description: 'Como a intimidade, o flerte e a confirmação adulta funcionam.', tone: 'pink', kind: 'section' };
     if (value.includes('verdade operacional') || value.includes('contrato operacional')) return { friendlyName: 'Regras de segurança', description: 'Evita promessas falsas, preços errados e ações inexistentes.', tone: 'amber', kind: 'section' };
     if (value === '5. memoria' || value.includes('memoria')) return { friendlyName: 'Memória do lead', description: 'O que lembrar e como usar sem inventar informações.', tone: 'violet', kind: 'section' };
