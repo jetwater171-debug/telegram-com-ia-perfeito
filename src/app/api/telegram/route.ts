@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
+import { createHash } from 'node:crypto';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { approveChatJoinRequest } from '@/lib/telegram';
 import { appendLeadEventSafe, markAdultVerificationSafe } from '@/lib/brain/eventStore';
@@ -10,6 +11,23 @@ import {
     PRESELL_ADULT_VERIFICATION_SOURCE,
     withPresellAdultVerification,
 } from '@/lib/adultVerification';
+
+// O callback de `after()` aguarda o worker terminar (e, em disputa de sessão,
+// pode precisar de uma segunda tentativa). Sem esta janela o deploy pode
+// encerrar o webhook antes de o turno durável ser concluído.
+export const maxDuration = 300;
+
+const deterministicTelegramMessageUuid = (chatId: string, messageId: unknown) => {
+    const hex = createHash('sha256')
+        .update(`telegram:${chatId}:${String(messageId)}`)
+        .digest('hex')
+        .slice(0, 32)
+        .split('');
+    hex[12] = '5';
+    hex[16] = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+    const value = hex.join('');
+    return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+};
 
 const parseStartPayload = (text: string | undefined) => {
     const match = (text || '').trim().match(/^\/?start(?:\s+(.+))?$/i);
@@ -189,7 +207,7 @@ export async function POST(req: NextRequest) {
         const botToken = tokenData?.value;
         if (!botToken) {
             console.error("Bot Token not configured in DB");
-            return NextResponse.json({ ok: true });
+            return NextResponse.json({ error: 'telegram_token_unavailable' }, { status: 500 });
         }
 
         // 2. Get or Create Session
@@ -444,14 +462,42 @@ export async function POST(req: NextRequest) {
         const isStartCommand = /^\/?start(?:\s+.*)?$/i.test(text.trim());
         const savedContent = isStartCommand ? '/start' : text;
 
-        const { data: insertedMsg } = await supabase.from('messages').insert({
+        const telegramMessageUuid = message.message_id === undefined || message.message_id === null
+            ? null
+            : deterministicTelegramMessageUuid(chatId, message.message_id);
+        const messageRow = {
+            ...(telegramMessageUuid ? { id: telegramMessageUuid } : {}),
             session_id: session.id,
             sender: 'user',
             content: savedContent,
             media_type: mediaType
-        }).select().single();
+        };
+        const persistedMessage = telegramMessageUuid
+            ? await supabase.from('messages').upsert(messageRow, {
+                onConflict: 'id',
+                ignoreDuplicates: true,
+            }).select().maybeSingle()
+            : await supabase.from('messages').insert(messageRow).select().single();
+        let insertedMsg = persistedMessage.data;
+        let messageInsertError = persistedMessage.error;
 
-        if (!insertedMsg) return NextResponse.json({ ok: true });
+        // Em reentrega do mesmo update, o UUID determinístico já existe. Reusa
+        // a mesma mensagem para que uma nova tentativa nunca duplique o turno.
+        if (!messageInsertError && !insertedMsg && telegramMessageUuid) {
+            const existingMessage = await supabase.from('messages')
+                .select('id')
+                .eq('id', telegramMessageUuid)
+                .maybeSingle();
+            insertedMsg = existingMessage.data;
+            messageInsertError = existingMessage.error;
+        }
+
+        // Nunca confirme o update ao Telegram se a mensagem não entrou na fila
+        // durável. Um HTTP 500 faz o próprio Telegram reenviar o mesmo update.
+        if (messageInsertError || !insertedMsg) {
+            console.error('[WEBHOOK] Falha ao persistir mensagem do lead:', messageInsertError?.message || 'insert sem linha');
+            return NextResponse.json({ error: 'message_persistence_failed' }, { status: 500 });
+        }
 
         if (session.status && session.status !== 'active') {
             return NextResponse.json({ ok: true, status: 'paused' });

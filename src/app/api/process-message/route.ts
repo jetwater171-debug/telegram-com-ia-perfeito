@@ -119,6 +119,7 @@ const normalizeCityKey = (input: string) => {
 const PROCESSING_LEASE_TTL_MS = 90_000;
 const PROCESSING_LEASE_WAIT_MS = 45_000;
 const PROCESSING_LEASE_POLL_MS = 750;
+const PROCESSING_LEASE_HEARTBEAT_MS = 15_000;
 
 // A cobrança e sua trilha em messages são a fonte de verdade para o PIX. A
 // fila custom_orders serve ao fulfillment; se ela estiver indisponível, o
@@ -650,8 +651,11 @@ export async function POST(req: NextRequest) {
 
     const botConfig = Object.fromEntries((botConfigResult.data || []).map((item: any) => [item.key, item.value || ''])) as Record<string, string>;
     const botToken = botConfig.telegram_bot_token;
-    if (!botToken) return NextResponse.json({ error: 'Sem token' });
+    if (!botToken) {
+        return NextResponse.json({ success: false, error: 'telegram_token_unavailable', retryable: true }, { status: 503 });
+    }
     const chatId = session.telegram_chat_id;
+
     const baseElevenLabsSettings = normalizeElevenLabsSettings({
         apiKey: botConfig.elevenlabs_api_key || process.env.ELEVENLABS_API_KEY || '',
         enabled: (botConfig.elevenlabs_enabled || process.env.ELEVENLABS_ENABLED) === 'true',
@@ -756,7 +760,12 @@ export async function POST(req: NextRequest) {
     const workerToken = `${Date.now()}:${crypto.randomUUID()}`;
     let leaseMode: 'full' | 'token_only' = 'full';
     let leaseClaimed = false;
+    let leaseHeartbeat: ReturnType<typeof setInterval> | null = null;
     const releaseProcessingLease = async () => {
+        if (leaseHeartbeat) {
+            clearInterval(leaseHeartbeat);
+            leaseHeartbeat = null;
+        }
         if (!leaseClaimed) return;
         const releasePatch = leaseMode === 'full'
             ? { processing_token: null, processing_started_at: null }
@@ -836,10 +845,22 @@ export async function POST(req: NextRequest) {
     const leaseDeadline = Date.now() + PROCESSING_LEASE_WAIT_MS;
     while (!(await tryClaimProcessingLease())) {
         if (Date.now() >= leaseDeadline) {
-            console.warn(`[PROCESSADOR] Sessão ${sessionId} continua ocupada; o worker mais novo será reprocessado pelo próximo evento.`);
-            return NextResponse.json({ status: 'session_busy' }, { status: 202 });
+            console.warn(`[PROCESSADOR] Sessão ${sessionId} continua ocupada; solicitando nova tentativa do worker mais novo.`);
+            return NextResponse.json({ success: false, error: 'session_busy', retryable: true }, { status: 409 });
         }
         await new Promise((resolve) => setTimeout(resolve, PROCESSING_LEASE_POLL_MS));
+    }
+
+    if (leaseMode === 'full') {
+        leaseHeartbeat = setInterval(() => {
+            void supabase.from('sessions')
+                .update({ processing_started_at: new Date().toISOString() })
+                .eq('id', sessionId)
+                .eq('processing_token', workerToken)
+                .then(({ error }) => {
+                    if (error) console.warn('[PROCESSADOR] Falha ao renovar lease:', error.message);
+                });
+        }, PROCESSING_LEASE_HEARTBEAT_MS);
     }
 
     let externalDeliveryStarted = false;
@@ -2409,13 +2430,51 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
 
             await waitWithChatAction('typing', humanTextDelayMs({ text: message, bubbleIndex: index + 1 }));
             if (await findNewerUserMessage()) return;
-            await sendTelegramMessage(botToken, chatId, message);
+            // Só entra no histórico depois que o Telegram confirmou o balão.
+            externalDeliveryStarted = true;
+            await sendTelegramMessageStrict(botToken, chatId, message);
             await insertGeneratedMessage({
                 session_id: session.id,
                 sender: 'bot',
                 content: message,
             });
         }
+    };
+
+    const sendMediaUnavailableReply = async (correction: string) => {
+        const repairedResponse = {
+            ...aiResponse,
+            action: 'none' as const,
+            preview_id: null,
+            payment_details: null,
+        };
+        const repaired = await repairModelReply(String(session.id), repairedResponse, {
+            action: 'none',
+            mediaUnavailable: true,
+            corrections: [correction],
+        });
+        const fallbackMessages = shapeConversationBubbles(normalizeAiMessageList(repaired), {
+            preferredCount: Math.min(2, Math.max(1, repaired.length)),
+            maxBubbles: 4,
+            maxChars: Number(aiResponse.max_chars_per_message || 84),
+            lowercaseStart: true,
+        }).filter((message) => !isTrafficSourceDiscoveryQuestion(message));
+
+        let delivered = 0;
+        for (const [index, message] of fallbackMessages.entries()) {
+            if (await findNewerUserMessage()) break;
+            await waitWithChatAction('typing', humanTextDelayMs({ text: message, bubbleIndex: index }));
+            if (await findNewerUserMessage()) break;
+            externalDeliveryStarted = true;
+            await sendTelegramMessageStrict(botToken, chatId, message);
+            await insertGeneratedMessage({
+                session_id: session.id,
+                sender: 'bot',
+                content: message,
+            });
+            delivered += 1;
+        }
+        return delivered;
     };
     const audioCooldownSince = new Date(Date.now() - elevenLabsSettings.cooldownMinutes * 60_000).toISOString();
     const { data: recentAudio } = elevenLabsSettings.enabled
@@ -2715,16 +2774,15 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
             return NextResponse.json({ status: 'superseded_during_typing' });
         }
 
-        // Persistência e envio formam o primeiro efeito visível deste balão.
-        // Depois deste ponto não autorizamos retry automático do turno inteiro.
+        // O envio confirmado forma o primeiro efeito visível deste balão. Só
+        // depois dele registramos a fala no histórico exibido pelo painel.
         externalDeliveryStarted = true;
+        await sendTelegramMessageStrict(botToken, chatId, textToSend);
         await insertGeneratedMessage({
             session_id: session.id,
             sender: 'bot',
             content: textToSend
         });
-
-        await sendTelegramMessage(botToken, chatId, textToSend);
     }
 
     if (mem0Settings.enabled && mem0Settings.apiKey && userOnlyText.trim()) {
@@ -3418,7 +3476,8 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                 } else {
                     console.log('[PREVIAS] Entrega cancelada porque só restavam arquivos repetidos.');
                     await persistMediaDeliveryStatus('failed');
-                    return NextResponse.json({ success: true, mediaSkipped: 'duplicate_catalog_exhausted' });
+                    const fallbackTextCount = await sendMediaUnavailableReply('duplicate_catalog_exhausted');
+                    return NextResponse.json({ success: true, mediaSkipped: 'duplicate_catalog_exhausted', fallbackTextCount });
                 }
             }
 
@@ -3481,7 +3540,8 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                         content: `[DEBUG: ERRO MÍDIA] ${deliveryErrors.join(' | ').slice(0, 1800)}`
                     });
                     await persistMediaDeliveryStatus('failed');
-                    return NextResponse.json({ success: false, mediaError: true });
+                    const fallbackTextCount = await sendMediaUnavailableReply('media_delivery_failed');
+                    return NextResponse.json({ success: true, mediaError: true, fallbackTextCount });
                 }
 
                 await supabase.from('messages').insert({
@@ -3547,6 +3607,10 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                     console.warn('[PREVIAS] Falha ao registrar lacuna:', error?.message || error);
                 });
             }
+            await sendMediaUnavailableReply('media_catalog_unavailable');
+        } else if (isMediaDeliveryTurn) {
+            await persistMediaDeliveryStatus('failed');
+            await sendMediaUnavailableReply('media_catalog_unavailable');
         }
     }
 

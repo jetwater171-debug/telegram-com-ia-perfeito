@@ -46,6 +46,11 @@ const retryable503 = () => new Response(JSON.stringify({
     error: 'ai_response_unavailable',
     retryable: true,
 }), { status: 503 });
+const sessionBusy = () => new Response(JSON.stringify({
+    success: false,
+    error: 'session_busy',
+    retryable: true,
+}), { status: 409 });
 const ok = (body = { success: true }) => new Response(JSON.stringify(body), { status: 200 });
 
 (async () => {
@@ -55,10 +60,12 @@ const ok = (body = { success: true }) => new Response(JSON.stringify(body), { st
     await run([new Response('not-json', { status: 503 })], { calls: 1 });
     const uncertain = await run([new Error('fetch timeout')], { calls: 1 });
     assert.equal(uncertain.uncertain, true);
-    const capped = await run([retryable503(), retryable503()], { calls: 2, sleeps: [1_000] });
+    const capped = await run([retryable503(), retryable503(), retryable503()], { calls: 3, sleeps: [1_000, 1_000] });
     assert.equal(capped.retried, true);
+    const busyRecovered = await run([sessionBusy(), sessionBusy(), ok()], { calls: 3, sleeps: [1_000, 1_000] });
+    assert.equal(busyRecovered.status, 200);
 
-    console.log('TELEGRAM_WORKER_RETRY_OK', JSON.stringify({ cases: 6, maxAttempts: capped.attempts }));
+    console.log('TELEGRAM_WORKER_RETRY_OK', JSON.stringify({ cases: 7, maxAttempts: capped.attempts }));
 })().catch((error) => {
     console.error(error);
     process.exitCode = 1;

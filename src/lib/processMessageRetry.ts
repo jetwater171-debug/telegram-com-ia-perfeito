@@ -11,10 +11,10 @@ export type WorkerTriggerResult = {
 const waitBeforeWorkerRetry = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
- * Dispara o worker no máximo duas vezes. O segundo disparo só é seguro quando
- * o próprio worker respondeu 503 com JSON válido e retryable=true, isto é,
- * antes de qualquer entrega ou cobrança. Falhas de rede ficam inconclusivas e
- * não autorizam repetição automática, evitando balões e PIX duplicados.
+ * Dispara o worker no máximo três vezes. Repetimos apenas quando o próprio
+ * worker confirma que ainda não houve efeito externo: falha 503 retryable ou
+ * sessão ocupada 409. Falhas de rede ficam inconclusivas e não autorizam nova
+ * chamada, evitando balões e PIX duplicados.
  */
 export const triggerProcessMessageWithRetry = async ({
     workerUrl,
@@ -31,7 +31,8 @@ export const triggerProcessMessageWithRetry = async ({
 }): Promise<WorkerTriggerResult> => {
     let attempts = 0;
 
-    while (attempts < 2) {
+    const maxAttempts = 3;
+    while (attempts < maxAttempts) {
         attempts += 1;
         let workerResponse: Response;
         try {
@@ -58,9 +59,14 @@ export const triggerProcessMessageWithRetry = async ({
             && parsedBody !== null
             && typeof parsedBody === 'object'
             && parsedBody.retryable === true;
+        const sessionBusy = workerResponse.status === 409
+            && parsedBody !== null
+            && typeof parsedBody === 'object'
+            && parsedBody.error === 'session_busy'
+            && parsedBody.retryable === true;
 
-        if (retryableBeforeEffects && attempts === 1) {
-            console.warn('[WEBHOOK] Worker indisponível antes da entrega; retry único em 1s.');
+        if ((retryableBeforeEffects || sessionBusy) && attempts < maxAttempts) {
+            console.warn(`[WEBHOOK] Worker ${sessionBusy ? 'ocupado' : 'indisponível antes da entrega'}; nova tentativa em 1s.`);
             await sleepImpl(1_000);
             continue;
         }
@@ -75,7 +81,7 @@ export const triggerProcessMessageWithRetry = async ({
             attempts,
             status: workerResponse.status,
             retried: attempts > 1,
-            retryable: retryableBeforeEffects,
+            retryable: retryableBeforeEffects || sessionBusy,
         };
     }
 
