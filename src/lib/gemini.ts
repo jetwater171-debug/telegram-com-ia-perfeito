@@ -35,6 +35,7 @@ import {
 } from '@/lib/aiOrchestration';
 import {
     aiGatewayRouter,
+    assertAiGatewayPayload,
     classifyGatewayFailure,
     estimateAiTokens,
     GatewayCapacityError,
@@ -1821,6 +1822,7 @@ const callAiGatewayJson = async <T,>(options: {
                     model: result.resolvedModel,
                     label: `${gateway.provider}:${result.resolvedModel}`,
                 };
+                assertAiGatewayPayload(result.data, options.schemaName, options.responseSchemaConfig);
                 const durationMs = Date.now() - startedAt;
                 lease.succeed(durationMs, result.usageTotalTokens);
                 recordPersistentAiUsage({
@@ -1890,6 +1892,7 @@ const callAiGatewayJson = async <T,>(options: {
                 }
             }
             const durationMs = Date.now() - startedAt;
+            assertAiGatewayPayload(result.data, options.schemaName, options.responseSchemaConfig);
             lease.succeed(durationMs, result.usageTotalTokens);
             const resolvedGateway = {
                 ...gateway,

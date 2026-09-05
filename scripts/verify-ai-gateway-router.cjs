@@ -21,6 +21,7 @@ new Function('require', 'module', 'exports', '__filename', '__dirname', compiled
 const {
     AdaptiveGatewayRouter,
     GatewayCapacityError,
+    assertAiGatewayPayload,
     classifyGatewayFailure,
     estimateAiTokens,
     resolveGatewayRatePolicy,
@@ -50,6 +51,18 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
     assert.equal(classifyGatewayFailure(Object.assign(new Error('rate limit'), { status: 429 })), 'quota');
     assert.equal(classifyGatewayFailure(Object.assign(new Error('invalid key'), { status: 401 })), 'auth');
     assert.ok(estimateAiTokens('abcd'.repeat(100)) >= 100);
+    const speechSchema = { required: ['messages', 'action'] };
+    assert.doesNotThrow(() => assertAiGatewayPayload({ messages: ['oi'], action: 'none' }, 'responseSchema', speechSchema));
+    assert.throws(
+        () => assertAiGatewayPayload({}, 'responseSchema', speechSchema),
+        /JSON incompleto/,
+        'resposta vazia não pode interromper o fallback',
+    );
+    assert.throws(
+        () => assertAiGatewayPayload({ messages: [], action: 'none' }, 'responseSchema', speechSchema),
+        /nenhuma mensagem utilizável/,
+        'lista vazia não pode ser contabilizada como sucesso',
+    );
 
     const groqQuality = resolveGatewayRatePolicy('groq', 'openai/gpt-oss-120b', {});
     assert.ok(groqQuality.rpm >= 1_000_000, 'quota desconhecida não pode inventar um teto baixo');
@@ -161,7 +174,7 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         (error) => error instanceof GatewayCapacityError,
     );
 
-    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 shared_quota_group=1 credential_health_isolation=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1');
+    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 shared_quota_group=1 credential_health_isolation=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1 payload_validation=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

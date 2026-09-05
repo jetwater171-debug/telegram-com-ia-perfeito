@@ -164,6 +164,37 @@ export const estimateAiTokens = (...values: unknown[]) => {
     return Math.max(1, Math.ceil(chars / 3.6));
 };
 
+export const assertAiGatewayPayload = (
+    payload: unknown,
+    schemaName: string,
+    schema: { required?: unknown } | null | undefined,
+) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        throw new Error(`${schemaName} JSON inválido: resposta não é um objeto`);
+    }
+
+    const record = payload as Record<string, unknown>;
+    const required = Array.isArray(schema?.required)
+        ? schema.required.map((key) => String(key)).filter(Boolean)
+        : [];
+    const missing = required.filter((key) => !Object.prototype.hasOwnProperty.call(record, key));
+    if (missing.length > 0) {
+        throw new Error(`${schemaName} JSON incompleto: faltam ${missing.join(', ')}`);
+    }
+
+    // Uma chamada de fala só é sucesso quando há ao menos um balão utilizável.
+    // Isso impede que providers que ignoram JSON Schema retornem `{}` e parem o
+    // fallback, deixando o lead sem resposta.
+    if (schemaName === 'responseSchema' || schemaName === 'operationalReply') {
+        const messages = Array.isArray(record.messages)
+            ? record.messages.map((message) => String(message || '').trim()).filter(Boolean)
+            : [];
+        if (messages.length === 0) {
+            throw new Error(`${schemaName} JSON incompleto: nenhuma mensagem utilizável`);
+        }
+    }
+};
+
 export const classifyGatewayFailure = (error: unknown): GatewayFailureKind => {
     const message = String((error as any)?.message || error || '').toLowerCase();
     const status = Number((error as any)?.status || 0);
