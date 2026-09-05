@@ -48,7 +48,7 @@ type VoiceBudgetMetrics = {
 
 const PROVIDER_ORDER: ProviderKey[] = ["bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"];
 const PROVIDER_INFO: Record<ProviderKey, { label: string; short: string; description: string; keyUrl: string; keyLabel: string; color: string }> = {
-    bai: { label: "B.AI · Roteador de 6 modelos", short: "Principal · fallback interno", description: "Tenta os modelos da própria B.AI do melhor para o pior. Limite, timeout ou resposta inválida fazem a Lari seguir automaticamente para o próximo.", keyUrl: "https://chat.b.ai/chat", keyLabel: "Abrir B.AI e gerar chave", color: "from-emerald-400 to-cyan-300" },
+    bai: { label: "B.AI · Roteador de 3 modelos gratuitos", short: "Principal · fallback interno", description: "Tenta apenas os modelos gratuitos da própria B.AI, do melhor para o pior. Limite, timeout ou resposta inválida fazem a Lari seguir automaticamente para o próximo.", keyUrl: "https://chat.b.ai/chat", keyLabel: "Abrir B.AI e gerar chave", color: "from-emerald-400 to-cyan-300" },
     gemini: { label: "Google Gemini", short: "Mídia + recuperação", description: "Cuida de áudio e vídeo e assume como recuperação externa se todos os modelos B.AI falharem.", keyUrl: "https://aistudio.google.com/apikey", keyLabel: "Pegar chave no Google AI Studio", color: "from-blue-400 to-cyan-300" },
     groq: { label: "Groq", short: "Muito rápido", description: "Absorve conversas de texto com baixa latência e reduz a carga do Gemini.", keyUrl: "https://console.groq.com/keys", keyLabel: "Pegar chave na Groq", color: "from-orange-400 to-amber-300" },
     nvidia: { label: "NVIDIA NIM", short: "Modelos hospedados", description: "Rota oficial NVIDIA com modelos rápidos para distribuir as conversas e aliviar os provedores principais.", keyUrl: "https://build.nvidia.com/settings/api-keys", keyLabel: "Pegar chave na NVIDIA", color: "from-lime-400 to-green-300" },
@@ -325,7 +325,7 @@ export default function AdminAiPage() {
                     <div>
                         <p className="admin-eyebrow">Master Brain</p>
                         <h1 className="admin-page-title">Inteligência da Lari</h1>
-                        <p className="admin-page-subtitle mt-2">Seis modelos B.AI em ordem de qualidade, com visão multimodal e recuperação automática.</p>
+                        <p className="admin-page-subtitle mt-2">Três modelos gratuitos da B.AI em ordem de qualidade, com visão multimodal e recuperação automática.</p>
                     </div>
                     <SaveBadge state={saveState} message={message} />
                 </div>

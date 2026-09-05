@@ -63,7 +63,7 @@ assert.equal(
 );
 
 (async () => {
-    const settings = { apiKey: 'bai-test', model: 'deepseek-v4-flash', baseUrl: 'https://api.b.ai/v1' };
+    const settings = { apiKey: 'bai-test', model: 'qwen3.8-flash', baseUrl: 'https://api.b.ai/v1' };
     const deepSeekCalls = [];
     const script = await agent.prepareElevenLabsScript({
         settings,

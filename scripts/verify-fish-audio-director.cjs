@@ -67,7 +67,7 @@ const fakeDeepSeek = async (url, init) => {
 };
 
 (async () => {
-    const settings = { apiKey: 'bai-test', model: 'deepseek-v4-flash', baseUrl: 'https://api.b.ai/v1' };
+    const settings = { apiKey: 'bai-test', model: 'qwen3.8-flash', baseUrl: 'https://api.b.ai/v1' };
     const script = await agent.prepareFishAudioScript({
         settings,
         messageText: 'vc me deixa doida kkkkk, to aqui pensando em vc',
@@ -79,7 +79,7 @@ const fakeDeepSeek = async (url, init) => {
     assert.equal(script.spokenText, 'Você me deixa doida. Tô aqui pensando em você.');
     assert.doesNotMatch(script.fishText, /kkkk|\brs\b/i);
     assert.match(script.fishText, /^\[soft voice, playful, natural, unhurried\] \[giggle\]/);
-    assert.equal(deepSeekCalls[0].body.model, 'deepseek-v4-flash');
+    assert.equal(deepSeekCalls[0].body.model, 'glm-5.3-flash');
     assert.equal(deepSeekCalls[0].body.max_tokens, 450);
 
     const invented = await agent.prepareFishAudioScript({

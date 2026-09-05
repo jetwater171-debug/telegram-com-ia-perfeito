@@ -3,10 +3,10 @@ import { BAI_TEXT_MODEL_ORDER, normalizeBaiModelName } from '@/lib/aiModels';
 type FetchLike = typeof fetch;
 
 export const resolveBaiTextModelOrder = (preferredModel?: string | null) => {
-    const preferred = normalizeBaiModelName(preferredModel);
-    return BAI_TEXT_MODEL_ORDER.includes(preferred as (typeof BAI_TEXT_MODEL_ORDER)[number])
-        ? [...BAI_TEXT_MODEL_ORDER]
-        : [...BAI_TEXT_MODEL_ORDER, preferred];
+    // Normaliza configurações antigas, mas a fila é sempre o catálogo gratuito.
+    // Isso evita que um valor legado volte a acionar um modelo pago como fallback.
+    normalizeBaiModelName(preferredModel);
+    return [...BAI_TEXT_MODEL_ORDER];
 };
 
 export const callBaiChatWithFallback = async <T>({

@@ -22,12 +22,11 @@ const router = compile('../src/lib/baiChatRouter.ts', (id) => {
 });
 
 (async () => {
+    assert.equal(aiModels.normalizeBaiModelName('deepseek-v4-flash-vision-exp'), 'glm-5.3-flash');
+    assert.equal(aiModels.normalizeBaiModelName('unsupported-model'), 'glm-5.3-flash');
     assert.deepEqual(router.resolveBaiTextModelOrder('deepseek-v4-flash-vision-exp'), [
-        'deepseek-v4-flash',
-        'deepseek-v4-flash-vision-exp',
         'glm-5.3-flash',
         'qwen3.8-flash',
-        'mimo-v2.5',
         'hy3',
     ]);
 
@@ -45,8 +44,8 @@ const router = compile('../src/lib/baiChatRouter.ts', (id) => {
             return new Response(JSON.stringify({ ok: true, model }), { status: 200 });
         },
     });
-    assert.deepEqual(calls, ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp', 'glm-5.3-flash']);
-    assert.equal(result.model, 'glm-5.3-flash');
+    assert.deepEqual(calls, ['glm-5.3-flash', 'qwen3.8-flash', 'hy3']);
+    assert.equal(result.model, 'hy3');
     assert.equal(result.attempts.length, 2);
 
     let authCalls = 0;
@@ -62,7 +61,7 @@ const router = compile('../src/lib/baiChatRouter.ts', (id) => {
     }), /401/);
     assert.equal(authCalls, 1);
 
-    console.log('BAI_CHAT_ROUTER_OK order=6 rate_limit_fallback=1 invalid_response_fallback=1 auth_fast_fail=1');
+    console.log('BAI_CHAT_ROUTER_OK order=3 free_only=1 rate_limit_fallback=1 invalid_response_fallback=1 auth_fast_fail=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

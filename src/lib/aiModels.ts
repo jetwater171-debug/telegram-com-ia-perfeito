@@ -1,9 +1,6 @@
 export const BAI_MODEL_CATALOG = [
-    { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", acceptsImage: false },
-    { id: "deepseek-v4-flash-vision-exp", label: "DeepSeek V4 Flash Vision Exp", acceptsImage: true },
     { id: "glm-5.3-flash", label: "GLM-5.3 Flash", acceptsImage: true },
     { id: "qwen3.8-flash", label: "Qwen3.8 Flash", acceptsImage: true },
-    { id: "mimo-v2.5", label: "MiMo-V2.5", acceptsImage: true },
     { id: "hy3", label: "Hy3", acceptsImage: false },
 ] as const;
 
@@ -27,10 +24,6 @@ export const OPENROUTER_MODEL_FALLBACK_ORDER = [
 
 export const DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat";
 
-const BAI_MODEL_MIGRATIONS: Record<string, string> = {
-    "deepseek-v4-flash-0731": DEFAULT_BAI_MODEL,
-};
-
 const BAI_MODEL_BY_ID = new Map<string, (typeof BAI_MODEL_CATALOG)[number]>(
     BAI_MODEL_CATALOG.map((model) => [model.id, model] as const),
 );
@@ -39,7 +32,7 @@ export const normalizeBaiModelName = (value?: string | null) => {
     const model = String(value || "").trim();
     if (!model) return DEFAULT_BAI_MODEL;
     const normalized = model.toLowerCase();
-    return BAI_MODEL_MIGRATIONS[normalized] || BAI_MODEL_BY_ID.get(normalized)?.id || model;
+    return BAI_MODEL_BY_ID.get(normalized)?.id || DEFAULT_BAI_MODEL;
 };
 
 export const isBaiVisionModel = (value?: string | null) =>

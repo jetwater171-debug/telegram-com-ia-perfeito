@@ -9,14 +9,11 @@ const adminApi = read('src/app/api/admin/ai-settings/route.ts');
 const adminPage = read('src/app/admin/ai/page.tsx');
 
 const expectedTextOrder = [
-    'deepseek-v4-flash',
-    'deepseek-v4-flash-vision-exp',
     'glm-5.3-flash',
     'qwen3.8-flash',
-    'mimo-v2.5',
     'hy3',
 ];
-const expectedImageOrder = expectedTextOrder.slice(1, 5);
+const expectedImageOrder = ['glm-5.3-flash', 'qwen3.8-flash'];
 const catalog = models.match(/BAI_MODEL_CATALOG\s*=\s*\[([\s\S]*?)\]\s*as const/)?.[1] || '';
 
 let previousIndex = -1;
@@ -29,12 +26,10 @@ assert.equal(new Set(expectedTextOrder).size, expectedTextOrder.length);
 for (const id of expectedImageOrder) {
     assert.match(catalog, new RegExp(`id: "${id.replace(/[.]/g, '\\.')}", label: [^\n]+ acceptsImage: true`));
 }
-assert.match(catalog, /id: "deepseek-v4-flash", label: [^\n]+ acceptsImage: false/);
 assert.match(catalog, /id: "hy3", label: [^\n]+ acceptsImage: false/);
 
 assert.match(models, /DEFAULT_BAI_MODEL\s*=\s*BAI_TEXT_MODEL_ORDER\[0\]/);
-assert.doesNotMatch(models, /["']deepseek-v4-flash["']:\s*DEFAULT_BAI_MODEL/);
-assert.match(models, /["']deepseek-v4-flash-0731["']:\s*DEFAULT_BAI_MODEL/);
+assert.match(models, /BAI_MODEL_BY_ID\.get\(normalized\)\?\.id \|\| DEFAULT_BAI_MODEL/);
 assert.match(gemini, /type AiProvider = [^\n]*["']bai["']/);
 assert.match(gemini, /DEFAULT_PROVIDER_ORDER\s*=\s*["']bai,openrouter,/);
 assert.match(gemini, /BAI_TEXT_MODEL_ORDER\.forEach\(\(baiModel, index\) => addProvider\(/);
@@ -48,8 +43,8 @@ assert.match(adminApi, /provider === ["']bai["'][\s\S]*?\$\{config\.base\}\/mode
 assert.match(adminApi, /availableModels = BAI_TEXT_MODEL_ORDER\.filter/);
 assert.match(adminApi, /missingModels = BAI_TEXT_MODEL_ORDER\.filter/);
 assert.doesNotMatch(adminApi, /master_brain_connection_test/);
-assert.match(adminPage, /B\.AI · Roteador de 6 modelos/);
+assert.match(adminPage, /B\.AI · Roteador de 3 modelos gratuitos/);
 assert.match(adminPage, /Texto · melhor para o pior/);
 assert.match(adminPage, /Fotos · somente multimodais/);
 
-console.log('BAI_MODEL_ROUTER_OK text=6 image=4 strict_order=1 per_model_fallback=1 auth_fast_fail=1 discovery_no_inference=1 panel=ready');
+console.log('BAI_MODEL_ROUTER_OK text=3 image=2 free_only=1 strict_order=1 per_model_fallback=1 auth_fast_fail=1 discovery_no_inference=1 panel=ready');

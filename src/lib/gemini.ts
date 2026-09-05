@@ -1195,12 +1195,9 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings, tier?: AiI
         .filter((gateway) => !tier || !gateway.tiers || gateway.tiers.includes(tier));
 
     const configuredPreference = parseProviderPreference(roleSettingMap[role] || settings.aiModelOrder || DEFAULT_PROVIDER_ORDER);
-    // DeepSeek V4 pela B.AI é a linha principal textual. O painel continua
-    // ordenando todos os fallbacks, mas não pode acidentalmente deslocar o
-    // Master Brain; mídia incompatível é roteada ao Gemini acima desta camada.
-    // Mantem o DeepSeek V4 da B.AI em primeiro. Se ele estiver sem saldo,
-    // prioriza fallbacks de qualidade com contexto amplo antes de chegar no
-    // Gemini gratuito, que deve ser somente a ultima rede de seguranca.
+    // A fila gratuita da B.AI é a linha principal textual. O painel continua
+    // ordenando os fallbacks, mas não pode deslocar o Master Brain; mídia
+    // incompatível é roteada ao Gemini acima desta camada.
     const qualityFallbacks: AiProvider[] = ['openrouter', 'groq', 'mistral', 'gemini'];
     const providerPreference = [
         'bai' as AiProvider,

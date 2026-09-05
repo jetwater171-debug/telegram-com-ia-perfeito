@@ -90,19 +90,16 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
 
     const baiFallbackRouter = new AdaptiveGatewayRouter();
     const baiOrder = [
-        'deepseek-v4-flash',
-        'deepseek-v4-flash-vision-exp',
         'glm-5.3-flash',
         'qwen3.8-flash',
-        'mimo-v2.5',
         'hy3',
     ].map((model, priority) => candidate(`bai:${model}`, 60 - priority * 6, {}, priority));
     const baiPrimaryLease = await baiFallbackRouter.acquire(baiOrder, { routingKey: 'bai-chain', estimatedTokens: 10, maxQueueMs: 0 });
-    assert.equal(baiPrimaryLease.candidate.model, 'deepseek-v4-flash');
+    assert.equal(baiPrimaryLease.candidate.model, 'glm-5.3-flash');
     const baiPrimaryKey = baiPrimaryLease.candidate.key;
     baiPrimaryLease.fail(Object.assign(new Error('rate limit'), { status: 429 }), 30);
     const baiFallbackLease = await baiFallbackRouter.acquire(baiOrder, { routingKey: 'bai-chain', estimatedTokens: 10, maxQueueMs: 0, exclude: new Set([baiPrimaryKey]) });
-    assert.equal(baiFallbackLease.candidate.model, 'deepseek-v4-flash-vision-exp');
+    assert.equal(baiFallbackLease.candidate.model, 'qwen3.8-flash');
     baiFallbackLease.succeed(35);
 
     const fallbackRouter = new AdaptiveGatewayRouter();
@@ -141,7 +138,7 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         (error) => error instanceof GatewayCapacityError,
     );
 
-    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=6 bai_failover=1 concurrency=1 rpm=1 circuit=1 env_limits=1 gemini_quota=1 nvidia=1 bai=1');
+    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 env_limits=1 gemini_quota=1 nvidia=1 bai=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);
