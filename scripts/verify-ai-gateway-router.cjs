@@ -77,9 +77,10 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         .sort((left, right) => left.priority - right.priority)
         .map(({ index }) => index);
     assert.deepEqual(interleavedOrder, [0, 2, 4, 1, 3], 'o primeiro modelo de cada provedor deve vir antes dos modelos secundários');
-    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'gemini' }), { totalMs: 42_000, attemptMs: 18_000 });
-    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'nvidia' }), { totalMs: 42_000, attemptMs: 16_000 });
+    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'gemini' }), { totalMs: 28_000, attemptMs: 18_000 });
+    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'nvidia' }), { totalMs: 28_000, attemptMs: 16_000 });
     assert.deepEqual(resolveGatewayLatencyBudget({ role: 'review', schemaName: 'reviewSchema', provider: 'gemini' }), { totalMs: 6_000, attemptMs: 5_000 });
+    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'operationalReply', provider: 'nvidia' }), { totalMs: 16_000, attemptMs: 5_000 });
 
     const groqQuality = resolveGatewayRatePolicy('groq', 'openai/gpt-oss-120b', {});
     assert.ok(groqQuality.rpm >= 1_000_000, 'quota desconhecida não pode inventar um teto baixo');

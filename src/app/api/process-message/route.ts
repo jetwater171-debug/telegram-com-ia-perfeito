@@ -3,7 +3,7 @@ import { extractAiMessageText, normalizeAiMessageList } from '@/lib/aiMessageNor
 import { shapeConversationBubbles } from '@/lib/conversationBubbles';
 import { errorMessage, insertMessageWithAiDebug, withAiDebugMessageIndex } from '@/lib/aiDebug';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
-import { sendMessageToGemini, repairModelReply } from '@/lib/gemini';
+import { sendEmergencyAiReply, sendMessageToGemini, repairModelReply } from '@/lib/gemini';
 import { inspectModelReply, type ModelReplyContract } from '@/lib/modelReplyContract';
 import { sanitizeConversationHistoryText } from '@/lib/fullConversationHistory';
 import { sendTelegramMessage, sendTelegramMessageStrict, sendTelegramPhoto, sendTelegramVideo, sendTelegramAction, sendTelegramCopyableCodeStrict, sendTelegramVoice, type TelegramMediaProtection } from '@/lib/telegram';
@@ -864,6 +864,7 @@ export async function POST(req: NextRequest) {
     }
 
     let externalDeliveryStarted = false;
+    let emergencyUserText = '';
 
     try {
         // O worker pode ter esperado outro turno terminar. Confere novamente se
@@ -976,6 +977,7 @@ export async function POST(req: NextRequest) {
 
     const groupedUserMessages = filteredGroupMessages.filter((m: any) => m.sender === 'user');
     const combinedText = filteredGroupMessages.map((m: any) => m.content).join("\n");
+    emergencyUserText = combinedText;
     const userOnlyText = groupedUserMessages.map((m: any) => m.content).join("\n");
     const latestUserText = String(groupedUserMessages.at(-1)?.content || userOnlyText).trim();
     const lastGroupedUserAt = filteredGroupMessages
@@ -1526,6 +1528,9 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
     }, 4000);
     try {
         aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
+    } catch (error: any) {
+        console.error('[PROCESSADOR] Master Brain indisponível; usando recuperação curta por IA:', error?.message || error);
+        aiResponse = await sendEmergencyAiReply(String(session.id), finalUserMessage, session.lead_score);
     } finally {
         clearInterval(typingHeartbeat);
     }
@@ -2067,7 +2072,12 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
     if (replyIssues.length || replyContract.operationChanged || replyContract.corrections?.length
         || replyContract.mediaUnavailable || replyContract.voiceUnavailable) {
         replyContract.corrections = [...(replyContract.corrections || []), ...replyIssues];
-        await repairModelReply(String(session.id), aiResponse, replyContract);
+        try {
+            await repairModelReply(String(session.id), aiResponse, replyContract);
+        } catch (error: any) {
+            console.error('[PROCESSADOR] Ajuste operacional indisponivel; usando resposta segura:', error?.message || error);
+            aiResponse = await sendEmergencyAiReply(String(session.id), finalUserMessage, session.lead_score);
+        }
     }
 
     console.log("🤖 Resposta Gemini Stats:", JSON.stringify(aiResponse.lead_stats, null, 2));
@@ -3643,6 +3653,36 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
     } catch (error: any) {
         const reason = String(error?.message || error || 'erro desconhecido');
         console.error(`[PROCESSADOR] Falha recuperavel na sessao ${sessionId}:`, reason);
+
+        // Ultima barreira contra silencio: mesmo uma falha posterior ao roteador
+        // ganha uma resposta curta. Se o Telegram falhar, o webhook ainda recebe
+        // 503 retryable e tenta novamente sem registrar uma entrega falsa.
+        if (!externalDeliveryStarted) {
+            try {
+                const recovery = await sendEmergencyAiReply(String(sessionId), emergencyUserText || 'Oi', session.lead_score);
+                const recoveryMessage = normalizeAiMessageList(recovery.messages)[0];
+                if (recoveryMessage) {
+                    await sendTelegramMessageStrict(botToken, chatId, recoveryMessage);
+                    externalDeliveryStarted = true;
+                    const stored = await insertMessageWithAiDebug(supabase, {
+                        session_id: session.id,
+                        sender: 'bot',
+                        content: recoveryMessage,
+                    }, recovery.ai_debug);
+                    if (stored.error) console.warn('[PROCESSADOR] Recuperacao entregue, mas nao persistida:', errorMessage(stored.error));
+                    await appendLeadEventSafe({
+                        sessionId: String(sessionId),
+                        eventType: 'assistant_message',
+                        source: 'availability_recovery',
+                        sourceId: triggerMessageId ? `recovery:${triggerMessageId}` : null,
+                        payload: { content: recoveryMessage.slice(0, 4_000), recovered_from: reason.slice(0, 500) },
+                    });
+                    return NextResponse.json({ success: true, recovered: true });
+                }
+            } catch (recoveryError: any) {
+                console.error('[PROCESSADOR] Recuperacao final nao foi entregue:', recoveryError?.message || recoveryError);
+            }
+        }
 
         // Fail observably instead of inventing a reply and reporting success.
         const retryable = !externalDeliveryStarted;

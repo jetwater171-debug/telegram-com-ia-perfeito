@@ -1618,6 +1618,7 @@ const callAiGatewayJson = async <T,>(options: {
     mediaPart?: any;
     orchestrationTier?: AiIntelligenceTier;
     routingKey?: string;
+    excludedModels?: string[];
 }): Promise<{ data: T; gateway: AiGatewayConfig; attempts: string[] }> => {
     const routeStartedAt = Date.now();
     const latencyBudget = resolveGatewayLatencyBudget({ role: options.role, schemaName: options.schemaName });
@@ -1641,6 +1642,7 @@ const callAiGatewayJson = async <T,>(options: {
             || options.schemaName === 'responseSchema'
             || options.schemaName === 'operationalReply',
     })
+        .filter((gateway) => !(options.excludedModels || []).includes(gateway.model))
         .filter((gateway) => !providerOnly || gateway.provider === providerOnly)
         .filter((gateway) => !hasImage
             || gateway.provider === 'gemini'
@@ -1974,6 +1976,79 @@ const callAiGatewayJson = async <T,>(options: {
     }
 
     throw new Error(`Todos os gateways de IA falharam (${options.role}): ${attempts.join(" | ")}`);
+};
+
+export const sendEmergencyAiReply = async (
+    sessionId: string,
+    userMessage: string,
+    currentStats: LeadStats,
+): Promise<AIResponse> => {
+    const leadText = extractLeadTextFromPrompt(userMessage).slice(0, 1_500);
+    let result: Awaited<ReturnType<typeof callAiGatewayJson<{ messages: string[] }>>> | null = null;
+    try {
+        const settings = await getAiRuntimeSettings();
+        result = await callAiGatewayJson<{ messages: string[] }>({
+            settings,
+            role: 'draft',
+            routingKey: `${sessionId}:emergency-reply`,
+            orchestrationTier: 'starter',
+            schemaName: 'operationalReply',
+            // O V4 Pro recusou o prompt grande por quota. Na recuperacao curta,
+            // priorizamos o V4 Flash e ainda mantemos Kimi/Nemotron no pool.
+            excludedModels: ['deepseek-ai/deepseek-v4-pro-0813'],
+            systemInstruction: `Voce e a Lari, uma jovem brasileira conversando naturalmente no Telegram.
+Responda diretamente ao que o lead acabou de dizer, em portugues informal, com 1 ou 2 mensagens curtas.
+Nao mencione sistema, erro, IA ou indisponibilidade. Nao invente preco, pagamento, compra, envio de midia ou audio.
+Retorne somente JSON no formato {"messages":["texto"]}.`,
+            responseSchemaConfig: {
+                type: 'OBJECT',
+                properties: { messages: { type: 'ARRAY', items: { type: 'STRING' } } },
+                required: ['messages'],
+            },
+            history: [],
+            text: leadText || 'Oi',
+        });
+    } catch (error: any) {
+        console.error('[AI Gateway] Todos os provedores falharam na recuperacao curta:', error?.message || error);
+    }
+    const messages = result
+        ? normalizeAiMessageList(result.data.messages)
+        : [/[?]/.test(leadText)
+            ? 'tô aqui sim 😅 me explica só mais um pouquinho pra eu te responder direito'
+            : 'oii, tô aqui 😊 me conta'];
+    const emergencyGateway = result?.gateway;
+    return {
+        internal_thought: emergencyGateway
+            ? `RECUPERACAO DE DISPONIBILIDADE via ${emergencyGateway.label}`
+            : 'RECUPERACAO LOCAL DE ULTIMO RECURSO',
+        lead_classification: 'desconhecido',
+        lead_stats: currentStats,
+        extracted_user_name: null,
+        audio_transcription: null,
+        current_state: 'CONNECTION',
+        messages,
+        action: 'none',
+        payment_details: null,
+        preview_id: null,
+        preview_request: null,
+        lead_memory_patch: null,
+        recommended_message_count: messages.length,
+        max_chars_per_message: Math.max(45, ...messages.map((message) => message.length)),
+        next_best_action: 'TALK',
+        decision_confidence: 0.35,
+        offer_id: null,
+        memory_updates: [],
+        ai_debug: {
+            timestamp: new Date().toISOString(),
+            model: emergencyGateway?.model || 'local-last-resort',
+            provider: emergencyGateway?.provider || 'local',
+            tier: 'emergency',
+            system_prompt: 'emergency_availability_reply',
+            user_prompt: leadText,
+            raw_response: { messages },
+            final_response: { messages, action: 'none' },
+        },
+    };
 };
 
 export const extractLeadTextFromPrompt = (message: string) => {
