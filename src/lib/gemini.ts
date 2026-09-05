@@ -1965,6 +1965,32 @@ const callAiGatewayJson = async <T,>(options: {
     throw new Error(`Todos os gateways de IA falharam (${options.role}): ${attempts.join(" | ")}`);
 };
 
+export const probeNvidiaRouterHealth = async () => {
+    const settings = await getAiRuntimeSettings();
+    const result = await callAiGatewayJson<{ messages: string[] }>({
+        settings,
+        role: 'draft',
+        providerOnly: 'nvidia',
+        routingKey: `nvidia-production-probe:${Date.now()}`,
+        orchestrationTier: 'starter',
+        schemaName: 'nvidiaHealthProbe',
+        systemInstruction: 'Teste interno de saúde. Responda somente o JSON solicitado.',
+        responseSchemaConfig: {
+            type: 'OBJECT',
+            properties: { messages: { type: 'ARRAY', items: { type: 'STRING' } } },
+            required: ['messages'],
+        },
+        history: [],
+        text: 'Responda OK.',
+    });
+    return {
+        provider: result.gateway.provider,
+        model: result.gateway.model,
+        messageCount: normalizeAiMessageList(result.data.messages).length,
+        attempts: result.attempts,
+    };
+};
+
 export const extractLeadTextFromPrompt = (message: string) => {
     const raw = String(message || '').trim();
     const grouped = raw.match(/\[MENSAGENS DO LEAD NO MESMO TURNO\]\s*([\s\S]*?)(?:\n\s*\[REGRA DE CONVERSA\]|$)/i)?.[1];
