@@ -67,6 +67,34 @@ export async function GET(req: NextRequest) {
         if (!error) checks.dbConnection = true;
 
         const { data: token } = await supabase.from('bot_settings').select('value').eq('key', 'telegram_bot_token').single();
+        const [{ data: aiSettings }, { data: recentAiEvents, error: aiEventsError }] = await Promise.all([
+            supabase.from('bot_settings').select('key,value').in('key', [
+                'bai_api_key', 'gemini_api_key', 'nvidia_api_key', 'ai_model_order',
+            ]),
+            supabase.from('ai_gateway_usage_events')
+                .select('occurred_at,provider,model,status,http_status,error_kind,cooldown_until')
+                .order('occurred_at', { ascending: false })
+                .limit(8),
+        ]);
+        const aiMap = Object.fromEntries((aiSettings || []).map((row: any) => [row.key, row.value || '']));
+        const routerDiagnostic = {
+            order: String(aiMap.ai_model_order || process.env.AI_MODEL_ORDER || 'bai,gemini,nvidia'),
+            configured: {
+                bai: Boolean(String(aiMap.bai_api_key || process.env.BAI_API_KEY || '').trim()),
+                gemini: Boolean(String(aiMap.gemini_api_key || process.env.GEMINI_API_KEY || '').trim()),
+                nvidia: Boolean(String(aiMap.nvidia_api_key || process.env.NVIDIA_API_KEY || '').trim()),
+            },
+            telemetryReady: !aiEventsError,
+            recent: (recentAiEvents || []).map((event: any) => ({
+                at: event.occurred_at,
+                provider: event.provider,
+                model: event.model,
+                status: event.status,
+                httpStatus: event.http_status,
+                errorKind: event.error_kind,
+                cooldownUntil: event.cooldown_until,
+            })),
+        };
         let webhookInfo = null;
 
         if (token && token.value) {
@@ -80,7 +108,7 @@ export async function GET(req: NextRequest) {
             }
         }
 
-        return NextResponse.json({ status: 'Online', checks, webhookInfo }, { status: 200 });
+        return NextResponse.json({ status: 'Online', checks, webhookInfo, routerDiagnostic }, { status: 200 });
     } catch (e: any) {
         return NextResponse.json({ status: 'Error', error: e.message, checks }, { status: 500 });
     }
