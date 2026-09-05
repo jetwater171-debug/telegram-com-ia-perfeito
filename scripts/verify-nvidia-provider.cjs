@@ -19,7 +19,7 @@ for (const model of [
     'nvidia/nemotron-3.5-lightning-30b-a3b',
 ]) assert.match(models, new RegExp(model.replace(/[.]/g, '\\.'), 'i'));
 assert.match(gateway, /NVIDIA_TEXT_MODEL_ORDER/);
-assert.match(gateway, /NVIDIA_ALLOW_TRIAL_ENDPOINT_IN_PRODUCTION/);
+assert.doesNotMatch(gateway, /NVIDIA_ALLOW_TRIAL_ENDPOINT_IN_PRODUCTION/);
 assert.match(gateway, /body\.chat_template_kwargs/);
 assert.match(gateway, /body\.reasoning_budget/);
 assert.match(router, /normalizedProvider === 'nvidia'/);
@@ -29,4 +29,4 @@ assert.match(page, /https:\/\/build\.nvidia\.com\/settings\/api-keys/);
 assert.match(page, /api\/admin\/ai-credentials/);
 assert.match(page, /accountId/);
 
-console.log('NVIDIA_PROVIDER_OK exact_models=4 gateway=1 router=1 production_guard=1 reasoning_contracts=1 autosave=1 connection_test=1 key_link=1');
+console.log('NVIDIA_PROVIDER_OK exact_models=4 gateway=1 router=1 hosted_endpoint_production=1 reasoning_contracts=1 autosave=1 connection_test=1 key_link=1');

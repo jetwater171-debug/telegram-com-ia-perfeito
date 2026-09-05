@@ -989,10 +989,6 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
                 if (!model) continue;
                 const effectiveBaseUrl = String(credential.baseUrl || baseUrl).replace(/\/$/, '');
                 const modelCost = currentGatewayModelCost(provider, model);
-                const hostedNvidiaTrial = provider === 'nvidia' && effectiveBaseUrl === 'https://integrate.api.nvidia.com/v1';
-                if (hostedNvidiaTrial && process.env.NODE_ENV === 'production' && process.env.NVIDIA_ALLOW_TRIAL_ENDPOINT_IN_PRODUCTION !== 'true') {
-                    continue;
-                }
                 gateways.push({
                     provider,
                     apiKey: credential.apiKey,
