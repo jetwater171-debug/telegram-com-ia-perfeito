@@ -4,7 +4,6 @@ import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { approveChatJoinRequest } from '@/lib/telegram';
 import { appendLeadEventSafe, markAdultVerificationSafe } from '@/lib/brain/eventStore';
 import { triggerProcessMessageWithRetry } from '@/lib/processMessageRetry';
-import { probeAiRouterHealth } from '@/lib/gemini';
 import {
     hasTrustedAdultVerification,
     isPresellAdultVerificationGuaranteed,
@@ -109,17 +108,7 @@ export async function GET(req: NextRequest) {
             }
         }
 
-        let activeProbe: Record<string, unknown> | null = null;
-        const requestedProbe = req.nextUrl.searchParams.get('probe');
-        if (requestedProbe && requestedProbe === process.env.VERCEL_GIT_COMMIT_SHA) {
-            try {
-                activeProbe = { ok: true, ...await probeAiRouterHealth() };
-            } catch (error: any) {
-                activeProbe = { ok: false, error: String(error?.message || error).slice(0, 1600) };
-            }
-        }
-
-        return NextResponse.json({ status: 'Online', checks, webhookInfo, routerDiagnostic, activeProbe }, { status: 200 });
+        return NextResponse.json({ status: 'Online', checks, webhookInfo, routerDiagnostic }, { status: 200 });
     } catch (e: any) {
         return NextResponse.json({ status: 'Error', error: e.message, checks }, { status: 500 });
     }

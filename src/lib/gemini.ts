@@ -1969,28 +1969,6 @@ const callAiGatewayJson = async <T,>(options: {
     throw new Error(`Todos os gateways de IA falharam (${options.role}): ${attempts.join(" | ")}`);
 };
 
-export const probeAiRouterHealth = async () => {
-    const settings = await getAiRuntimeSettings();
-    const result = await callAiGatewayJson<AIResponse>({
-        settings,
-        role: 'draft',
-        routingKey: `production-probe:${Date.now()}`,
-        orchestrationTier: 'starter',
-        schemaName: 'responseSchema',
-        systemInstruction: 'Teste interno de saúde do contrato completo da Lari. Responda ao cumprimento de forma curta, natural e segura. Preencha todos os campos obrigatórios do JSON sem inventar venda, pagamento ou mídia.',
-        responseSchemaConfig: responseSchema as any,
-        history: [],
-        text: 'Oi',
-    });
-    return {
-        provider: result.gateway.provider,
-        model: result.gateway.model,
-        attempts: result.attempts,
-        messageCount: normalizeAiMessageList(result.data?.messages).length,
-        action: result.data?.action || null,
-    };
-};
-
 export const extractLeadTextFromPrompt = (message: string) => {
     const raw = String(message || '').trim();
     const grouped = raw.match(/\[MENSAGENS DO LEAD NO MESMO TURNO\]\s*([\s\S]*?)(?:\n\s*\[REGRA DE CONVERSA\]|$)/i)?.[1];
