@@ -12,6 +12,10 @@ export type GatewayRatePolicy = {
 
 export type GatewayRouteCandidate<T = unknown> = {
     key: string;
+    // Identidade de capacidade: chaves da mesma conta/projeto usam este bucket.
+    // A identidade de health continua sendo key, para uma chave ruim não derrubar
+    // as demais da mesma conta.
+    capacityKey?: string;
     provider: string;
     model: string;
     priority?: number;
@@ -185,11 +189,12 @@ const sumTokens = (events: UsageEvent[]) => events.reduce((sum, event) => sum + 
 const sleep = (durationMs: number) => new Promise((resolve) => setTimeout(resolve, durationMs));
 
 export class AdaptiveGatewayRouter {
-    private states = new Map<string, GatewayRuntimeState>();
+    private healthStates = new Map<string, GatewayRuntimeState>();
+    private capacityStates = new Map<string, GatewayRuntimeState>();
     private sequence = 0;
 
-    private stateFor(key: string): GatewayRuntimeState {
-        const existing = this.states.get(key);
+    private stateFor(states: Map<string, GatewayRuntimeState>, key: string): GatewayRuntimeState {
+        const existing = states.get(key);
         if (existing) return existing;
         const created: GatewayRuntimeState = {
             inFlight: 0,
@@ -201,38 +206,57 @@ export class AdaptiveGatewayRouter {
             cooldownUntil: 0,
             ewmaLatencyMs: 0,
         };
-        this.states.set(key, created);
+        states.set(key, created);
         return created;
     }
 
-    private prune(state: GatewayRuntimeState, now: number) {
+    private isSamePacificDay(at: number, now: number) {
+        const formatter = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+        });
+        return formatter.format(new Date(at)) === formatter.format(new Date(now));
+    }
+
+    private prune(state: GatewayRuntimeState, provider: string, now: number) {
         state.minute = state.minute.filter((event) => now - event.at < MINUTE_MS);
-        state.day = state.day.filter((event) => now - event.at < DAY_MS);
+        state.day = provider === 'gemini'
+            ? state.day.filter((event) => this.isSamePacificDay(event.at, now))
+            : state.day.filter((event) => now - event.at < DAY_MS);
     }
 
     private availability<T>(candidate: GatewayRouteCandidate<T>, estimatedTokens: number, now: number) {
-        const state = this.stateFor(candidate.key);
-        this.prune(state, now);
+        const health = this.stateFor(this.healthStates, candidate.key);
+        const capacityKey = candidate.capacityKey || candidate.key;
+        const capacity = this.stateFor(this.capacityStates, capacityKey);
+        this.prune(capacity, candidate.provider, now);
         const waits: number[] = [];
-        if (state.cooldownUntil > now) waits.push(state.cooldownUntil - now);
-        if (state.inFlight >= candidate.policy.maxConcurrency) waits.push(75);
-        if (state.minute.length >= candidate.policy.rpm) waits.push(Math.max(1, MINUTE_MS - (now - state.minute[0].at)));
-        if (sumTokens(state.minute) + estimatedTokens > candidate.policy.tpm && state.minute.length > 0) {
-            waits.push(Math.max(1, MINUTE_MS - (now - state.minute[0].at)));
+        if (health.cooldownUntil > now) waits.push(health.cooldownUntil - now);
+        if (capacity.cooldownUntil > now) waits.push(capacity.cooldownUntil - now);
+        if (capacity.inFlight >= candidate.policy.maxConcurrency) waits.push(75);
+        if (capacity.minute.length >= candidate.policy.rpm) waits.push(Math.max(1, MINUTE_MS - (now - capacity.minute[0].at)));
+        if (sumTokens(capacity.minute) + estimatedTokens > candidate.policy.tpm && capacity.minute.length > 0) {
+            waits.push(Math.max(1, MINUTE_MS - (now - capacity.minute[0].at)));
         }
-        if (state.day.length >= candidate.policy.rpd) waits.push(Math.max(1, DAY_MS - (now - state.day[0].at)));
-        if (sumTokens(state.day) + estimatedTokens > candidate.policy.tpd && state.day.length > 0) {
-            waits.push(Math.max(1, DAY_MS - (now - state.day[0].at)));
+        if (capacity.day.length >= candidate.policy.rpd) waits.push(Math.max(1, DAY_MS - (now - capacity.day[0].at)));
+        if (sumTokens(capacity.day) + estimatedTokens > candidate.policy.tpd && capacity.day.length > 0) {
+            waits.push(Math.max(1, DAY_MS - (now - capacity.day[0].at)));
         }
-        return { state, waitMs: waits.length > 0 ? Math.max(...waits) : 0 };
+        return { health, capacity, capacityKey, waitMs: waits.length > 0 ? Math.max(...waits) : 0 };
     }
 
-    private score<T>(candidate: GatewayRouteCandidate<T>, state: GatewayRuntimeState, routingKey: string) {
-        const total = state.successes + state.failures;
-        const successRatio = total > 0 ? (state.successes + 2) / (total + 3) : 0.92;
-        const latencyFactor = state.ewmaLatencyMs > 0 ? Math.max(0.3, Math.min(1.3, 4_000 / state.ewmaLatencyMs)) : 1;
-        const loadFactor = Math.max(0.2, 1 - state.inFlight / Math.max(1, candidate.policy.maxConcurrency));
-        const effectiveWeight = Math.max(0.1, candidate.weight * successRatio * latencyFactor * loadFactor);
+    private score<T>(candidate: GatewayRouteCandidate<T>, health: GatewayRuntimeState, capacity: GatewayRuntimeState, routingKey: string) {
+        const total = health.successes + health.failures;
+        const successRatio = total > 0 ? (health.successes + 2) / (total + 3) : 0.92;
+        const latencyFactor = health.ewmaLatencyMs > 0 ? Math.max(0.3, Math.min(1.3, 4_000 / health.ewmaLatencyMs)) : 1;
+        const loadFactor = Math.max(0.2, 1 - capacity.inFlight / Math.max(1, candidate.policy.maxConcurrency));
+        const remainingFactor = Math.max(0.05, Math.min(
+            1,
+            (candidate.policy.rpm - capacity.minute.length) / Math.max(1, candidate.policy.rpm),
+            (candidate.policy.tpm - sumTokens(capacity.minute)) / Math.max(1, candidate.policy.tpm),
+            (candidate.policy.rpd - capacity.day.length) / Math.max(1, candidate.policy.rpd),
+            (candidate.policy.tpd - sumTokens(capacity.day)) / Math.max(1, candidate.policy.tpd),
+        ));
+        const effectiveWeight = Math.max(0.1, candidate.weight * successRatio * latencyFactor * loadFactor * remainingFactor);
         return Math.pow(stableUnit(`${routingKey}:${candidate.key}`), 1 / effectiveWeight);
     }
 
@@ -255,20 +279,20 @@ export class AdaptiveGatewayRouter {
                 : 0;
             const available = ready
                 .filter((item) => Number(item.candidate.priority ?? 0) === bestPriority)
-                .sort((left, right) => this.score(right.candidate, right.state, options.routingKey) - this.score(left.candidate, left.state, options.routingKey));
+                .sort((left, right) => this.score(right.candidate, right.health, right.capacity, options.routingKey) - this.score(left.candidate, left.health, left.capacity, options.routingKey));
 
             if (available.length > 0) {
                 const selected = available[0];
                 const event: UsageEvent = { id: ++this.sequence, at: now, tokens: options.estimatedTokens };
-                selected.state.inFlight += 1;
-                selected.state.minute.push(event);
-                selected.state.day.push(event);
+                selected.capacity.inFlight += 1;
+                selected.capacity.minute.push(event);
+                selected.capacity.day.push(event);
                 let settled = false;
 
                 const release = () => {
                     if (settled) return false;
                     settled = true;
-                    selected.state.inFlight = Math.max(0, selected.state.inFlight - 1);
+                    selected.capacity.inFlight = Math.max(0, selected.capacity.inFlight - 1);
                     return true;
                 };
                 const reconcile = (actualTokens?: number) => {
@@ -285,29 +309,31 @@ export class AdaptiveGatewayRouter {
                             at: Date.now(),
                             tokens: Math.max(1, Math.floor(retryTokens)),
                         };
-                        selected.state.minute.push(retryEvent);
-                        selected.state.day.push(retryEvent);
+                        selected.capacity.minute.push(retryEvent);
+                        selected.capacity.day.push(retryEvent);
                     },
                     succeed: (durationMs, actualTokens) => {
                         if (!release()) return;
                         reconcile(actualTokens);
-                        selected.state.successes += 1;
-                        selected.state.consecutiveFailures = 0;
-                        selected.state.cooldownUntil = 0;
-                        selected.state.ewmaLatencyMs = selected.state.ewmaLatencyMs > 0
-                            ? selected.state.ewmaLatencyMs * 0.72 + Math.max(1, durationMs) * 0.28
+                        selected.health.successes += 1;
+                        selected.health.consecutiveFailures = 0;
+                        selected.health.cooldownUntil = 0;
+                        selected.health.ewmaLatencyMs = selected.health.ewmaLatencyMs > 0
+                            ? selected.health.ewmaLatencyMs * 0.72 + Math.max(1, durationMs) * 0.28
                             : Math.max(1, durationMs);
                     },
                     fail: (error, durationMs, retryAfterMs) => {
                         const kind = classifyGatewayFailure(error);
                         if (!release()) return kind;
-                        selected.state.failures += 1;
-                        selected.state.consecutiveFailures = Math.min(10, selected.state.consecutiveFailures + 1);
-                        selected.state.lastFailureKind = kind;
-                        selected.state.ewmaLatencyMs = selected.state.ewmaLatencyMs > 0
-                            ? selected.state.ewmaLatencyMs * 0.72 + Math.max(1, durationMs) * 0.28
-                            : Math.max(1, durationMs);
-                        const exponent = Math.max(0, selected.state.consecutiveFailures - 1);
+                        if (kind !== 'quota') {
+                            selected.health.failures += 1;
+                            selected.health.consecutiveFailures = Math.min(10, selected.health.consecutiveFailures + 1);
+                            selected.health.lastFailureKind = kind;
+                            selected.health.ewmaLatencyMs = selected.health.ewmaLatencyMs > 0
+                                ? selected.health.ewmaLatencyMs * 0.72 + Math.max(1, durationMs) * 0.28
+                                : Math.max(1, durationMs);
+                        }
+                        const exponent = Math.max(0, (kind === 'quota' ? 0 : selected.health.consecutiveFailures - 1));
                         const defaultDelay = kind === 'auth'
                             ? 30 * 60_000
                             : kind === 'quota'
@@ -317,13 +343,19 @@ export class AdaptiveGatewayRouter {
                                     : kind === 'format'
                                         ? Math.min(20_000, 1_000 * 2 ** exponent)
                                         : Math.min(30_000, 1_500 * 2 ** exponent);
-                        selected.state.cooldownUntil = Date.now() + Math.max(defaultDelay, Number(retryAfterMs || 0));
+                        const cooldownUntil = Date.now() + Math.max(defaultDelay, Number(retryAfterMs || 0));
+                        if (kind === 'quota') {
+                            selected.capacity.cooldownUntil = Math.max(selected.capacity.cooldownUntil, cooldownUntil);
+                            selected.capacity.lastFailureKind = kind;
+                        } else {
+                            selected.health.cooldownUntil = cooldownUntil;
+                        }
                         return kind;
                     },
                     cancelBeforeDispatch: () => {
                         if (!release()) return;
-                        selected.state.minute = selected.state.minute.filter((item) => item.id !== event.id);
-                        selected.state.day = selected.state.day.filter((item) => item.id !== event.id);
+                        selected.capacity.minute = selected.capacity.minute.filter((item) => item.id !== event.id);
+                        selected.capacity.day = selected.capacity.day.filter((item) => item.id !== event.id);
                     },
                 };
             }
@@ -338,22 +370,24 @@ export class AdaptiveGatewayRouter {
         }
     }
 
-    defer(key: string, retryAfterMs: number, kind: GatewayFailureKind = 'quota') {
-        const state = this.stateFor(key);
+    defer(key: string, retryAfterMs: number, kind: GatewayFailureKind = 'quota', scope: 'health' | 'capacity' = 'health') {
+        const state = this.stateFor(scope === 'capacity' ? this.capacityStates : this.healthStates, key);
         state.cooldownUntil = Math.max(state.cooldownUntil, Date.now() + Math.max(1, retryAfterMs));
         state.lastFailureKind = kind;
     }
 
     snapshot(now = Date.now()) {
-        return Array.from(this.states.entries()).map(([key, state]) => {
-            this.prune(state, now);
+        const snapshot = (states: Map<string, GatewayRuntimeState>, scope: 'credential' | 'quota_group', capacityForHealth = false) => Array.from(states.entries()).map(([key, state]) => {
+            const capacity = capacityForHealth ? this.capacityStates.get(key) : state;
+            this.prune(capacity || state, scope === 'quota_group' && key.startsWith('gemini:') ? 'gemini' : '', now);
             return {
                 key,
-                inFlight: state.inFlight,
-                minuteRequests: state.minute.length,
-                minuteTokens: sumTokens(state.minute),
-                dayRequests: state.day.length,
-                dayTokens: sumTokens(state.day),
+                scope,
+                inFlight: capacity?.inFlight || 0,
+                minuteRequests: capacity?.minute.length || 0,
+                minuteTokens: sumTokens(capacity?.minute || []),
+                dayRequests: capacity?.day.length || 0,
+                dayTokens: sumTokens(capacity?.day || []),
                 successes: state.successes,
                 failures: state.failures,
                 cooldownMs: Math.max(0, state.cooldownUntil - now),
@@ -361,6 +395,9 @@ export class AdaptiveGatewayRouter {
                 lastFailureKind: state.lastFailureKind || null,
             };
         });
+        const health = snapshot(this.healthStates, 'credential', true);
+        const healthKeys = new Set(health.map((item) => item.key));
+        return [...health, ...snapshot(this.capacityStates, 'quota_group').filter((item) => !healthKeys.has(item.key))];
     }
 }
 

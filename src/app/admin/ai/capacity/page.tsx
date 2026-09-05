@@ -1,151 +1,33 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-type LimitName = "rpm" | "tpm" | "rpd" | "tpd";
-
-type CapacityRow = {
-    provider: string;
-    model: string;
-    credentialId: string;
-    credentialLabel: string;
-    projectId: string | null;
-    quotaGroupId: string;
-    used: Record<LimitName, number> & { inputTokens: number; outputTokens: number; reasoningTokens: number; contextTokens: number };
-    limits: Record<LimitName, number | null> & { source?: string };
-    remaining: Record<LimitName, number | null>;
-    successes: number;
-    errors: number;
-    errors429: number;
-    errors5xx: number;
-    cooldownUntil: string | null;
-    nextMinuteResetEstimate: string | null;
-    nextDayReset: string | null;
-    estimatedCostUsd: number;
-    lastEventAt: string | null;
-};
-
-type Credential = { id: string; provider: string; label: string; projectId: string | null; quotaGroupId: string; model: string | null };
-type CapacityResponse = { ready: boolean; migrationMissing: boolean; error: string | null; generatedAt: string; credentials: Credential[]; rows: CapacityRow[] };
-
-const AUTO_REFRESH_MS = 60_000;
-const LIMIT_LABELS: Record<LimitName, string> = { rpm: "RPM", tpm: "TPM", rpd: "RPD", tpd: "TPD" };
-
-const number = (value: number | null | undefined) => value == null ? "não publicado" : value.toLocaleString("pt-BR");
-const tokens = (value: number | null | undefined) => Number(value || 0).toLocaleString("pt-BR");
-const dateTime = (value: string | null | undefined) => value ? new Date(value).toLocaleString("pt-BR") : "—";
-const money = (value: number | null | undefined) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD" }).format(Number(value || 0));
-
-function Metric({ label, used, limit, remaining }: { label: string; used: number; limit: number | null; remaining: number | null }) {
-    return <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
-        <p className="mt-2 text-sm text-slate-100"><strong>{tokens(used)}</strong> usados</p>
-        <p className="mt-1 text-xs text-slate-400">Limite: {number(limit)}</p>
-        <p className={`mt-1 text-xs ${remaining == null ? "text-slate-500" : remaining === 0 ? "text-rose-300" : "text-emerald-300"}`}>Restante: {number(remaining)}</p>
-    </div>;
-}
+type Limit = "rpm" | "tpm" | "rpd" | "tpd";
+type Row = { provider: "bai" | "gemini" | "nvidia"; model: string; credentialId: string; credentialLabel: string; projectId: string | null; quotaGroupId: string; used: Record<Limit, number>; limits: Record<Limit, number | null>; remaining: Record<Limit, number | null>; successes: number; errors: number; errors429: number; errors5xx: number; cooldownUntil: string | null; nextMinuteResetEstimate: string | null; nextDayReset: string | null; estimatedCostUsd: number; lastEventAt: string | null };
+type Data = { ready: boolean; error: string | null; generatedAt: string; rows: Row[] };
+const providers = new Set(["bai", "gemini", "nvidia"]);
+const fmt = (value: number | null | undefined) => value == null ? "não informado" : Number(value).toLocaleString("pt-BR");
+const time = (value: string | null) => value ? new Date(value).toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }) : "—";
 
 export default function AiCapacityPage() {
-    const [data, setData] = useState<CapacityResponse | null>(null);
+    const [data, setData] = useState<Data | null>(null);
     const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [autoRefresh, setAutoRefresh] = useState(true);
-
-    const load = useCallback(async (manual = false) => {
-        if (manual) setRefreshing(true);
-        else setLoading(true);
-        try {
-            const response = await fetch("/api/admin/ai-capacity", { cache: "no-store" });
-            const payload = await response.json();
-            if (!response.ok) throw new Error(payload?.error || "Não foi possível carregar a capacidade de IA.");
-            setData(payload);
-            setError(null);
-        } catch (cause: any) {
-            setError(cause?.message || "Não foi possível carregar a capacidade de IA.");
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
+    const [error, setError] = useState("");
+    const load = useCallback(async () => {
+        try { const response = await fetch("/api/admin/ai-capacity", { cache: "no-store" }); const payload = await response.json(); if (!response.ok) throw new Error(payload?.error || "Não foi possível carregar a capacidade."); setData({ ...payload, rows: (payload.rows || []).filter((row: Row) => providers.has(row.provider)) }); setError(""); } catch (cause: any) { setError(cause?.message || "Não foi possível carregar a capacidade."); } finally { setLoading(false); }
     }, []);
-
     useEffect(() => { void load(); }, [load]);
-    useEffect(() => {
-        if (!autoRefresh) return;
-        const timer = window.setInterval(() => void load(true), AUTO_REFRESH_MS);
-        return () => window.clearInterval(timer);
-    }, [autoRefresh, load]);
-
-    const summary = useMemo(() => {
-        const rows = data?.rows || [];
-        return {
-            providers: new Set(rows.map((row) => row.provider)).size,
-            projects: new Set((data?.credentials || []).map((credential) => credential.projectId).filter(Boolean)).size,
-            credentials: data?.credentials.length || 0,
-            errors429: rows.reduce((total, row) => total + Number(row.errors429 || 0), 0),
-            errors5xx: rows.reduce((total, row) => total + Number(row.errors5xx || 0), 0),
-        };
-    }, [data]);
-
-    return <div className="min-h-screen bg-[#070b16] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
-        <main className="mx-auto max-w-7xl space-y-6">
-            <header className="flex flex-col justify-between gap-4 rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900 to-[#0d1729] p-6 sm:flex-row sm:items-start">
-                <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">IA · Capacidade operacional</p>
-                    <h1 className="mt-2 text-2xl font-bold tracking-tight">Limites, consumo e saúde do router</h1>
-                    <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">Dados reais coletados pelo gateway. Quando o provedor não publica um limite, a tela mostra isso em vez de inventar capacidade.</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-3">
-                    <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-400"><input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} className="h-4 w-4 accent-cyan-300" /> Atualizar a cada minuto</label>
-                    <button type="button" onClick={() => void load(true)} disabled={refreshing} className="rounded-xl border border-cyan-300/30 bg-cyan-300/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 hover:bg-cyan-300/15 disabled:opacity-50">{refreshing ? "Atualizando..." : "Atualizar agora"}</button>
-                </div>
-            </header>
-
-            {error && <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-100">{error}</div>}
-            {data && !data.ready && <div className="rounded-xl border border-amber-300/30 bg-amber-300/[0.08] p-4 text-sm text-amber-100"><strong>Migração pendente.</strong> {data.error || "A persistência de telemetria ainda não está pronta; os números podem estar incompletos."}</div>}
-
-            <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                <SummaryCard value={String(summary.providers)} label="Provedores ativos" />
-                <SummaryCard value={String(summary.credentials)} label="Credenciais cadastradas" />
-                <SummaryCard value={String(summary.projects)} label="Projetos autorizados" />
-                <SummaryCard value={tokens(summary.errors429)} label="Erros 429 hoje" tone="amber" />
-                <SummaryCard value={tokens(summary.errors5xx)} label="Erros 5xx hoje" tone="rose" />
-            </section>
-
-            {loading && !data ? <div className="admin-card p-8 text-center text-sm text-slate-400">Carregando capacidade do router...</div> : null}
-            {data?.rows.length === 0 && !loading ? <div className="admin-card p-8 text-center text-sm text-slate-400">Ainda não há chamadas registradas. As credenciais aparecem aqui assim que o router receber tráfego.</div> : null}
-
-            <section className="space-y-4">
-                {data?.rows.map((row, index) => <article key={`${row.provider}-${row.model}-${row.credentialId}-${index}`} className="admin-card overflow-hidden">
-                    <div className="flex flex-col justify-between gap-3 border-b border-white/10 bg-black/15 p-5 md:flex-row md:items-start">
-                        <div>
-                            <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-cyan-300/10 px-2.5 py-1 text-xs font-bold uppercase text-cyan-100">{row.provider}</span><strong className="text-base">{row.model}</strong></div>
-                            <p className="mt-2 text-xs text-slate-400">Credencial: {row.credentialLabel} · Projeto: {row.projectId || "não informado"} · Grupo de quota: {row.quotaGroupId || "—"}</p>
-                        </div>
-                        <div className="text-xs text-slate-500">Último evento: {dateTime(row.lastEventAt)}</div>
-                    </div>
-                    <div className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
-                        {(Object.keys(LIMIT_LABELS) as LimitName[]).map((key) => <Metric key={key} label={LIMIT_LABELS[key]} used={Number(row.used[key] || 0)} limit={row.limits[key]} remaining={row.remaining[key]} />)}
-                    </div>
-                    <div className="grid gap-3 border-t border-white/10 bg-black/10 p-5 md:grid-cols-2 xl:grid-cols-4">
-                        <Detail title="Tokens" values={[`Entrada: ${tokens(row.used.inputTokens)}`, `Saída: ${tokens(row.used.outputTokens)}`, `Contexto: ${tokens(row.used.contextTokens)}`, `Raciocínio: ${tokens(row.used.reasoningTokens)}`]} />
-                        <Detail title="Saúde" values={[`Sucessos: ${tokens(row.successes)}`, `Erros: ${tokens(row.errors)}`, `429: ${tokens(row.errors429)}`, `5xx: ${tokens(row.errors5xx)}`]} />
-                        <Detail title="Janelas e pausa" values={[`Cooldown: ${dateTime(row.cooldownUntil)}`, `RPM: ${dateTime(row.nextMinuteResetEstimate)}`, `Diária: ${dateTime(row.nextDayReset)}`]} />
-                        <Detail title="Custo e origem" values={[`Estimativa hoje: ${money(row.estimatedCostUsd)}`, `Limites: ${row.limits.source === "configured" ? "configurados" : "não publicados"}`, `Status: ${row.cooldownUntil && new Date(row.cooldownUntil) > new Date() ? "em cooldown" : "disponível"}`]} />
-                    </div>
-                </article>)}
-            </section>
-
-            {data && <p className="pb-6 text-center text-xs text-slate-600">Atualizado em {dateTime(data.generatedAt)} · {data.migrationMissing ? "migração de telemetria pendente" : "telemetria persistente ativa"}</p>}
-        </main>
-    </div>;
+    const totals = useMemo(() => ({ requests: data?.rows.reduce((sum, row) => sum + row.used.rpm, 0) || 0, errors: data?.rows.reduce((sum, row) => sum + row.errors, 0) || 0, cooling: data?.rows.filter((row) => row.cooldownUntil && new Date(row.cooldownUntil) > new Date()).length || 0 }), [data]);
+    return <div className="min-h-screen text-slate-100"><main className="mx-auto w-full max-w-7xl space-y-5 px-4 py-6 lg:px-6">
+        <header className="flex flex-col gap-4 rounded-2xl border border-white/10 bg-white/[.035] p-5 sm:flex-row sm:items-end sm:justify-between"><div><p className="admin-eyebrow">Central de IA</p><h1 className="admin-page-title">Capacidade ao vivo</h1><p className="admin-page-subtitle mt-2">Só B.AI, Gemini e NVIDIA. Veja quanto cada rota já usou e quando o router precisa esperar.</p></div><div className="flex gap-2"><Link href="/admin/ai" className="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold hover:bg-white/[.06]">Voltar para chaves</Link><button onClick={() => void load()} className="rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950">Atualizar</button></div></header>
+        {error && <div className="rounded-xl border border-rose-300/25 bg-rose-300/[.08] p-4 text-sm text-rose-100">{error}</div>}
+        {data && !data.ready && <div className="rounded-xl border border-amber-300/25 bg-amber-300/[.08] p-4 text-sm text-amber-100">A telemetria persistente ainda não está pronta: {data.error || "os números podem estar incompletos."}</div>}
+        <section className="grid gap-3 sm:grid-cols-3"><Stat label="Requisições neste minuto" value={fmt(totals.requests)} /><Stat label="Rotas em pausa" value={String(totals.cooling)} tone="amber" /><Stat label="Erros registrados" value={fmt(totals.errors)} tone="rose" /></section>
+        {loading ? <p className="admin-card p-8 text-center text-sm text-slate-500">Carregando capacidade...</p> : null}
+        {!loading && data?.rows.length === 0 ? <p className="admin-card p-8 text-center text-sm text-slate-500">Ainda não há uso registrado. As rotas aparecem aqui após as primeiras mensagens.</p> : null}
+        <section className="space-y-4">{data?.rows.map((row) => <article key={`${row.credentialId}-${row.model}`} className="overflow-hidden rounded-2xl border border-white/10 bg-white/[.035]"><div className="flex flex-col gap-3 border-b border-white/10 p-5 md:flex-row md:items-start md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-cyan-300/10 px-2 py-1 text-[10px] font-bold uppercase text-cyan-100">{row.provider}</span><h2 className="font-semibold">{row.model}</h2></div><p className="mt-2 text-xs text-slate-500">{row.credentialLabel} · {row.projectId ? `Projeto: ${row.projectId}` : "Conta individual"} · Grupo: {row.quotaGroupId}</p></div><span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${row.cooldownUntil && new Date(row.cooldownUntil) > new Date() ? "bg-amber-300/10 text-amber-100" : "bg-emerald-300/10 text-emerald-100"}`}>{row.cooldownUntil && new Date(row.cooldownUntil) > new Date() ? `Pausada até ${time(row.cooldownUntil)}` : "Disponível"}</span></div><div className="grid gap-2 p-5 sm:grid-cols-2 lg:grid-cols-4">{(["rpm", "tpm", "rpd", "tpd"] as Limit[]).map((limit) => <div key={limit} className="rounded-xl border border-white/10 bg-black/20 p-3"><p className="text-[10px] font-bold uppercase tracking-[.16em] text-slate-500">{limit}</p><p className="mt-2 text-base font-semibold">{fmt(row.used[limit])} <span className="text-xs font-normal text-slate-500">usado</span></p><p className="mt-1 text-xs text-emerald-300">{row.remaining[limit] == null ? "limite não informado" : `${fmt(row.remaining[limit])} restante`}</p><p className="mt-1 text-[11px] text-slate-600">Limite: {fmt(row.limits[limit])}</p></div>)}</div><div className="grid gap-3 border-t border-white/10 bg-black/15 p-5 text-xs text-slate-400 sm:grid-cols-3"><p>Sucessos: <strong className="text-slate-200">{fmt(row.successes)}</strong> · Erros: <strong className="text-rose-200">{fmt(row.errors)}</strong></p><p>429: {fmt(row.errors429)} · 5xx: {fmt(row.errors5xx)}</p><p>Última atividade: {time(row.lastEventAt)}</p></div></article>)}</section>
+        {data && <p className="pb-5 text-center text-xs text-slate-600">Atualizado em {time(data.generatedAt)} · Gemini compartilha quota por projeto.</p>}
+    </main></div>;
 }
-
-function SummaryCard({ value, label, tone = "cyan" }: { value: string; label: string; tone?: "cyan" | "amber" | "rose" }) {
-    const colors = { cyan: "border-cyan-300/15 text-cyan-100", amber: "border-amber-300/15 text-amber-100", rose: "border-rose-300/15 text-rose-100" };
-    return <div className={`admin-card border p-4 ${colors[tone]}`}><strong className="text-2xl">{value}</strong><p className="mt-1 text-xs text-slate-500">{label}</p></div>;
-}
-
-function Detail({ title, values }: { title: string; values: string[] }) {
-    return <div className="rounded-xl border border-white/10 bg-black/20 p-3"><p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{title}</p><div className="mt-2 space-y-1 text-xs leading-5 text-slate-300">{values.map((value) => <p key={value}>{value}</p>)}</div></div>;
-}
+function Stat({ label, value, tone = "cyan" }: { label: string; value: string; tone?: "cyan" | "amber" | "rose" }) { const color = { cyan: "text-cyan-100", amber: "text-amber-100", rose: "text-rose-100" }; return <div className="admin-card p-4"><p className="text-xs text-slate-500">{label}</p><p className={`mt-1 text-2xl font-semibold ${color[tone]}`}>{value}</p></div>; }

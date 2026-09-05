@@ -20,7 +20,7 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 O bot usa um único gateway com fallback por provedor e o mesmo piso de qualidade para todo lead:
 
-1. **Todos os níveis:** B.AI, Gemini 3.x, NVIDIA e os demais modelos aprovados usam o mesmo scheduler de saúde, capacidade e fallback.
+1. **Todos os níveis:** somente B.AI, Gemini 3.x e NVIDIA usam o scheduler de saúde, capacidade e fallback.
 2. **Turnos críticos:** uma revisão adicional entra somente quando há risco real, como PIX, mídia, contradição ou baixa confiança.
 3. **Backend:** continua sendo a autoridade para preço, aceite, PIX, deduplicação e entrega de mídia em todos os níveis.
 
@@ -40,36 +40,18 @@ Configuracao principal:
 
 ```env
 # Ordem real de prioridade. Provedor sem credencial é ignorado.
-AI_MODEL_ORDER=bai,gemini,nvidia,openrouter,groq,cerebras,custom
+AI_MODEL_ORDER=bai,gemini,nvidia
 
 # Ordens por etapa, opcionais.
-AI_STRATEGY_MODEL_ORDER=bai,gemini,nvidia,openrouter,groq,cerebras,custom
-AI_DRAFT_MODEL_ORDER=bai,gemini,nvidia,openrouter,groq,cerebras,custom
-AI_REVIEW_MODEL_ORDER=bai,gemini,nvidia,openrouter,groq,cerebras,custom
+AI_STRATEGY_MODEL_ORDER=bai,gemini,nvidia
+AI_DRAFT_MODEL_ORDER=bai,gemini,nvidia
+AI_REVIEW_MODEL_ORDER=bai,gemini,nvidia
 
 # Modelos usados dentro de cada provedor.
-OPENROUTER_DRAFT_MODEL=deepseek/deepseek-chat
+BAI_DRAFT_MODEL=glm-5.3-flash
 GEMINI_DRAFT_MODEL=gemini-3.8-flash
-
-# Provedores oficiais diretos opcionais. So entram quando a respectiva chave existe.
-GROQ_API_KEY=gsk_...
-GROQ_DRAFT_MODEL=openai/gpt-oss-120b
 NVIDIA_API_KEY=nvapi-...
 NVIDIA_DRAFT_MODEL=deepseek-ai/deepseek-v4-pro-0813
-MISTRAL_API_KEY=...
-MISTRAL_DRAFT_MODEL=mistral-small-latest
-CEREBRAS_API_KEY=...
-CEREBRAS_DRAFT_MODEL=gpt-oss-120b
-# Cloudflare e Mistral antigos ainda podem ser administrados, mas não entram
-# automaticamente na rota de qualidade.
-
-# Qualquer gateway OpenAI-compatible administrado por voce
-# (LiteLLM, FreeLLMAPI, OmniRoute, 9Router ou outro proxy isolado).
-AI_CUSTOM_GATEWAY_BASE_URL=http://seu-gateway/v1
-AI_CUSTOM_GATEWAY_API_KEY=...
-AI_CUSTOM_DRAFT_MODEL=seu-modelo-aprovado
-AI_CUSTOM_GATEWAY_TIERS=starter,buyer,premium,elite
-AI_CUSTOM_GATEWAY_WEIGHT=5
 ```
 
 ### Várias credenciais
@@ -85,8 +67,8 @@ Para metadados por chave/projeto, use JSON. No Gemini, `projectId` deve ser o pr
 
 ```env
 GEMINI_CREDENTIALS_JSON=[{"apiKey":"AIza...","projectId":"projeto-a","label":"Gemini projeto A","limits":{"rpm":10,"tpm":250000}},{"apiKey":"AIza...","projectId":"projeto-b","label":"Gemini projeto B"}]
-NVIDIA_CREDENTIALS_JSON=[{"apiKey":"nvapi-...","label":"NIM contratado","baseUrl":"https://seu-nim.example/v1","priority":20,"weight":2}]
-AI_CREDENTIALS_JSON=[{"provider":"bai","apiKey":"...","label":"B.AI 1"}]
+NVIDIA_CREDENTIALS_JSON=[{"apiKey":"nvapi-...","accountId":"conta-nvidia-a","label":"NIM A","baseUrl":"https://seu-nim.example/v1","limits":{"rpm":40}}]
+BAI_CREDENTIALS_JSON=[{"apiKey":"...","accountId":"conta-bai-a","label":"B.AI 1","limits":{"rpm":30}}]
 ```
 
 Para quantidade maior, aplique `ai_gateway_v2_migration.sql`, configure `AI_CREDENTIALS_ENCRYPTION_KEY` no secret store e use a API administrativa `GET/POST/DELETE /api/admin/ai-credentials`. Os segredos persistidos são AES-256-GCM e a exclusão administrativa é recuperável (desabilita a credencial).
@@ -100,7 +82,6 @@ O gateway não usa mais uma lista cega. Cada chamada passa por um roteador que c
 - afinidade estável por lead sem concentrar todos os leads no mesmo provedor;
 - circuit breaker diferente para chave inválida, quota, timeout, erro 5xx e JSON ruim;
 - fila curta por nível do cliente e fallback imediato quando outra rota tem capacidade;
-- modelo Groq GPT-OSS 120B em todos os níveis; não existe mais downgrade para 20B;
 - recuperação textual em outro provedor quando a visão do Gemini não responder.
 
 Os provedores nem sempre publicam limites fixos, e no Gemini a cota real pertence ao projeto/tier mostrado no AI Studio. Sem configuração, o router não inventa um teto baixo: aprende com 429/cooldown. Para exibir capacidade restante exata, cadastre os limites reais do projeto:
@@ -109,11 +90,10 @@ Os provedores nem sempre publicam limites fixos, e no Gemini a cota real pertenc
 GEMINI_GATEWAY_RPM=<RPM mostrado no seu projeto>
 GEMINI_GATEWAY_TPM=<TPM mostrado no seu projeto>
 GEMINI_GATEWAY_RPD=<RPD mostrado no seu projeto>
-GROQ_GATEWAY_RPM=<limite da sua conta>
-GROQ_GATEWAY_TPM=<limite da sua conta>
+BAI_GATEWAY_RPM=<limite da sua conta>
+BAI_GATEWAY_TPM=<limite da sua conta>
 NVIDIA_GATEWAY_RPM=<limite do seu endpoint>
 NVIDIA_GATEWAY_CONCURRENCY=4
-CLOUDFLARE_GATEWAY_CONCURRENCY=6
 AI_SHARED_RATE_LIMIT_ENABLED=true
 ```
 

@@ -37,6 +37,7 @@ export type AiCredential = {
     label: string;
     source: "database" | "environment" | "legacy";
     projectId?: string;
+    accountId?: string;
     quotaGroupId: string;
     baseUrl?: string;
     model?: string;
@@ -140,12 +141,29 @@ const normalizeProvider = (value: unknown): AiCredentialProvider | null => {
     return AI_CREDENTIAL_PROVIDERS.includes(provider) ? provider : null;
 };
 
-const quotaGroup = (provider: AiCredentialProvider, projectId: string, id: string) => {
+const quotaGroup = (
+    provider: AiCredentialProvider,
+    projectId: string,
+    accountId: string,
+    explicitQuotaGroupId: string,
+    id: string,
+) => {
     if (provider === "gemini") {
         // Quotas do Gemini são por projeto. Sem projectId, todas as chaves ficam
         // no mesmo bucket conservador para nunca multiplicar quota por acidente.
         return `gemini:project:${projectId || "unassigned"}`;
     }
+    // NVIDIA e B.AI podem ter várias chaves da mesma conta. Nessas situações
+    // accountId/quotaGroupId fazem as chaves dividirem o mesmo orçamento, sem
+    // misturar contas diferentes. Uma chave sem identificação continua isolada
+    // por compatibilidade com a configuração antiga.
+    const providerPrefix = `${provider}:`;
+    if (explicitQuotaGroupId) {
+        return explicitQuotaGroupId.startsWith(providerPrefix)
+            ? explicitQuotaGroupId
+            : `${provider}:group:${explicitQuotaGroupId}`;
+    }
+    if (accountId) return `${provider}:account:${accountId}`;
     return `${provider}:credential:${id}`;
 };
 
@@ -167,6 +185,9 @@ const normalizeCredential = ({
     const fingerprint = fingerprintAiCredential(apiKey);
     const id = cleanText(raw?.id, 120) || `${provider}-${source}-${fingerprint}`;
     const projectId = cleanText(raw?.projectId || raw?.project_id || raw?.quotaProjectId, 180);
+    const accountId = cleanText(raw?.accountId || raw?.account_id, 180);
+    const explicitQuotaGroupId = cleanText(raw?.quotaGroupId || raw?.quota_group_id, 180)
+        .replace(/[^a-zA-Z0-9:_./-]/g, "-");
     const limitsSource = raw?.limits && typeof raw.limits === "object" ? raw.limits : raw || {};
     const limits: AiCredentialLimits = {};
     for (const key of ["rpm", "tpm", "rpd", "tpd", "maxConcurrency", "timeoutMs", "maxQueueMs"] as const) {
@@ -180,7 +201,8 @@ const normalizeCredential = ({
         label: cleanText(raw?.label, 160) || `${provider} ${index + 1} · ${fingerprint.slice(-6)}`,
         source,
         projectId: projectId || undefined,
-        quotaGroupId: quotaGroup(provider, projectId, id),
+        accountId: accountId || undefined,
+        quotaGroupId: quotaGroup(provider, projectId, accountId, explicitQuotaGroupId, id),
         baseUrl: cleanText(raw?.baseUrl || raw?.base_url, 1000) || undefined,
         model: cleanText(raw?.model, 300) || undefined,
         enabled: raw?.enabled !== false,
@@ -216,13 +238,17 @@ const environmentCredentials = () => {
     for (const provider of AI_CREDENTIAL_PROVIDERS) {
         const prefix = PROVIDER_ENV_PREFIX[provider];
         const projectId = cleanText(process.env[`${prefix}_PROJECT_ID`], 180);
+        const accountId = cleanText(process.env[`${prefix}_ACCOUNT_ID`], 180);
+        const quotaGroupId = cleanText(process.env[`${prefix}_QUOTA_GROUP_ID`], 180);
         parseJsonArray(process.env[`AI_${provider.toUpperCase()}_CREDENTIALS_JSON`] || process.env[`${prefix}_CREDENTIALS_JSON`])
-            .forEach((raw, index) => add(typeof raw === "string" ? { apiKey: raw, projectId } : { projectId, ...raw }, provider, index));
+            .forEach((raw, index) => add(typeof raw === "string"
+                ? { apiKey: raw, projectId, accountId, quotaGroupId }
+                : { projectId, accountId, quotaGroupId, ...raw }, provider, index));
         String(process.env[`${prefix}_API_KEYS`] || "")
             .split(/[\r\n,;]+/)
             .map(cleanSecret)
             .filter(Boolean)
-            .forEach((apiKey, index) => add({ apiKey, projectId }, provider, index));
+            .forEach((apiKey, index) => add({ apiKey, projectId, accountId, quotaGroupId }, provider, index));
     }
     return credentials;
 };
@@ -231,12 +257,24 @@ const databaseCredentials = async () => {
     const rows: any[] = [];
     let from = 0;
     const pageSize = 1000;
+    const legacyColumns = "id,provider,label,project_id,base_url,model,priority,weight,enabled,quota_rpm,quota_tpm,quota_rpd,quota_tpd,max_concurrency,timeout_ms,max_queue_ms,input_cost_per_million,output_cost_per_million,secret_ciphertext,secret_iv,secret_tag";
     while (true) {
-        const { data, error } = await supabase
+        const primaryResult = await supabase
             .from("ai_provider_credentials")
-            .select("id,provider,label,project_id,base_url,model,priority,weight,enabled,quota_rpm,quota_tpm,quota_rpd,quota_tpd,max_concurrency,timeout_ms,max_queue_ms,input_cost_per_million,output_cost_per_million,secret_ciphertext,secret_iv,secret_tag")
+            .select("id,provider,label,project_id,account_id,quota_group_id,base_url,model,priority,weight,enabled,quota_rpm,quota_tpm,quota_rpd,quota_tpd,max_concurrency,timeout_ms,max_queue_ms,input_cost_per_million,output_cost_per_million,secret_ciphertext,secret_iv,secret_tag")
             .eq("enabled", true)
             .range(from, from + pageSize - 1);
+        let data: any[] | null = primaryResult.data as any[] | null;
+        let error: any = primaryResult.error;
+        if (error && /account_id|quota_group_id/i.test(String(error.message || ""))) {
+            const legacyResult = await supabase
+                .from("ai_provider_credentials")
+                .select(legacyColumns)
+                .eq("enabled", true)
+                .range(from, from + pageSize - 1);
+            data = legacyResult.data as any[] | null;
+            error = legacyResult.error;
+        }
         if (error) {
             const message = String(error.message || "");
             if (/ai_provider_credentials|schema cache|does not exist/i.test(message)) return [] as AiCredential[];
@@ -256,6 +294,8 @@ const databaseCredentials = async () => {
                 apiKey,
                 label: row.label,
                 projectId: row.project_id,
+                accountId: row.account_id,
+                quotaGroupId: row.quota_group_id,
                 baseUrl: row.base_url,
                 model: row.model,
                 priority: row.priority,
@@ -288,8 +328,10 @@ export const loadAiCredentials = async (legacySettings: Record<string, string> =
         const apiKey = settingSecret || envSecret;
         if (!apiKey) continue;
         const projectId = cleanText(process.env[`${prefix}_PROJECT_ID`], 180);
+        const accountId = cleanText(process.env[`${prefix}_ACCOUNT_ID`], 180);
+        const quotaGroupId = cleanText(process.env[`${prefix}_QUOTA_GROUP_ID`], 180);
         const credential = normalizeCredential({
-            raw: { apiKey, projectId, label: `${provider} legado` },
+            raw: { apiKey, projectId, accountId, quotaGroupId, label: `${provider} legado` },
             provider,
             source: "legacy",
             index: 0,

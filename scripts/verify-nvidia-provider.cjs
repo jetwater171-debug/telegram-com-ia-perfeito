@@ -6,7 +6,7 @@ const read = (file) => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf
 const gateway = read('src/lib/gemini.ts');
 const router = read('src/lib/aiGatewayRouter.ts');
 const api = read('src/app/api/admin/ai-settings/route.ts');
-const page = read('src/app/admin/ai/page.tsx');
+const page = read('src/app/admin/ai/_components/AiControlCenter.tsx');
 const models = read('src/lib/aiModels.ts');
 
 assert.match(gateway, /provider: 'nvidia'/);
@@ -26,7 +26,7 @@ assert.match(router, /normalizedProvider === 'nvidia'/);
 assert.match(api, /nvidia_api_key/);
 assert.match(api, /provider === "nvidia"/);
 assert.match(page, /https:\/\/build\.nvidia\.com\/settings\/api-keys/);
-assert.match(page, /nvidiaApiKeyMasked/);
-assert.match(page, /nvidiaModel/);
+assert.match(page, /api\/admin\/ai-credentials/);
+assert.match(page, /accountId/);
 
 console.log('NVIDIA_PROVIDER_OK exact_models=4 gateway=1 router=1 production_guard=1 reasoning_contracts=1 autosave=1 connection_test=1 key_link=1');

@@ -11,6 +11,7 @@ import {
 } from "@/lib/aiCredentials";
 
 export const dynamic = "force-dynamic";
+const ACTIVE_ROUTER_PROVIDERS = new Set<AiCredentialProvider>(["bai", "gemini", "nvidia"]);
 
 const cleanText = (value: unknown, max = 500) => String(value || "").trim().slice(0, max);
 const nullablePositive = (value: unknown) => {
@@ -45,6 +46,7 @@ export async function GET() {
                 masked: maskAiCredential(credential),
                 source: credential.source,
                 projectId: credential.projectId || null,
+                accountId: credential.accountId || null,
                 quotaGroupId: credential.quotaGroupId,
                 baseUrl: credential.baseUrl || null,
                 model: credential.model || null,
@@ -66,12 +68,14 @@ export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
         const provider = cleanText(body.provider, 30).toLowerCase() as AiCredentialProvider;
-        if (!AI_CREDENTIAL_PROVIDERS.includes(provider)) {
+        if (!AI_CREDENTIAL_PROVIDERS.includes(provider) || !ACTIVE_ROUTER_PROVIDERS.has(provider)) {
             return NextResponse.json({ error: "provedor_invalido" }, { status: 400 });
         }
         const secret = cleanText(body.apiKey || body.secret, 8000);
         if (!secret) return NextResponse.json({ error: "api_key_obrigatoria" }, { status: 400 });
         const projectId = cleanText(body.projectId, 180);
+        const accountId = cleanText(body.accountId, 180);
+        const quotaGroupId = cleanText(body.quotaGroupId, 180).replace(/[^a-zA-Z0-9:_./-]/g, "-");
         if (provider === "gemini" && !projectId) {
             return NextResponse.json({ error: "gemini_project_id_obrigatorio_para_pool_legitimo" }, { status: 400 });
         }
@@ -83,6 +87,9 @@ export async function POST(req: NextRequest) {
             provider,
             label: cleanText(body.label, 160) || `${provider} · ${fingerprint.slice(-6)}`,
             project_id: projectId || null,
+            account_id: accountId || null,
+            // Gemini ignora este campo em runtime e sempre agrupa por projectId.
+            quota_group_id: provider === "gemini" ? `gemini:project:${projectId}` : quotaGroupId || null,
             base_url: cleanText(body.baseUrl, 1000) || null,
             model: cleanText(body.model, 300) || null,
             priority: Math.max(0, Math.floor(Number(body.priority) || 100)),

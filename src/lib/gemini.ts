@@ -903,7 +903,8 @@ const ROLE_ENV_KEYS: Record<AiRole, string> = {
     evaluator: "AI_EVALUATOR_MODEL_ORDER",
 };
 
-const DEFAULT_PROVIDER_ORDER = "bai,gemini,nvidia,openrouter,groq,cerebras,custom";
+const AUTO_GATEWAY_PROVIDERS: AiProvider[] = ['bai', 'gemini', 'nvidia'];
+const DEFAULT_PROVIDER_ORDER = "bai,gemini,nvidia";
 const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
     strategy: DEFAULT_OPENROUTER_MODEL,
     draft: DEFAULT_OPENROUTER_MODEL,
@@ -1123,7 +1124,9 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
         });
     }
 
-    return gateways.filter((gateway) => gateway.weight !== 0);
+    // Credenciais legadas dos demais provedores continuam sendo lidas, mas a
+    // rota automática fica propositalmente restrita ao trio aprovado.
+    return gateways.filter((gateway) => gateway.weight !== 0 && AUTO_GATEWAY_PROVIDERS.includes(gateway.provider));
 };
 
 const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
@@ -1215,13 +1218,11 @@ const parseAiModelOrder = (value: string | null | undefined, role: AiRole, setti
 };
 
 const parseProviderPreference = (value: string | null | undefined) => {
-    const supported: AiProvider[] = ['bai', 'gemini', 'nvidia', 'openrouter', 'groq', 'cerebras', 'custom'];
+    const supported: AiProvider[] = AUTO_GATEWAY_PROVIDERS;
     const parsed = String(value || '')
         .split(',')
         .map((entry) => entry.trim().toLowerCase().split(':')[0] as AiProvider)
         .filter((provider): provider is AiProvider => supported.includes(provider));
-    const legacyTwoProviderOrder = parsed.length > 0 && parsed.every((provider) => provider === 'openrouter' || provider === 'gemini');
-    if (legacyTwoProviderOrder) return supported;
     if (parsed.length === 0) return supported;
     return Array.from(new Set([...parsed, ...supported]));
 };
@@ -1236,15 +1237,6 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings, tier?: AiI
     const roleSpecific = parseAiModelOrder(roleSettingMap[role], role, settings);
     const globalOrder = parseAiModelOrder(settings.aiModelOrder, role, settings);
     const defaults = parseAiModelOrder(DEFAULT_PROVIDER_ORDER, role, settings);
-
-    // Mantém somente fallbacks nomeados e previsíveis; nunca usa o roteador aleatório /free.
-    const extraOpenRouterModels: AiGatewayConfig[] = settings.openRouterApiKey
-        ? OPENROUTER_MODEL_FALLBACK_ORDER.map((model) => ({
-            provider: "openrouter" as AiProvider,
-            model,
-            label: `openrouter:${model}`,
-        }))
-        : [];
 
     const extraGeminiModels: AiGatewayConfig[] = settings.geminiApiKey
         ? GEMINI_MODEL_OPTIONS.map((model) => ({
@@ -1262,7 +1254,7 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings, tier?: AiI
     // provedor, catálogo/modelos e credenciais ainda são balanceados por saúde.
     const providerPreference = configuredPreference;
     const providerRank = new Map(providerPreference.map((provider, index) => [provider, index]));
-    const order = [...directGateways, ...roleSpecific, ...globalOrder, ...defaults, ...extraOpenRouterModels, ...extraGeminiModels]
+    const order = [...directGateways, ...roleSpecific, ...globalOrder, ...defaults, ...extraGeminiModels]
         .map((gateway, index) => ({ gateway, index }))
         .sort((left, right) => {
             const providerDelta = Number(providerRank.get(left.gateway.provider) ?? 999) - Number(providerRank.get(right.gateway.provider) ?? 999);
@@ -1271,7 +1263,7 @@ const getAiGatewayOrder = (role: AiRole, settings: AiRuntimeSettings, tier?: AiI
         .map((item) => item.gateway);
     const seen = new Set<string>();
     return order.filter((gateway) => {
-        if (gateway.provider === "openrouter" && !settings.openRouterApiKey) return false;
+        if (!AUTO_GATEWAY_PROVIDERS.includes(gateway.provider)) return false;
         if (gateway.provider === "gemini" && !settings.geminiApiKey) return false;
         if (gateway.provider !== 'openrouter' && gateway.provider !== 'gemini' && !gateway.apiKey) return false;
         if (!gateway.credentialId && directGateways.some((candidate) =>
@@ -1679,6 +1671,7 @@ const callAiGatewayJson = async <T,>(options: {
         if (!routePriorities.has(routeGroup)) routePriorities.set(routeGroup, nextRoutePriority++);
         return {
             key: `${gateway.provider}:${gateway.model}:${gateway.credentialId || 'unbound'}`,
+            capacityKey: `${quotaGroupIdFor(gateway)}:${gateway.model}`,
             provider: gateway.provider,
             model: gateway.model,
             priority: Number(routePriorities.get(routeGroup) || 0) * 100_000
@@ -1725,12 +1718,25 @@ const callAiGatewayJson = async <T,>(options: {
         const policy = lease.candidate.policy;
         const startedAt = Date.now();
         let requestCount = 0;
+        const recordAttempt = (status: 'attempt' | 'retry') => recordPersistentAiUsage({
+            provider: gateway.provider,
+            model: gateway.model,
+            credentialId: gateway.credentialId,
+            quotaGroupId: quotaGroupIdFor(gateway),
+            projectId: gateway.projectId,
+            role: options.role,
+            tier: options.orchestrationTier,
+            status,
+            requestCount: 1,
+            estimatedInputTokens: estimatedTokens,
+            metadata: { attemptNumber: requestCount, queueWaitMs: lease.queueWaitMs },
+        });
         const requestTimeoutMs = Math.max(1_000, Math.min(policy.timeoutMs, deadlineAt - Date.now()));
         const sharedCapacity = await reserveSharedGatewayCapacity(options.settings, gateway, policy, estimatedTokens);
         if (sharedCapacity?.allowed === false) {
             lease.cancelBeforeDispatch();
             excluded.add(lease.candidate.key);
-            aiGatewayRouter.defer(lease.candidate.key, Math.max(1_000, sharedCapacity.retryAfterMs), 'quota');
+            aiGatewayRouter.defer(lease.candidate.capacityKey || lease.candidate.key, Math.max(1_000, sharedCapacity.retryAfterMs), 'quota', 'capacity');
             const message = `${gateway.label} sem capacidade compartilhada por ${sharedCapacity.retryAfterMs}ms`;
             attempts.push(message);
             recordPersistentAiUsage({
@@ -1771,6 +1777,7 @@ const callAiGatewayJson = async <T,>(options: {
                     : `${options.systemInstruction}${buildJsonReminder(options.schemaName, options.responseSchemaConfig)}`;
                 try {
                     requestCount += 1;
+                    recordAttempt('attempt');
                     result = await callOpenRouterJson<T>(
                         options.settings,
                         gateway,
@@ -1795,6 +1802,7 @@ const callAiGatewayJson = async <T,>(options: {
                     }
                     lease.recordRetry(estimatedTokens);
                     requestCount += 1;
+                    recordAttempt('retry');
                     result = await callOpenRouterJson<T>(
                         options.settings,
                         gateway,
@@ -1824,7 +1832,7 @@ const callAiGatewayJson = async <T,>(options: {
                     role: options.role,
                     tier: options.orchestrationTier,
                     status: 'success',
-                    requestCount,
+                    requestCount: 0,
                     durationMs,
                     estimatedInputTokens: estimatedTokens,
                     inputTokens: result.usageInputTokens,
@@ -1845,6 +1853,7 @@ const callAiGatewayJson = async <T,>(options: {
             let result: Awaited<ReturnType<typeof callGeminiJson<T>>>;
             try {
                 requestCount += 1;
+                recordAttempt('attempt');
                 result = await callGeminiJson<T>(
                     options.settings,
                     gateway,
@@ -1866,6 +1875,7 @@ const callAiGatewayJson = async <T,>(options: {
                     }
                     lease.recordRetry(estimatedTokens);
                     requestCount += 1;
+                    recordAttempt('retry');
                     result = await callGeminiJson<T>(
                         options.settings,
                         gateway,
@@ -1895,7 +1905,7 @@ const callAiGatewayJson = async <T,>(options: {
                 role: options.role,
                 tier: options.orchestrationTier,
                 status: 'success',
-                requestCount,
+                requestCount: 0,
                 durationMs,
                 estimatedInputTokens: estimatedTokens,
                 inputTokens: result.usageInputTokens,
@@ -1934,7 +1944,7 @@ const callAiGatewayJson = async <T,>(options: {
                 role: options.role,
                 tier: options.orchestrationTier,
                 status: 'error',
-                requestCount,
+                requestCount: 0,
                 durationMs,
                 estimatedInputTokens: estimatedTokens,
                 httpStatus: Number(error?.status || 0) || undefined,

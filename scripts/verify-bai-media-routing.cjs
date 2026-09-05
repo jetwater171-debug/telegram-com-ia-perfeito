@@ -6,7 +6,7 @@ const read = (relative) => fs.readFileSync(path.resolve(__dirname, '..', relativ
 const gemini = read('src/lib/gemini.ts');
 const models = read('src/lib/aiModels.ts');
 const adminApi = read('src/app/api/admin/ai-settings/route.ts');
-const adminPage = read('src/app/admin/ai/page.tsx');
+const adminPage = read('src/app/admin/ai/_components/AiControlCenter.tsx');
 
 const expectedTextOrder = [
     'glm-5.3-flash',
@@ -31,7 +31,7 @@ assert.match(catalog, /id: "hy3", label: [^\n]+ acceptsImage: false/);
 assert.match(models, /DEFAULT_BAI_MODEL\s*=\s*BAI_TEXT_MODEL_ORDER\[0\]/);
 assert.match(models, /BAI_MODEL_BY_ID\.get\(normalized\)\?\.id \|\| DEFAULT_BAI_MODEL/);
 assert.match(gemini, /type AiProvider = [^\n]*["']bai["']/);
-assert.match(gemini, /DEFAULT_PROVIDER_ORDER\s*=\s*["']bai,gemini,nvidia,openrouter,groq,cerebras,custom["']/);
+assert.match(gemini, /DEFAULT_PROVIDER_ORDER\s*=\s*["']bai,gemini,nvidia["']/);
 assert.match(gemini, /BAI_TEXT_MODEL_ORDER\.forEach\(\(baiModel, index\) => addProvider\(/);
 assert.match(gemini, /provider:\s*["']bai["']/);
 assert.match(gemini, /https:\/\/api\.b\.ai\/v1/);
@@ -44,8 +44,8 @@ assert.match(adminApi, /provider === ["']bai["'][\s\S]*?\$\{config\.base\}\/mode
 assert.match(adminApi, /availableModels = BAI_TEXT_MODEL_ORDER\.filter/);
 assert.match(adminApi, /missingModels = BAI_TEXT_MODEL_ORDER\.filter/);
 assert.doesNotMatch(adminApi, /master_brain_connection_test/);
-assert.match(adminPage, /B\.AI · Roteador de 3 modelos gratuitos/);
-assert.match(adminPage, /Texto · melhor para o pior/);
-assert.match(adminPage, /Fotos · somente multimodais/);
+assert.match(adminPage, /name: "B\.AI"/);
+assert.match(adminPage, /GLM-5\.3 Flash/);
+assert.match(adminPage, /Qwen3\.8 Flash/);
 
 console.log('BAI_MODEL_ROUTER_OK text=3 image=2 free_only=1 strict_order=1 per_model_fallback=1 auth_fast_fail=1 discovery_no_inference=1 panel=ready');

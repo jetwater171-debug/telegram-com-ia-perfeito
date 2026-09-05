@@ -6,6 +6,8 @@ create table if not exists public.ai_provider_credentials (
     provider text not null check (provider in ('bai','gemini','groq','nvidia','cloudflare','mistral','openrouter','cerebras','custom')),
     label text not null,
     project_id text,
+    account_id text,
+    quota_group_id text,
     base_url text,
     model text,
     priority integer not null default 100,
@@ -29,6 +31,12 @@ create table if not exists public.ai_provider_credentials (
 
 create index if not exists ai_provider_credentials_provider_enabled_idx
     on public.ai_provider_credentials(provider, enabled, priority, id);
+alter table public.ai_provider_credentials
+    add column if not exists account_id text,
+    add column if not exists quota_group_id text;
+
+create index if not exists ai_provider_credentials_quota_group_idx
+    on public.ai_provider_credentials(provider, quota_group_id, enabled, priority, id);
 
 create table if not exists public.ai_gateway_usage_events (
     id uuid primary key default gen_random_uuid(),
@@ -40,7 +48,7 @@ create table if not exists public.ai_gateway_usage_events (
     project_id text,
     role text,
     tier text,
-    status text not null check (status in ('success','error','skipped')),
+    status text not null check (status in ('attempt','retry','success','error','skipped')),
     request_count integer not null default 1,
     duration_ms integer not null default 0,
     estimated_input_tokens bigint not null default 0,
@@ -60,6 +68,12 @@ create table if not exists public.ai_gateway_usage_events (
 
 alter table public.ai_gateway_usage_events
     add column if not exists request_count integer not null default 1;
+
+alter table public.ai_gateway_usage_events
+    drop constraint if exists ai_gateway_usage_events_status_check;
+alter table public.ai_gateway_usage_events
+    add constraint ai_gateway_usage_events_status_check
+    check (status in ('attempt','retry','success','error','skipped'));
 
 create index if not exists ai_gateway_usage_quota_time_idx
     on public.ai_gateway_usage_events(quota_group_id, model, occurred_at desc);

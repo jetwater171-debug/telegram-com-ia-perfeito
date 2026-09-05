@@ -8,7 +8,9 @@ export type AiGatewayUsageEvent = {
     projectId?: string;
     role?: string;
     tier?: string;
-    status: "success" | "error" | "skipped";
+    // attempt/retry carregam request_count. success/error representam o
+    // desfecho daquela tentativa e não duplicam RPM/RPD nas somas.
+    status: "attempt" | "retry" | "success" | "error" | "skipped";
     durationMs?: number;
     requestCount?: number;
     estimatedInputTokens?: number;
@@ -57,7 +59,9 @@ export const persistAiGatewayUsage = async (event: AiGatewayUsageEvent) => {
         role: event.role ? String(event.role).slice(0, 40) : null,
         tier: event.tier ? String(event.tier).slice(0, 40) : null,
         status: event.status,
-        request_count: event.status === "skipped" ? 0 : Math.max(1, nonNegative(event.requestCount)),
+        request_count: event.status === "attempt" || event.status === "retry"
+            ? Math.max(1, nonNegative(event.requestCount) || 1)
+            : nonNegative(event.requestCount),
         duration_ms: nonNegative(event.durationMs),
         estimated_input_tokens: nonNegative(event.estimatedInputTokens),
         input_tokens: inputTokens,
@@ -91,6 +95,17 @@ export const loadAiGatewayUsageRolling = async () => {
         .order("day_requests", { ascending: false });
     if (error) {
         const migrationMissing = /ai_gateway_usage_rolling|schema cache|does not exist/i.test(String(error.message || ""));
+        return { ready: false, migrationMissing, error: error.message, rows: [] as any[] };
+    }
+    return { ready: true, migrationMissing: false, rows: data || [] };
+};
+
+export const loadAiGatewayCapacityBuckets = async () => {
+    const { data, error } = await supabase
+        .from("ai_gateway_capacity")
+        .select("bucket_key,minute_started_at,minute_requests,minute_tokens,day_started_at,day_requests,day_tokens,updated_at");
+    if (error) {
+        const migrationMissing = /ai_gateway_capacity|schema cache|does not exist/i.test(String(error.message || ""));
         return { ready: false, migrationMissing, error: error.message, rows: [] as any[] };
     }
     return { ready: true, migrationMissing: false, rows: data || [] };

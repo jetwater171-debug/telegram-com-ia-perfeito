@@ -135,13 +135,33 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
     assert.equal(retrySnapshot.minuteRequests, 2, 'retry deve consumir outra unidade de RPM');
     assert.equal(retrySnapshot.minuteTokens, 50, 'retry deve reservar tokens novamente');
 
+    const sharedQuotaRouter = new AdaptiveGatewayRouter();
+    const sharedGroup = 'gemini:project:authorized:gemini-3.8-flash';
+    const sharedOne = { ...candidate('gemini:gemini-3.8-flash:key-one', 10, { rpm: 1 }), capacityKey: sharedGroup };
+    const sharedTwo = { ...candidate('gemini:gemini-3.8-flash:key-two', 10, { rpm: 1 }), capacityKey: sharedGroup };
+    const sharedLease = await sharedQuotaRouter.acquire([sharedOne, sharedTwo], { routingKey: 'shared-group', estimatedTokens: 5, maxQueueMs: 0 });
+    sharedLease.succeed(20, 5);
+    await assert.rejects(
+        () => sharedQuotaRouter.acquire([sharedOne, sharedTwo], { routingKey: 'shared-group', estimatedTokens: 5, maxQueueMs: 0 }),
+        (error) => error instanceof GatewayCapacityError,
+        'duas keys do mesmo quotaGroup devem dividir o RPM local',
+    );
+    const healthIsolationRouter = new AdaptiveGatewayRouter();
+    const unhealthy = { ...candidate('nvidia:model:bad', 10), capacityKey: 'nvidia:account:a:model' };
+    const healthySameAccount = { ...candidate('nvidia:model:good', 10), capacityKey: 'nvidia:account:a:model' };
+    const unhealthyLease = await healthIsolationRouter.acquire([unhealthy, healthySameAccount], { routingKey: 'health-isolation', estimatedTokens: 5, maxQueueMs: 0 });
+    unhealthyLease.fail(Object.assign(new Error('invalid key'), { status: 401 }), 20);
+    const healthySameAccountLease = await healthIsolationRouter.acquire([unhealthy, healthySameAccount], { routingKey: 'health-isolation', estimatedTokens: 5, maxQueueMs: 0 });
+    assert.equal(healthySameAccountLease.candidate.key, healthySameAccount.key, 'health ruim de uma chave não pode bloquear outra chave da mesma conta');
+    healthySameAccountLease.succeed(20, 5);
+
     const emptyRouter = new AdaptiveGatewayRouter();
     await assert.rejects(
         () => emptyRouter.acquire([], { routingKey: 'empty', estimatedTokens: 1, maxQueueMs: 0 }),
         (error) => error instanceof GatewayCapacityError,
     );
 
-    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1');
+    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 shared_quota_group=1 credential_health_isolation=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

@@ -119,7 +119,9 @@ begin
         'minute_requests', v_minute_requests,
         'minute_tokens', v_minute_tokens,
         'day_requests', v_day_requests,
-        'day_tokens', v_day_tokens
+        'day_tokens', v_day_tokens,
+        'minute_reset_at', v_minute_started + interval '60 seconds',
+        'day_reset_at', v_day_reset_at
     );
 end;
 $$;
