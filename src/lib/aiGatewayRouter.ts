@@ -97,10 +97,9 @@ const providerDefaults = (provider: string, model: string): GatewayRatePolicy =>
     if (normalizedProvider === 'bai') {
         return unknownQuota({
             maxConcurrency: 12,
-            // O V4 continua sendo sempre o primeiro, mas um canal lento nao
-            // pode segurar uma chamada critica e seu fallback. Depois deste limite o
-            // roteador usa imediatamente o proximo fallback configurado.
-            timeoutMs: 20_000,
+            // B.AI é fallback de alta capacidade. Uma rota lenta não pode
+            // consumir sozinha a janela inteira de resposta do Telegram.
+            timeoutMs: 10_000,
             maxQueueMs: 1_000,
         });
     }
@@ -193,6 +192,25 @@ export const assertAiGatewayPayload = (
             throw new Error(`${schemaName} JSON incompleto: nenhuma mensagem utilizável`);
         }
     }
+};
+
+export const buildInterleavedGatewayPriorities = (
+    gateways: Array<{ provider: string; model: string; credentialPriority?: number }>,
+) => {
+    const providerRanks = new Map<string, number>();
+    const modelRanks = new Map<string, Map<string, number>>();
+
+    return gateways.map((gateway) => {
+        if (!providerRanks.has(gateway.provider)) providerRanks.set(gateway.provider, providerRanks.size);
+        if (!modelRanks.has(gateway.provider)) modelRanks.set(gateway.provider, new Map());
+        const providerModels = modelRanks.get(gateway.provider)!;
+        if (!providerModels.has(gateway.model)) providerModels.set(gateway.model, providerModels.size);
+
+        const round = Number(providerModels.get(gateway.model) || 0);
+        const providerRank = Number(providerRanks.get(gateway.provider) || 0);
+        const credentialRank = Math.max(0, Math.min(99_999, Number(gateway.credentialPriority ?? 100)));
+        return round * 1_000_000 + providerRank * 100_000 + credentialRank;
+    });
 };
 
 export const classifyGatewayFailure = (error: unknown): GatewayFailureKind => {

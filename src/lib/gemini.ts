@@ -36,6 +36,7 @@ import {
 import {
     aiGatewayRouter,
     assertAiGatewayPayload,
+    buildInterleavedGatewayPriorities,
     classifyGatewayFailure,
     estimateAiTokens,
     GatewayCapacityError,
@@ -1634,7 +1635,9 @@ const callAiGatewayJson = async <T,>(options: {
         settings: options.settings,
         tier: options.orchestrationTier,
         routingKey: options.routingKey,
-        preferGemini: hasMedia && !hasImage,
+        preferGemini: (hasMedia && !hasImage)
+            || options.schemaName === 'responseSchema'
+            || options.schemaName === 'operationalReply',
     })
         .filter((gateway) => !providerOnly || gateway.provider === providerOnly)
         .filter((gateway) => !hasImage
@@ -1663,20 +1666,16 @@ const callAiGatewayJson = async <T,>(options: {
         credentialCandidateCounts.set(credentialKey, count + 1);
         return true;
     });
-    const routePriorities = new Map<string, number>();
-    let nextRoutePriority = 0;
-    const candidates: GatewayRouteCandidate<AiGatewayConfig>[] = boundedGateways.map((gateway) => {
+    const gatewayPriorities = buildInterleavedGatewayPriorities(boundedGateways);
+    const candidates: GatewayRouteCandidate<AiGatewayConfig>[] = boundedGateways.map((gateway, gatewayIndex) => {
         const defaultPolicy = gateway.policy || resolveGatewayRatePolicy(gateway.provider, gateway.model);
         const policy = { ...defaultPolicy, ...(gateway.rateLimits || {}) };
-        const routeGroup = `${gateway.provider}:${gateway.model}`;
-        if (!routePriorities.has(routeGroup)) routePriorities.set(routeGroup, nextRoutePriority++);
         return {
             key: `${gateway.provider}:${gateway.model}:${gateway.credentialId || 'unbound'}`,
             capacityKey: `${quotaGroupIdFor(gateway)}:${gateway.model}`,
             provider: gateway.provider,
             model: gateway.model,
-            priority: Number(routePriorities.get(routeGroup) || 0) * 100_000
-                + Math.max(0, Math.min(99_999, Number(gateway.credentialPriority ?? 100))),
+            priority: gatewayPriorities[gatewayIndex],
             weight: Math.max(1, Number(gateway.weight || (gateway.provider === 'bai' ? 60 : gateway.provider === 'gemini' ? 30 : gateway.provider === 'groq' ? 18 : 7))),
             policy,
             value: { ...gateway, policy },
@@ -1792,7 +1791,9 @@ const callAiGatewayJson = async <T,>(options: {
                         requestTimeoutMs,
                     );
                 } catch (initialError: any) {
-                    const retryDelayMs = boundedRetryDelayMs(initialError);
+                    const hasAlternative = candidates.some((candidate) =>
+                        candidate.key !== lease.candidate.key && !excluded.has(candidate.key));
+                    const retryDelayMs = hasAlternative ? 0 : boundedRetryDelayMs(initialError);
                     const retryBudgetMs = deadlineAt - Date.now() - retryDelayMs;
                     if (!retryDelayMs || retryBudgetMs <= 1_000) throw initialError;
                     await sleep(retryDelayMs);
@@ -1866,7 +1867,9 @@ const callAiGatewayJson = async <T,>(options: {
                     requestTimeoutMs,
                 );
             } catch (geminiError: any) {
-                const retryDelayMs = boundedRetryDelayMs(geminiError);
+                const hasAlternative = candidates.some((candidate) =>
+                    candidate.key !== lease.candidate.key && !excluded.has(candidate.key));
+                const retryDelayMs = hasAlternative ? 0 : boundedRetryDelayMs(geminiError);
                 const retryBudgetMs = deadlineAt - Date.now() - retryDelayMs;
                 if (retryDelayMs && retryBudgetMs > 1_000) {
                     const retryTimeoutMs = Math.max(1_000, Math.min(20_000, policy.timeoutMs + 4_000, retryBudgetMs));
@@ -1932,6 +1935,11 @@ const callAiGatewayJson = async <T,>(options: {
                 candidates
                     .filter((candidate) => candidate.provider === gateway.provider
                         && (!gateway.credentialId || candidate.value.credentialId === gateway.credentialId))
+                    .forEach((candidate) => excluded.add(candidate.key));
+            }
+            if (failureKind === 'format') {
+                candidates
+                    .filter((candidate) => candidate.provider === gateway.provider && candidate.model === gateway.model)
                     .forEach((candidate) => excluded.add(candidate.key));
             }
             const message = `${gateway.label} falhou (${failureKind}): ${error?.message || error}`;

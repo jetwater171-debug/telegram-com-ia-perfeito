@@ -22,6 +22,7 @@ const {
     AdaptiveGatewayRouter,
     GatewayCapacityError,
     assertAiGatewayPayload,
+    buildInterleavedGatewayPriorities,
     classifyGatewayFailure,
     estimateAiTokens,
     resolveGatewayRatePolicy,
@@ -63,6 +64,18 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         /nenhuma mensagem utilizável/,
         'lista vazia não pode ser contabilizada como sucesso',
     );
+    const interleavedPriorities = buildInterleavedGatewayPriorities([
+        { provider: 'bai', model: 'glm', credentialPriority: 10 },
+        { provider: 'bai', model: 'qwen', credentialPriority: 10 },
+        { provider: 'gemini', model: '3.8', credentialPriority: 10 },
+        { provider: 'gemini', model: '3.7', credentialPriority: 10 },
+        { provider: 'nvidia', model: 'v4', credentialPriority: 10 },
+    ]);
+    const interleavedOrder = interleavedPriorities
+        .map((priority, index) => ({ priority, index }))
+        .sort((left, right) => left.priority - right.priority)
+        .map(({ index }) => index);
+    assert.deepEqual(interleavedOrder, [0, 2, 4, 1, 3], 'o primeiro modelo de cada provedor deve vir antes dos modelos secundários');
 
     const groqQuality = resolveGatewayRatePolicy('groq', 'openai/gpt-oss-120b', {});
     assert.ok(groqQuality.rpm >= 1_000_000, 'quota desconhecida não pode inventar um teto baixo');
@@ -174,7 +187,7 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         (error) => error instanceof GatewayCapacityError,
     );
 
-    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 shared_quota_group=1 credential_health_isolation=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1 payload_validation=1');
+    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 shared_quota_group=1 credential_health_isolation=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1 payload_validation=1 provider_interleave=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);
