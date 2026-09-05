@@ -40,7 +40,7 @@ const core = prompts.buildLariCorePrompt({
 
 assert.ok(core.length > 6_500, 'o contrato central precisa cobrir os cenários essenciais');
 assert.match(core, /pacote literal mais recente/i);
-assert.match(core, /PROMPT_VERSION: lari-whatsapp-memory-v1/i);
+assert.match(core, /PROMPT_VERSION: lari-sales-recovery-v2/i);
 assert.match(core, /Comece todos os balões visíveis com letra minúscula/i);
 assert.match(core, /4 a 7 palavras/i);
 assert.match(core, /Conversa comum continua comum/i);
