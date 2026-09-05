@@ -224,16 +224,20 @@ export const resolveGatewayLatencyBudget = ({
 }) => {
     const auxiliary = role === 'review' || role === 'evaluator';
     const operationalRepair = schemaName === 'operationalReply';
-    const totalMs = auxiliary ? 6_000 : operationalRepair ? 10_000 : 22_000;
+    // O contrato principal da Lari é grande. Cortes abaixo de ~15s faziam
+    // modelos saudáveis expirarem antes de concluir o JSON e deixavam o turno
+    // sem resposta. A revisão separada permanece desativada, então esta janela
+    // não é multiplicada por uma segunda chamada.
+    const totalMs = auxiliary ? 6_000 : operationalRepair ? 15_000 : 42_000;
     const providerAttemptMs = provider === 'bai'
-        ? 5_500
+        ? 10_000
         : provider === 'nvidia'
-            ? 7_500
-            : 9_000;
+            ? 16_000
+            : 18_000;
     const attemptMs = auxiliary
         ? Math.min(5_000, providerAttemptMs)
         : operationalRepair
-            ? Math.min(6_000, providerAttemptMs)
+            ? Math.min(12_000, providerAttemptMs)
             : providerAttemptMs;
     return { totalMs, attemptMs };
 };
