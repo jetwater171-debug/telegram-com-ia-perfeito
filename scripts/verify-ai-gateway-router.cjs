@@ -25,6 +25,7 @@ const {
     buildInterleavedGatewayPriorities,
     classifyGatewayFailure,
     estimateAiTokens,
+    resolveGatewayLatencyBudget,
     resolveGatewayRatePolicy,
 } = loadedModule.exports;
 
@@ -76,6 +77,9 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         .sort((left, right) => left.priority - right.priority)
         .map(({ index }) => index);
     assert.deepEqual(interleavedOrder, [0, 2, 4, 1, 3], 'o primeiro modelo de cada provedor deve vir antes dos modelos secundários');
+    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'gemini' }), { totalMs: 22_000, attemptMs: 9_000 });
+    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'nvidia' }), { totalMs: 22_000, attemptMs: 7_500 });
+    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'review', schemaName: 'reviewSchema', provider: 'gemini' }), { totalMs: 6_000, attemptMs: 5_000 });
 
     const groqQuality = resolveGatewayRatePolicy('groq', 'openai/gpt-oss-120b', {});
     assert.ok(groqQuality.rpm >= 1_000_000, 'quota desconhecida não pode inventar um teto baixo');
@@ -187,7 +191,7 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         (error) => error instanceof GatewayCapacityError,
     );
 
-    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 shared_quota_group=1 credential_health_isolation=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1 payload_validation=1 provider_interleave=1');
+    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 shared_quota_group=1 credential_health_isolation=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1 payload_validation=1 provider_interleave=1 latency_budget=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

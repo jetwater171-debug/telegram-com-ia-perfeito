@@ -213,6 +213,31 @@ export const buildInterleavedGatewayPriorities = (
     });
 };
 
+export const resolveGatewayLatencyBudget = ({
+    role,
+    schemaName,
+    provider,
+}: {
+    role: string;
+    schemaName: string;
+    provider?: string;
+}) => {
+    const auxiliary = role === 'review' || role === 'evaluator';
+    const operationalRepair = schemaName === 'operationalReply';
+    const totalMs = auxiliary ? 6_000 : operationalRepair ? 10_000 : 22_000;
+    const providerAttemptMs = provider === 'bai'
+        ? 5_500
+        : provider === 'nvidia'
+            ? 7_500
+            : 9_000;
+    const attemptMs = auxiliary
+        ? Math.min(5_000, providerAttemptMs)
+        : operationalRepair
+            ? Math.min(6_000, providerAttemptMs)
+            : providerAttemptMs;
+    return { totalMs, attemptMs };
+};
+
 export const classifyGatewayFailure = (error: unknown): GatewayFailureKind => {
     const message = String((error as any)?.message || error || '').toLowerCase();
     const status = Number((error as any)?.status || 0);

@@ -40,6 +40,7 @@ import {
     classifyGatewayFailure,
     estimateAiTokens,
     GatewayCapacityError,
+    resolveGatewayLatencyBudget,
     resolveGatewayRatePolicy,
     type GatewayRatePolicy,
     type GatewayRouteCandidate,
@@ -1618,7 +1619,11 @@ const callAiGatewayJson = async <T,>(options: {
     routingKey?: string;
 }): Promise<{ data: T; gateway: AiGatewayConfig; attempts: string[] }> => {
     const routeStartedAt = Date.now();
-    const totalDeadlineMs = Math.max(5_000, Number(process.env.AI_GATEWAY_TOTAL_DEADLINE_MS || 45_000));
+    const latencyBudget = resolveGatewayLatencyBudget({ role: options.role, schemaName: options.schemaName });
+    const configuredDeadlineMs = Number(process.env.AI_GATEWAY_TOTAL_DEADLINE_MS || 0);
+    const totalDeadlineMs = configuredDeadlineMs > 0
+        ? Math.max(5_000, Math.min(configuredDeadlineMs, latencyBudget.totalMs))
+        : latencyBudget.totalMs;
     const deadlineAt = routeStartedAt + totalDeadlineMs;
     const mediaMimeType = String(options.mediaPart?.inlineData?.mimeType || '').trim();
     const hasMedia = Boolean(mediaMimeType);
@@ -1727,7 +1732,12 @@ const callAiGatewayJson = async <T,>(options: {
             estimatedInputTokens: estimatedTokens,
             metadata: { attemptNumber: requestCount, queueWaitMs: lease.queueWaitMs },
         });
-        const requestTimeoutMs = Math.max(1_000, Math.min(policy.timeoutMs, deadlineAt - Date.now()));
+        const attemptBudget = resolveGatewayLatencyBudget({
+            role: options.role,
+            schemaName: options.schemaName,
+            provider: gateway.provider,
+        }).attemptMs;
+        const requestTimeoutMs = Math.max(1_000, Math.min(policy.timeoutMs, attemptBudget, deadlineAt - Date.now()));
         const sharedCapacity = await reserveSharedGatewayCapacity(options.settings, gateway, policy, estimatedTokens);
         if (sharedCapacity?.allowed === false) {
             lease.cancelBeforeDispatch();
