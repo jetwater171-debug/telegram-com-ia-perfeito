@@ -108,39 +108,7 @@ export async function GET(req: NextRequest) {
             }
         }
 
-        let recovery: Record<string, unknown> | null = null;
-        if (req.nextUrl.searchParams.get('recover_recent') === process.env.VERCEL_GIT_COMMIT_SHA) {
-            const since = new Date(Date.now() - 20 * 60_000).toISOString();
-            const { data: recentMessages, error: recentError } = await supabase
-                .from('messages')
-                .select('id,session_id,sender,created_at')
-                .gte('created_at', since)
-                .order('created_at', { ascending: false })
-                .limit(80);
-            if (recentError) throw recentError;
-
-            const latestBySession = new Map<string, any>();
-            for (const message of recentMessages || []) {
-                const key = String(message.session_id || '');
-                if (key && !latestBySession.has(key)) latestBySession.set(key, message);
-            }
-            const unanswered = [...latestBySession.values()]
-                .filter((message) => message.sender === 'user')
-                .slice(0, 5);
-            const workerUrl = `${req.headers.get('x-forwarded-proto') || 'https'}://${req.headers.get('host')}/api/process-message`;
-            const results = await Promise.all(unanswered.map((message) => triggerProcessMessageWithRetry({
-                workerUrl,
-                sessionId: String(message.session_id),
-                triggerMessageId: String(message.id),
-            })));
-            recovery = {
-                found: unanswered.length,
-                completed: results.filter((result) => result.status && result.status >= 200 && result.status < 300).length,
-                results: results.map((result) => ({ status: result.status, attempts: result.attempts, retryable: result.retryable })),
-            };
-        }
-
-        return NextResponse.json({ status: 'Online', checks, webhookInfo, routerDiagnostic, recovery }, { status: 200 });
+        return NextResponse.json({ status: 'Online', checks, webhookInfo, routerDiagnostic }, { status: 200 });
     } catch (e: any) {
         return NextResponse.json({ status: 'Error', error: e.message, checks }, { status: 500 });
     }
