@@ -1143,9 +1143,10 @@ const getAiRuntimeSettings = async (): Promise<AiRuntimeSettings> => {
         aiDraftModelOrder: settings.ai_draft_model_order || process.env.AI_DRAFT_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
         aiReviewModelOrder: settings.ai_review_model_order || process.env.AI_REVIEW_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
         aiEvaluatorModelOrder: settings.ai_evaluator_model_order || process.env.AI_EVALUATOR_MODEL_ORDER || DEFAULT_PROVIDER_ORDER,
-        // Estrategia, voz e action vivem no Master Brain da chamada principal.
+        // Estratégia, revisão, voz e action vivem no Master Brain da chamada
+        // principal. Não fazemos uma segunda chamada antes de responder o lead.
         aiStrategyEnabled: false,
-        aiReviewEnabled: true,
+        aiReviewEnabled: false,
         aiEvaluatorEnabled: false,
         aiSharedRateLimitEnabled: settings.ai_shared_rate_limit_enabled !== "false" && process.env.AI_SHARED_RATE_LIMIT_ENABLED !== "false",
         openRouterStrategyModel: normalizeOpenRouterPrimaryModel(settings.openrouter_strategy_model || process.env.OPENROUTER_STRATEGY_MODEL || DEFAULT_OPENROUTER_MODELS.strategy),
