@@ -51,34 +51,29 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
     assert.equal(classifyGatewayFailure(Object.assign(new Error('invalid key'), { status: 401 })), 'auth');
     assert.ok(estimateAiTokens('abcd'.repeat(100)) >= 100);
 
-    const groqInstant = resolveGatewayRatePolicy('groq', 'llama-3.1-8b-instant', {});
-    assert.equal(groqInstant.rpm, 30);
-    assert.equal(groqInstant.rpd, 14_400);
-    const groqQuality = resolveGatewayRatePolicy('groq', 'openai/gpt-oss-20b', {});
-    assert.equal(groqQuality.rpd, 1_000);
-    const groqOverride = resolveGatewayRatePolicy('groq', 'openai/gpt-oss-20b', { GROQ_GATEWAY_RPM: '17' });
+    const groqQuality = resolveGatewayRatePolicy('groq', 'openai/gpt-oss-120b', {});
+    assert.ok(groqQuality.rpm >= 1_000_000, 'quota desconhecida não pode inventar um teto baixo');
+    const groqOverride = resolveGatewayRatePolicy('groq', 'openai/gpt-oss-120b', { GROQ_GATEWAY_RPM: '17' });
     assert.equal(groqOverride.rpm, 17);
-    const nvidia = resolveGatewayRatePolicy('nvidia', 'meta/llama-3.1-8b-instruct', {});
-    assert.equal(nvidia.rpm, 20);
+    const nvidia = resolveGatewayRatePolicy('nvidia', 'deepseek-ai/deepseek-v4-pro-0813', {});
+    assert.ok(nvidia.rpm >= 1_000_000);
     assert.equal(nvidia.maxConcurrency, 4);
-    const nvidiaOverride = resolveGatewayRatePolicy('nvidia', 'meta/llama-3.1-8b-instruct', { NVIDIA_GATEWAY_RPM: '11' });
+    const nvidiaOverride = resolveGatewayRatePolicy('nvidia', 'deepseek-ai/deepseek-v4-pro-0813', { NVIDIA_GATEWAY_RPM: '11' });
     assert.equal(nvidiaOverride.rpm, 11);
-    const geminiQuality = resolveGatewayRatePolicy('gemini', 'gemini-3.7-flash', {});
-    assert.equal(geminiQuality.rpd, 20);
-    assert.equal(geminiQuality.tpm, 1_000_000);
-    const geminiCapacity = resolveGatewayRatePolicy('gemini', 'gemini-3.5-flash-lite', {});
-    assert.equal(geminiCapacity.rpd, 500);
+    const geminiQuality = resolveGatewayRatePolicy('gemini', 'gemini-3.8-flash', {});
+    assert.ok(geminiQuality.rpd >= 1_000_000);
+    assert.ok(geminiQuality.tpm >= 1_000_000_000);
     const bai = resolveGatewayRatePolicy('bai', 'deepseek-v4-flash', {});
-    assert.equal(bai.rpm, 60);
+    assert.ok(bai.rpm >= 1_000_000);
     assert.equal(bai.maxConcurrency, 12);
-    assert.equal(bai.tpm, 1_000_000);
+    assert.ok(bai.tpm >= 1_000_000_000);
     const baiOverride = resolveGatewayRatePolicy('bai', 'deepseek-v4-flash', { BAI_GATEWAY_CONCURRENCY: '7' });
     assert.equal(baiOverride.maxConcurrency, 7);
 
     for (let index = 0; index < 128; index += 1) {
         const strictRouter = new AdaptiveGatewayRouter();
-        const strictPrimary = candidate('gemini:gemini-3.7-flash', 1, {}, 0);
-        const strictSecond = candidate('gemini:gemini-3.6-flash', 100, {}, 1);
+        const strictPrimary = candidate('gemini:gemini-3.8-flash', 1, {}, 0);
+        const strictSecond = candidate('gemini:gemini-3.7-flash', 100, {}, 1);
         const strictThird = candidate('groq:openai/gpt-oss-120b', 1000, {}, 2);
         const strictLease = await strictRouter.acquire(
             [strictPrimary, strictSecond, strictThird],
@@ -132,13 +127,21 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
     assert.notEqual(healthyLease.candidate.key, brokenKey, 'auth circuit must remove the failing gateway');
     healthyLease.succeed(25);
 
+    const retryRouter = new AdaptiveGatewayRouter();
+    const retryLease = await retryRouter.acquire([candidate('gemini:retry')], { routingKey: 'retry', estimatedTokens: 25, maxQueueMs: 0 });
+    retryLease.recordRetry(25);
+    retryLease.succeed(30, 25);
+    const retrySnapshot = retryRouter.snapshot().find((item) => item.key === 'gemini:retry');
+    assert.equal(retrySnapshot.minuteRequests, 2, 'retry deve consumir outra unidade de RPM');
+    assert.equal(retrySnapshot.minuteTokens, 50, 'retry deve reservar tokens novamente');
+
     const emptyRouter = new AdaptiveGatewayRouter();
     await assert.rejects(
         () => emptyRouter.acquire([], { routingKey: 'empty', estimatedTokens: 1, maxQueueMs: 0 }),
         (error) => error instanceof GatewayCapacityError,
     );
 
-    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 env_limits=1 gemini_quota=1 nvidia=1 bai=1');
+    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

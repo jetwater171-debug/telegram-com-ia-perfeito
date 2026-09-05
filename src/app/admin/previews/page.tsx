@@ -64,8 +64,8 @@ export default function AdminPreviewsPage() {
     const [loadingPage, setLoadingPage] = useState(true);
     const [message, setMessage] = useState("");
     const [modelSettings, setModelSettings] = useState({
-        primaryModel: "google/gemini-2.5-flash",
-        fallbackModel: "dots-studio/dots-3-note-preview:free",
+        primaryModel: "google/gemini-3.8-flash",
+        fallbackModel: "google/gemini-3.7-flash",
         openRouterConfigured: false,
     });
     const [manual, setManual] = useState({ name: "", description: "", tags: "" });

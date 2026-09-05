@@ -31,13 +31,14 @@ assert.match(catalog, /id: "hy3", label: [^\n]+ acceptsImage: false/);
 assert.match(models, /DEFAULT_BAI_MODEL\s*=\s*BAI_TEXT_MODEL_ORDER\[0\]/);
 assert.match(models, /BAI_MODEL_BY_ID\.get\(normalized\)\?\.id \|\| DEFAULT_BAI_MODEL/);
 assert.match(gemini, /type AiProvider = [^\n]*["']bai["']/);
-assert.match(gemini, /DEFAULT_PROVIDER_ORDER\s*=\s*["']bai,openrouter,/);
+assert.match(gemini, /DEFAULT_PROVIDER_ORDER\s*=\s*["']bai,gemini,nvidia,openrouter,groq,cerebras,custom["']/);
 assert.match(gemini, /BAI_TEXT_MODEL_ORDER\.forEach\(\(baiModel, index\) => addProvider\(/);
 assert.match(gemini, /provider:\s*["']bai["']/);
 assert.match(gemini, /https:\/\/api\.b\.ai\/v1/);
-assert.match(gemini, /const providerOnly = hasImage \? ["']bai["'] : hasMedia \? ["']gemini["'] : options\.providerOnly/);
-assert.match(gemini, /!hasImage \|\| gateway\.provider !== ["']bai["'] \|\| isBaiVisionModel\(gateway\.model\)/);
-assert.match(gemini, /gateway\.provider === ["']bai["'] && failureKind === ["']auth["']/);
+assert.match(gemini, /const providerOnly = hasMedia && !hasImage \? ["']gemini["'] : options\.providerOnly/);
+assert.match(gemini, /gateway\.provider === 'bai' && isBaiVisionModel\(gateway\.model\)/);
+assert.match(gemini, /gateway\.provider === 'nvidia' && isNvidiaVisionModel\(gateway\.model\)/);
+assert.match(gemini, /if \(failureKind === ["']auth["']\)/);
 
 assert.match(adminApi, /provider === ["']bai["'][\s\S]*?\$\{config\.base\}\/models/);
 assert.match(adminApi, /availableModels = BAI_TEXT_MODEL_ORDER\.filter/);

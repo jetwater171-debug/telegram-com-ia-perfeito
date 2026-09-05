@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BAI_IMAGE_MODEL_ORDER, BAI_MODEL_CATALOG, BAI_TEXT_MODEL_ORDER, DEFAULT_BAI_MODEL, DEFAULT_GEMINI_LITE_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from "@/lib/aiModels";
+import { BAI_IMAGE_MODEL_ORDER, BAI_MODEL_CATALOG, BAI_TEXT_MODEL_ORDER, DEFAULT_BAI_MODEL, DEFAULT_GEMINI_LITE_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_NVIDIA_MODEL, DEFAULT_OPENROUTER_MODEL } from "@/lib/aiModels";
 
 type ProviderKey = "bai" | "gemini" | "groq" | "nvidia" | "cloudflare" | "mistral" | "openrouter" | "cerebras" | "custom";
 type SaveState = "loading" | "idle" | "saving" | "saved" | "error";
@@ -46,15 +46,15 @@ type VoiceBudgetMetrics = {
     totals: { charged: number; reserved: number; released: number; acquisition: number; buyers: number; leads: number };
 };
 
-const PROVIDER_ORDER: ProviderKey[] = ["bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"];
+const PROVIDER_ORDER: ProviderKey[] = ["bai", "gemini", "nvidia", "openrouter", "groq", "cerebras", "custom"];
 const PROVIDER_INFO: Record<ProviderKey, { label: string; short: string; description: string; keyUrl: string; keyLabel: string; color: string }> = {
     bai: { label: "B.AI · Roteador de 3 modelos gratuitos", short: "Principal · fallback interno", description: "Tenta apenas os modelos gratuitos da própria B.AI, do melhor para o pior. Limite, timeout ou resposta inválida fazem a Lari seguir automaticamente para o próximo.", keyUrl: "https://chat.b.ai/chat", keyLabel: "Abrir B.AI e gerar chave", color: "from-emerald-400 to-cyan-300" },
-    gemini: { label: "Google Gemini", short: "Mídia + recuperação", description: "Cuida de áudio e vídeo e assume como recuperação externa se todos os modelos B.AI falharem.", keyUrl: "https://aistudio.google.com/apikey", keyLabel: "Pegar chave no Google AI Studio", color: "from-blue-400 to-cyan-300" },
+    gemini: { label: "Google Gemini", short: "Somente 3.5 a 3.8", description: "Usa apenas Gemini 3.8, 3.7, 3.6 e 3.5 Flash. Configurações 2.x, Lite ou desconhecidas são promovidas automaticamente para o piso 3.6.", keyUrl: "https://aistudio.google.com/apikey", keyLabel: "Pegar chave no Google AI Studio", color: "from-blue-400 to-cyan-300" },
     groq: { label: "Groq", short: "Muito rápido", description: "Absorve conversas de texto com baixa latência e reduz a carga do Gemini.", keyUrl: "https://console.groq.com/keys", keyLabel: "Pegar chave na Groq", color: "from-orange-400 to-amber-300" },
-    nvidia: { label: "NVIDIA NIM", short: "Modelos hospedados", description: "Rota oficial NVIDIA com modelos rápidos para distribuir as conversas e aliviar os provedores principais.", keyUrl: "https://build.nvidia.com/settings/api-keys", keyLabel: "Pegar chave na NVIDIA", color: "from-lime-400 to-green-300" },
+    nvidia: { label: "NVIDIA NIM", short: "4 modelos oficiais", description: "DeepSeek V4 Pro/Flash, Kimi K3 e Nemotron. O endpoint grátis do NVIDIA Build é avaliação; em produção use um NIM licenciado ou endpoint contratado.", keyUrl: "https://build.nvidia.com/settings/api-keys", keyLabel: "Pegar chave na NVIDIA", color: "from-lime-400 to-green-300" },
     cloudflare: { label: "Cloudflare Workers AI", short: "Reserva barata", description: "Boa capacidade diária para o cérebro econômico dos primeiros contatos.", keyUrl: "https://dash.cloudflare.com/profile/api-tokens", keyLabel: "Criar token na Cloudflare", color: "from-amber-400 to-yellow-200" },
     mistral: { label: "Mistral", short: "Fallback oficial", description: "Rota oficial adicional quando os provedores principais estiverem cheios.", keyUrl: "https://console.mistral.ai/api-keys", keyLabel: "Pegar chave na Mistral", color: "from-red-400 to-orange-300" },
-    openrouter: { label: "OpenRouter", short: "Agregador", description: "Última reserva com vários modelos e fallback interno automático.", keyUrl: "https://openrouter.ai/settings/keys", keyLabel: "Pegar chave no OpenRouter", color: "from-violet-400 to-fuchsia-300" },
+    openrouter: { label: "OpenRouter", short: "DeepSeek controlado", description: "Reserva externa usando somente o modelo aprovado; o fallback interno do agregador fica desligado para não trocar por um modelo fraco escondido.", keyUrl: "https://openrouter.ai/settings/keys", keyLabel: "Pegar chave no OpenRouter", color: "from-violet-400 to-fuchsia-300" },
     cerebras: { label: "Cerebras", short: "Trial rápido", description: "Rota rápida para clientes compradores enquanto houver crédito disponível.", keyUrl: "https://cloud.cerebras.ai/", keyLabel: "Abrir Cerebras Cloud", color: "from-emerald-400 to-lime-300" },
     custom: { label: "Gateway próprio", short: "OpenAI-compatible", description: "LiteLLM, 9Router, FreeLLMAPI ou outro endpoint administrado por você.", keyUrl: "", keyLabel: "", color: "from-slate-400 to-slate-200" },
 };
@@ -77,7 +77,7 @@ const emptySettings: AiSettings = {
     openrouterBaseUrl: "https://openrouter.ai/api/v1", openrouterReferer: "", openrouterTitle: "Lari Telegram Bot",
     openrouterStrategyModel: DEFAULT_OPENROUTER_MODEL, openrouterDraftModel: DEFAULT_OPENROUTER_MODEL, openrouterReviewModel: DEFAULT_OPENROUTER_MODEL, openrouterEvaluatorModel: DEFAULT_OPENROUTER_MODEL,
     geminiStrategyModel: DEFAULT_GEMINI_LITE_MODEL, geminiDraftModel: DEFAULT_GEMINI_MODEL, geminiReviewModel: DEFAULT_GEMINI_MODEL, geminiEvaluatorModel: DEFAULT_GEMINI_LITE_MODEL,
-    baiModel: DEFAULT_BAI_MODEL, groqModel: "openai/gpt-oss-120b", groqStarterModel: "openai/gpt-oss-20b", nvidiaModel: "meta/llama-3.1-8b-instruct", mistralModel: "mistral-small-latest", cerebrasModel: "gpt-oss-120b", cloudflareModel: "@cf/openai/gpt-oss-20b",
+    baiModel: DEFAULT_BAI_MODEL, groqModel: "openai/gpt-oss-120b", groqStarterModel: "openai/gpt-oss-120b", nvidiaModel: DEFAULT_NVIDIA_MODEL, mistralModel: "mistral-small-latest", cerebrasModel: "gpt-oss-120b", cloudflareModel: "@cf/openai/gpt-oss-20b",
     cloudflareAccountId: "", customBaseUrl: "", customModel: "auto", customTiers: "starter,buyer", customWeight: 5,
     fishAudioEnabled: false, fishAudioVoiceId: "vcYWBf5QTtDLdbfB20xT", fishAudioModel: "eleven_v3",
     fishAudioFrequencyPercent: 18, fishAudioCooldownMinutes: 30, fishAudioMaxChars: 300,
@@ -264,7 +264,7 @@ export default function AdminAiPage() {
 
     const useRecommendedOrder = () => {
         setOrder(PROVIDER_ORDER);
-        setSettings((current) => ({ ...current, aiStrategyEnabled: true, aiReviewEnabled: true, aiEvaluatorEnabled: false, aiSharedRateLimitEnabled: true }));
+        setSettings((current) => ({ ...current, aiStrategyEnabled: false, aiReviewEnabled: true, aiEvaluatorEnabled: false, aiSharedRateLimitEnabled: true }));
     };
 
     const providerTotals = useCallback((provider: ProviderKey) => {
@@ -325,26 +325,29 @@ export default function AdminAiPage() {
                     <div>
                         <p className="admin-eyebrow">Master Brain</p>
                         <h1 className="admin-page-title">Inteligência da Lari</h1>
-                        <p className="admin-page-subtitle mt-2">Três modelos gratuitos da B.AI em ordem de qualidade, com visão multimodal e recuperação automática.</p>
+                        <p className="admin-page-subtitle mt-2">Um único router de qualidade, com Gemini 3.x forte, B.AI, NVIDIA e recuperação automática entre credenciais autorizadas.</p>
                     </div>
-                    <SaveBadge state={saveState} message={message} />
+                    <div className="flex flex-wrap items-center gap-3">
+                        <a href="/admin/ai/capacity" className="rounded-xl border border-cyan-300/30 bg-cyan-300/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 hover:bg-cyan-300/15">Ver capacidade e consumo</a>
+                        <SaveBadge state={saveState} message={message} />
+                    </div>
                 </div>
             </header>
 
             <main className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 xl:grid-cols-[minmax(0,1fr)_360px]">
                 <section className="space-y-6">
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <TierCard title="Rota rápida" value="1 chamada" detail="Decisão e resposta estruturadas" color="cyan" />
-                        <TierCard title="Turno crítico" value="2 camadas" detail="Resposta + revisão adaptativa" color="blue" />
-                        <TierCard title="Comprador" value="3 camadas" detail="Planejamento quando necessário" color="violet" />
-                        <TierCard title="Elite" value="até 4" detail="Avaliadora final seletiva" color="emerald" />
+                        <TierCard title="Piso Gemini" value="3.5 Flash" detail="Nunca usa Gemini 2.x ou Lite" color="cyan" />
+                        <TierCard title="Router" value="1 caminho" detail="Sem filas paralelas escondidas" color="blue" />
+                        <TierCard title="Qualidade" value="todos os leads" detail="Mesmos modelos fortes em todo nível" color="violet" />
+                        <TierCard title="Proteção" value="45 segundos" detail="Retry curto + fallback saudável" color="emerald" />
                     </div>
 
                     <div className="admin-card border-cyan-300/20 bg-cyan-300/[0.055] p-5">
                         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                                 <h2 className="text-lg font-semibold">Rota recomendada e segura</h2>
-                                <p className="mt-1 text-sm text-slate-400">B.AI tenta sua fila interna completa → Gemini e outros provedores entram somente como recuperação externa.</p>
+                                <p className="mt-1 text-sm text-slate-400">B.AI → Gemini 3.8/3.7/3.6/3.5 → NVIDIA → DeepSeek no OpenRouter → GPT-OSS 120B. Só modelos aprovados entram.</p>
                             </div>
                             <button type="button" onClick={useRecommendedOrder} className="rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-200">Usar ordem recomendada</button>
                         </div>

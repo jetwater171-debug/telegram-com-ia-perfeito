@@ -56,10 +56,11 @@ try {
   assert.match(processor, /eventType: 'payment_code_sent'/);
   assert.match(processor, /eventType: 'voice_sent'/);
   assert.match(processor, /eventType: 'voice_failed'/);
-  assert.match(gateway, /if \(count >= 2\) return false/);
+  assert.match(gateway, /AI_GATEWAY_MAX_CANDIDATES_PER_CREDENTIAL/);
+  assert.match(gateway, /AI_GATEWAY_TOTAL_DEADLINE_MS/);
   assert.match(gateway, /prompt estimado em \$\{estimatedTokens\} tokens excede a capacidade configurada/);
 
-  console.log('AI_TOOLS_CONTRACT_OK actions=4 previews=5 runtime=3 strict_pix=1 voice_events=2 bounded_fallback=1');
+  console.log('AI_TOOLS_CONTRACT_OK actions=4 previews=5 runtime=3 strict_pix=1 voice_events=2 bounded_fallback=1 total_deadline=1');
 } catch (error) {
   console.error(`AI_TOOLS_CONTRACT_FAIL ${error.message}`);
   process.exitCode = 1;

@@ -7,9 +7,11 @@ import {
     DEFAULT_GEMINI_MODEL,
     DEFAULT_GROQ_QUALITY_MODEL,
     DEFAULT_GROQ_STARTER_MODEL,
+    DEFAULT_NVIDIA_MODEL,
     DEFAULT_OPENROUTER_MODEL,
     normalizeGeminiModelName,
     normalizeGroqModelName,
+    normalizeNvidiaModelName,
     normalizeOpenRouterPrimaryModel,
 } from "@/lib/aiModels";
 import { DEFAULT_ELEVENLABS_SETTINGS, normalizeElevenLabsModel } from "@/lib/elevenLabs";
@@ -19,9 +21,11 @@ import {
     normalizeElevenLabsBudgetConfig,
 } from "@/lib/elevenLabsBudget";
 import { aiGatewayRouter } from "@/lib/aiGatewayRouter";
+import { loadAiGatewayUsageRolling } from "@/lib/aiGatewayTelemetry";
 
 const PROVIDERS = ["bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"] as const;
 type ProviderKey = typeof PROVIDERS[number];
+const ACTIVE_PROVIDERS: ProviderKey[] = ["bai", "gemini", "nvidia", "openrouter", "groq", "cerebras", "custom"];
 
 const CONFIG_KEYS = [
     "bai_api_key", "bai_model",
@@ -34,7 +38,6 @@ const CONFIG_KEYS = [
     "ai_strategy_enabled", "ai_review_enabled", "ai_evaluator_enabled", "ai_shared_rate_limit_enabled",
     "openrouter_strategy_model", "openrouter_draft_model", "openrouter_review_model", "openrouter_evaluator_model",
     "gemini_strategy_model", "gemini_draft_model", "gemini_review_model", "gemini_evaluator_model",
-    "ai_gateway_recent_events", "ai_gateway_stats",
     "fish_audio_api_key", "fish_audio_enabled", "fish_audio_voice_id", "fish_audio_model",
     "fish_audio_frequency_percent", "fish_audio_cooldown_minutes", "fish_audio_max_chars",
     "elevenlabs_api_key", "elevenlabs_enabled", "elevenlabs_voice_id", "elevenlabs_model",
@@ -50,7 +53,7 @@ const DEFAULTS = {
     openrouter_base_url: "https://openrouter.ai/api/v1",
     openrouter_referer: process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
     openrouter_title: "Lari Telegram Bot",
-    provider_order: PROVIDERS.join(","),
+    provider_order: ACTIVE_PROVIDERS.join(","),
     openrouter_strategy_model: process.env.OPENROUTER_STRATEGY_MODEL || DEFAULT_OPENROUTER_MODEL,
     openrouter_draft_model: process.env.OPENROUTER_DRAFT_MODEL || DEFAULT_OPENROUTER_MODEL,
     openrouter_review_model: process.env.OPENROUTER_REVIEW_MODEL || DEFAULT_OPENROUTER_MODEL,
@@ -61,7 +64,7 @@ const DEFAULTS = {
     gemini_evaluator_model: normalizeGeminiModelName(process.env.GEMINI_EVALUATOR_MODEL || process.env.GEMINI_MODEL, DEFAULT_GEMINI_LITE_MODEL),
     groq_model: normalizeGroqModelName(process.env.GROQ_DRAFT_MODEL, DEFAULT_GROQ_QUALITY_MODEL),
     groq_starter_model: normalizeGroqModelName(process.env.GROQ_STARTER_MODEL, DEFAULT_GROQ_STARTER_MODEL),
-    nvidia_model: process.env.NVIDIA_DRAFT_MODEL || "meta/llama-3.1-8b-instruct",
+    nvidia_model: normalizeNvidiaModelName(process.env.NVIDIA_DRAFT_MODEL || DEFAULT_NVIDIA_MODEL),
     mistral_model: process.env.MISTRAL_DRAFT_MODEL || "mistral-small-latest",
     cerebras_model: process.env.CEREBRAS_DRAFT_MODEL || "gpt-oss-120b",
     cloudflare_model: process.env.CLOUDFLARE_DRAFT_MODEL || "@cf/openai/gpt-oss-20b",
@@ -80,10 +83,6 @@ const readSecret = (value?: string | null) => {
     return secret;
 };
 
-const parseJson = (value: string, fallback: any) => {
-    try { return JSON.parse(value || ""); } catch { return fallback; }
-};
-
 const cleanText = (value: unknown, fallback = "", maxLength = 500) => String(value || fallback).trim().slice(0, maxLength);
 const clampNumber = (value: unknown, min: number, max: number, fallback: number) => {
     const number = Number(value);
@@ -94,11 +93,41 @@ const normalizeProviderOrder = (value?: string) => {
     const parts = String(value || "")
         .split(",")
         .map((item) => item.trim().toLowerCase().split(":")[0] as ProviderKey)
-        .filter((item): item is ProviderKey => PROVIDERS.includes(item));
+        .filter((item): item is ProviderKey => ACTIVE_PROVIDERS.includes(item));
     const legacyTwoProviderOrder = parts.length > 0 && parts.every((provider) => provider === "openrouter" || provider === "gemini");
-    if (legacyTwoProviderOrder) return PROVIDERS.join(",");
-    if (!parts.includes("bai")) return Array.from(new Set(["bai", ...parts, ...PROVIDERS])).join(",");
-    return Array.from(new Set([...parts, ...PROVIDERS])).join(",");
+    if (legacyTwoProviderOrder) return ACTIVE_PROVIDERS.join(",");
+    if (!parts.includes("bai")) return Array.from(new Set(["bai", ...parts, ...ACTIVE_PROVIDERS])).join(",");
+    return Array.from(new Set([...parts, ...ACTIVE_PROVIDERS])).join(",");
+};
+
+const loadGatewayDashboard = async () => {
+    const rolling = await loadAiGatewayUsageRolling();
+    const stats = rolling.rows.map((row: any) => ({
+        role: "all",
+        provider: row.provider,
+        model: row.model,
+        success: Number(row.successes || 0),
+        error: Number(row.errors || 0),
+        skipped: 0,
+    }));
+    const { data, error } = await supabase
+        .from("ai_gateway_usage_events")
+        .select("occurred_at,role,tier,provider,model,status,duration_ms,error_message")
+        .order("occurred_at", { ascending: false })
+        .limit(80);
+    const migrationMissing = error && /ai_gateway_usage_events|schema cache|does not exist/i.test(String(error.message || ""));
+    if (error && !migrationMissing) throw error;
+    const recentEvents = (data || []).map((row: any) => ({
+        at: row.occurred_at,
+        role: row.role || "unknown",
+        tier: row.tier || "unknown",
+        provider: row.provider,
+        model: row.model,
+        status: row.status,
+        message: row.error_message || "",
+        durationMs: Number(row.duration_ms || 0),
+    }));
+    return { stats, recentEvents };
 };
 
 const loadMap = async () => {
@@ -209,8 +238,6 @@ const buildSettings = (map: Record<string, string>) => {
 export async function GET() {
     try {
         const map = await loadMap();
-        const statsMap = parseJson(map.ai_gateway_stats || "{}", {});
-        const stats = Object.values(statsMap).sort((a: any, b: any) => Number(b.error || 0) - Number(a.error || 0));
         const settings = buildSettings(map);
         const voiceBudget = await loadElevenLabsBudgetDashboard({
             supabase,
@@ -230,7 +257,8 @@ export async function GET() {
                 buyerMaxChars: settings.fishAudioBuyerMaxChars,
             }),
         });
-        return NextResponse.json({ settings, voiceBudget, recentEvents: parseJson(map.ai_gateway_recent_events || "[]", []), stats, routerSnapshot: aiGatewayRouter.snapshot() });
+        const dashboard = await loadGatewayDashboard();
+        return NextResponse.json({ settings, voiceBudget, ...dashboard, routerSnapshot: aiGatewayRouter.snapshot() });
     } catch (error: any) {
         return NextResponse.json({ error: error?.message || "erro" }, { status: 500 });
     }
@@ -266,7 +294,7 @@ export async function POST(req: NextRequest) {
             { key: "gemini_evaluator_model", value: normalizeGeminiModelName(body.geminiEvaluatorModel, DEFAULTS.gemini_evaluator_model) },
             { key: "groq_model", value: normalizeGroqModelName(cleanText(body.groqModel, DEFAULTS.groq_model), DEFAULTS.groq_model) },
             { key: "groq_starter_model", value: normalizeGroqModelName(cleanText(body.groqStarterModel, DEFAULTS.groq_starter_model), DEFAULTS.groq_starter_model) },
-            { key: "nvidia_model", value: cleanText(body.nvidiaModel, DEFAULTS.nvidia_model) },
+            { key: "nvidia_model", value: normalizeNvidiaModelName(cleanText(body.nvidiaModel, DEFAULTS.nvidia_model)) },
             { key: "mistral_model", value: cleanText(body.mistralModel, DEFAULTS.mistral_model) },
             { key: "cerebras_model", value: cleanText(body.cerebrasModel, DEFAULTS.cerebras_model) },
             { key: "cloudflare_model", value: cleanText(body.cloudflareModel, DEFAULTS.cloudflare_model) },
@@ -395,10 +423,7 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE() {
     try {
-        const { error } = await supabase.from("bot_settings").upsert([
-            { key: "ai_gateway_recent_events", value: "[]" },
-            { key: "ai_gateway_stats", value: "{}" },
-        ]);
+        const { error } = await supabase.from("ai_gateway_usage_events").delete().not("id", "is", null);
         if (error) throw error;
         return NextResponse.json({ ok: true });
     } catch (error: any) {

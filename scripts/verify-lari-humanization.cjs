@@ -115,7 +115,7 @@ assert.equal(starter.reviewMode, 'critical');
 assert.equal(orchestration.shouldRunAiReview(starter, true), true);
 assert.equal(orchestration.shouldRunAiReview(starter, false), false);
 assert.equal(models.normalizeGeminiModelName('gemini-3.5-flash'), 'gemini-3.5-flash');
-assert.equal(models.normalizeGroqModelName('llama-3.1-8b-instant'), 'openai/gpt-oss-20b');
+assert.equal(models.normalizeGroqModelName('llama-3.1-8b-instant'), 'openai/gpt-oss-120b');
 
 const firstBubbleDelay = timing.humanTextDelayMs({
     text: 'legal te conhecer, leo',

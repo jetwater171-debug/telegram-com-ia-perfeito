@@ -211,7 +211,7 @@ Ação sugerida: ${cleanText(input.action, 80) || 'nenhuma'}`;
                     type: 'json_schema',
                     json_schema: { name: 'missing_photo_request', strict: true, schema: requestSchema },
                 },
-                provider: { require_parameters: true, allow_fallbacks: true },
+                provider: { require_parameters: true, allow_fallbacks: false },
             }),
         });
         const raw = await response.text();

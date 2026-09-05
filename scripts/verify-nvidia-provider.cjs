@@ -7,11 +7,21 @@ const gateway = read('src/lib/gemini.ts');
 const router = read('src/lib/aiGatewayRouter.ts');
 const api = read('src/app/api/admin/ai-settings/route.ts');
 const page = read('src/app/admin/ai/page.tsx');
+const models = read('src/lib/aiModels.ts');
 
 assert.match(gateway, /provider: 'nvidia'/);
 assert.match(gateway, /https:\/\/integrate\.api\.nvidia\.com\/v1/);
 assert.match(gateway, /NVIDIA_API_KEY/);
-assert.match(gateway, /meta\/llama-3\.1-8b-instruct/);
+for (const model of [
+    'deepseek-ai/deepseek-v4-pro-0813',
+    'deepseek-ai/deepseek-v4-flash-0731',
+    'moonshotai/kimi-k3',
+    'nvidia/nemotron-3.5-lightning-30b-a3b',
+]) assert.match(models, new RegExp(model.replace(/[.]/g, '\\.'), 'i'));
+assert.match(gateway, /NVIDIA_TEXT_MODEL_ORDER/);
+assert.match(gateway, /NVIDIA_ALLOW_TRIAL_ENDPOINT_IN_PRODUCTION/);
+assert.match(gateway, /body\.chat_template_kwargs/);
+assert.match(gateway, /body\.reasoning_budget/);
 assert.match(router, /normalizedProvider === 'nvidia'/);
 assert.match(api, /nvidia_api_key/);
 assert.match(api, /provider === "nvidia"/);
@@ -19,4 +29,4 @@ assert.match(page, /https:\/\/build\.nvidia\.com\/settings\/api-keys/);
 assert.match(page, /nvidiaApiKeyMasked/);
 assert.match(page, /nvidiaModel/);
 
-console.log('NVIDIA_PROVIDER_OK gateway=1 router=1 autosave=1 connection_test=1 key_link=1');
+console.log('NVIDIA_PROVIDER_OK exact_models=4 gateway=1 router=1 production_guard=1 reasoning_contracts=1 autosave=1 connection_test=1 key_link=1');

@@ -18,77 +18,78 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ## Arquitetura da Lari
 
-O bot usa um gateway com fallback por provedor e inteligencia progressiva por valor confirmado:
+O bot usa um único gateway com fallback por provedor e o mesmo piso de qualidade para todo lead:
 
-1. **Starter (R$ 0–19,89):** cérebro geral econômico separado + Lari; revisão extra em risco de começo estranho, PIX, mídia ou baixa confiança.
-2. **Buyer (R$ 19,90–99,99):** cérebro central separado + Lari; revisão extra apenas em PIX, baixa confiança, começo estranho ou encontro.
-3. **Premium (R$ 100–199,99):** cérebro + Lari + revisão em todos os turnos, com janela de contexto maior.
-4. **Elite (R$ 200+):** cérebro + Lari + revisão + avaliadora final, com até 120 mensagens recentes consultadas e memória persistente.
-5. **Backend:** continua sendo a autoridade para preço, aceite, PIX, deduplicação e entrega de mídia em todos os níveis.
+1. **Todos os níveis:** B.AI, Gemini 3.x, NVIDIA e os demais modelos aprovados usam o mesmo scheduler de saúde, capacidade e fallback.
+2. **Turnos críticos:** uma revisão adicional entra somente quando há risco real, como PIX, mídia, contradição ou baixa confiança.
+3. **Backend:** continua sendo a autoridade para preço, aceite, PIX, deduplicação e entrega de mídia em todos os níveis.
 
 O VIP possui preço único de **R$ 19,90**. Foto, vídeo, áudio personalizado, chamada e demais produtos seguem a oferta adaptativa do pedido real do lead. O aumento de inteligência melhora continuidade e atendimento; não libera pressão por vulnerabilidade emocional ou financeira.
 
 A memória por lead guarda fatos confirmados, assuntos pendentes, tom, desejos, produtos, recusas e objeções. Starter e Buyer consultam até 80 mensagens recentes, Premium até 100 e Elite até 120. Cada `/start` abre um episódio novo: fatos úteis continuam privados na memória, mas falas íntimas, ofertas e ganchos da conversa anterior não voltam para o novo primeiro contato.
 
-### Ranking operacional de provedores
+### Provedores e modelos confirmados
 
-**Produção, em ordem:**
+- B.AI: `glm-5.3-flash`, `qwen3.8-flash` e `hy3`. O router consulta `/models` no teste de conexão e não presume que uma promoção de 0 créditos será permanente.
+- Google Gemini: `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash` e `gemini-3.5-flash`. Não há Gemini 2.x nem Flash-Lite na rota. Configurações antigas são promovidas para `gemini-3.6-flash`.
+- NVIDIA NIM: `deepseek-ai/deepseek-v4-pro-0813`, `deepseek-ai/deepseek-v4-flash-0731`, `moonshotai/kimi-k3` e `nvidia/nemotron-3.5-lightning-30b-a3b`.
 
-1. Gemini AI Studio: melhor rota geral e obrigatória para visão; a cota real varia por modelo e projeto.
-2. Groq: maior volume gratuito previsível para texto curto e baixa latência; o limite diário de tokens pesa antes do RPD nos modelos grandes.
-3. NVIDIA NIM: rota oficial hospedada e OpenAI-compatible para desenvolvimento, ativada somente quando a chave NVIDIA existe.
-4. Cloudflare Workers AI: 10.000 neurons/dia e bom encaixe para o primeiro cérebro barato.
-5. Mistral Free mode: API oficial sem cartão, boa reserva; a cota exata aparece por organização no painel.
-6. OpenRouter: ótimo agregador/fallback, mas o free puro é baixo (50 req/dia; 1.000/dia depois de adicionar US$ 10 em créditos).
-7. Cerebras: muito rápido, porém hoje é trial de US$ 5/30 dias, não uma franquia grátis renovável.
-8. GitHub Models, Hugging Face, AwanLLM e self-host com vLLM/Ollama: entram depois de teste real de conta, preço, licença e latência; self-host é a única rota de volume realmente controlável.
-
-**Laboratório isolado:** FreeLLMAPI, OmniRoute/9Router, AI-Worker-Proxy, GeminiHydra e outros gateways OpenAI-compatible podem usar `AI_CUSTOM_GATEWAY_*` quando rodam em infraestrutura e chaves próprias. Eles agregam fallback, mas não criam cota nova.
-
-**Fora da rota de conversas reais:** Puter Account Pool Manager, FreeBuff Proxy, ApiFreeLLM, Completeons.me, Algion, NaraRouter, endpoints anônimos não verificados, pools de contas, resets de MachineID, sessões móveis transplantadas, IP/fingerprint rotation e chaves públicas. Essas opções não têm cota, propriedade de sessão, privacidade ou disponibilidade previsíveis.
+O endpoint hospedado gratuito do NVIDIA Build é de avaliação. Em `NODE_ENV=production` ele fica bloqueado por padrão; produção deve apontar `NVIDIA_BASE_URL`/`baseUrl` para um NIM licenciado ou endpoint contratado. `NVIDIA_ALLOW_TRIAL_ENDPOINT_IN_PRODUCTION=true` existe somente para uma decisão explícita do operador, não como padrão.
 
 Configuracao principal:
 
 ```env
-OPENROUTER_API_KEY=sk-or-...
-OPENROUTER_REFERER=https://seu-dominio.com
-OPENROUTER_TITLE=Lari Telegram Bot
-
-# Ordem de provedores. Provedor sem chave e ignorado automaticamente.
-AI_MODEL_ORDER=gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom
+# Ordem real de prioridade. Provedor sem credencial é ignorado.
+AI_MODEL_ORDER=bai,gemini,nvidia,openrouter,groq,cerebras,custom
 
 # Ordens por etapa, opcionais.
-AI_STRATEGY_MODEL_ORDER=gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom
-AI_DRAFT_MODEL_ORDER=gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom
-AI_REVIEW_MODEL_ORDER=gemini,groq,nvidia,cloudflare,mistral,openrouter,cerebras,custom
+AI_STRATEGY_MODEL_ORDER=bai,gemini,nvidia,openrouter,groq,cerebras,custom
+AI_DRAFT_MODEL_ORDER=bai,gemini,nvidia,openrouter,groq,cerebras,custom
+AI_REVIEW_MODEL_ORDER=bai,gemini,nvidia,openrouter,groq,cerebras,custom
 
 # Modelos usados dentro de cada provedor.
-OPENROUTER_DRAFT_MODEL=z-ai/glm-4.5-air:free
-GEMINI_DRAFT_MODEL=gemini-3.6-flash
+OPENROUTER_DRAFT_MODEL=deepseek/deepseek-chat
+GEMINI_DRAFT_MODEL=gemini-3.8-flash
 
 # Provedores oficiais diretos opcionais. So entram quando a respectiva chave existe.
 GROQ_API_KEY=gsk_...
 GROQ_DRAFT_MODEL=openai/gpt-oss-120b
 NVIDIA_API_KEY=nvapi-...
-NVIDIA_DRAFT_MODEL=meta/llama-3.1-8b-instruct
+NVIDIA_DRAFT_MODEL=deepseek-ai/deepseek-v4-pro-0813
 MISTRAL_API_KEY=...
 MISTRAL_DRAFT_MODEL=mistral-small-latest
 CEREBRAS_API_KEY=...
 CEREBRAS_DRAFT_MODEL=gpt-oss-120b
-CLOUDFLARE_ACCOUNT_ID=...
-CLOUDFLARE_AI_API_TOKEN=...
-CLOUDFLARE_DRAFT_MODEL=@cf/openai/gpt-oss-20b
+# Cloudflare e Mistral antigos ainda podem ser administrados, mas não entram
+# automaticamente na rota de qualidade.
 
 # Qualquer gateway OpenAI-compatible administrado por voce
 # (LiteLLM, FreeLLMAPI, OmniRoute, 9Router ou outro proxy isolado).
 AI_CUSTOM_GATEWAY_BASE_URL=http://seu-gateway/v1
 AI_CUSTOM_GATEWAY_API_KEY=...
-AI_CUSTOM_DRAFT_MODEL=auto
-AI_CUSTOM_GATEWAY_TIERS=starter,buyer
+AI_CUSTOM_DRAFT_MODEL=seu-modelo-aprovado
+AI_CUSTOM_GATEWAY_TIERS=starter,buyer,premium,elite
 AI_CUSTOM_GATEWAY_WEIGHT=5
 ```
 
-No nível starter, Gemini Flash-Lite recebe a maior parte dos leads. O restante é distribuído de forma estável entre os provedores econômicos configurados; 429, falta de crédito e falhas de autenticação ativam cooldown automático antes do próximo fallback.
+### Várias credenciais
+
+Não há limite fixo no código. Para poucas chaves, use listas separadas por vírgula, ponto e vírgula ou quebra de linha:
+
+```env
+BAI_API_KEYS=chave_1,chave_2,chave_3
+NVIDIA_API_KEYS=nvapi-1,nvapi-2
+```
+
+Para metadados por chave/projeto, use JSON. No Gemini, `projectId` deve ser o projeto autorizado dono da quota; várias keys com o mesmo `projectId` compartilham o mesmo grupo de RPM/TPM/RPD.
+
+```env
+GEMINI_CREDENTIALS_JSON=[{"apiKey":"AIza...","projectId":"projeto-a","label":"Gemini projeto A","limits":{"rpm":10,"tpm":250000}},{"apiKey":"AIza...","projectId":"projeto-b","label":"Gemini projeto B"}]
+NVIDIA_CREDENTIALS_JSON=[{"apiKey":"nvapi-...","label":"NIM contratado","baseUrl":"https://seu-nim.example/v1","priority":20,"weight":2}]
+AI_CREDENTIALS_JSON=[{"provider":"bai","apiKey":"...","label":"B.AI 1"}]
+```
+
+Para quantidade maior, aplique `ai_gateway_v2_migration.sql`, configure `AI_CREDENTIALS_ENCRYPTION_KEY` no secret store e use a API administrativa `GET/POST/DELETE /api/admin/ai-credentials`. Os segredos persistidos são AES-256-GCM e a exclusão administrativa é recuperável (desabilita a credencial).
 
 ### Roteamento adaptativo para volume
 
@@ -99,25 +100,26 @@ O gateway não usa mais uma lista cega. Cada chamada passa por um roteador que c
 - afinidade estável por lead sem concentrar todos os leads no mesmo provedor;
 - circuit breaker diferente para chave inválida, quota, timeout, erro 5xx e JSON ruim;
 - fila curta por nível do cliente e fallback imediato quando outra rota tem capacidade;
-- modelo Groq GPT-OSS 20B no primeiro contato e GPT-OSS 120B somente nos níveis de maior qualidade;
+- modelo Groq GPT-OSS 120B em todos os níveis; não existe mais downgrade para 20B;
 - recuperação textual em outro provedor quando a visão do Gemini não responder.
 
-Os limites conservadores podem ser ajustados sem alterar código. Exemplo:
+Os provedores nem sempre publicam limites fixos, e no Gemini a cota real pertence ao projeto/tier mostrado no AI Studio. Sem configuração, o router não inventa um teto baixo: aprende com 429/cooldown. Para exibir capacidade restante exata, cadastre os limites reais do projeto:
 
 ```env
-GEMINI_GATEWAY_RPM=10
-GEMINI_GATEWAY_TPM=250000
-GROQ_GATEWAY_RPM=30
-GROQ_GATEWAY_TPM=6000
-NVIDIA_GATEWAY_RPM=20
+GEMINI_GATEWAY_RPM=<RPM mostrado no seu projeto>
+GEMINI_GATEWAY_TPM=<TPM mostrado no seu projeto>
+GEMINI_GATEWAY_RPD=<RPD mostrado no seu projeto>
+GROQ_GATEWAY_RPM=<limite da sua conta>
+GROQ_GATEWAY_TPM=<limite da sua conta>
+NVIDIA_GATEWAY_RPM=<limite do seu endpoint>
 NVIDIA_GATEWAY_CONCURRENCY=4
 CLOUDFLARE_GATEWAY_CONCURRENCY=6
 AI_SHARED_RATE_LIMIT_ENABLED=true
 ```
 
-Para coordenar várias instâncias da Vercel, execute `ai_gateway_capacity_migration.sql` no Supabase e configure `SUPABASE_SERVICE_ROLE_KEY`. Sem isso, o roteador continua funcionando com controle local por instância.
+Para coordenar várias instâncias da Vercel, execute `ai_gateway_capacity_migration.sql` e `ai_gateway_v2_migration.sql` no Supabase e configure `SUPABASE_SERVICE_ROLE_KEY`. O bucket do Gemini é agrupado por projeto e o RPD reinicia à meia-noite do Pacífico. Sem a migration de capacidade, o roteador continua com controle local conservador.
 
-O painel `/admin/ai` possui autosave, teste de conexão, estado da chave, ordem visual dos provedores e link direto para criar cada API key.
+O painel `/admin/ai` possui autosave, teste de conexão e ordem visual dos provedores. `/admin/ai/capacity` e `GET /api/admin/ai-capacity` mostram uso e restante por provedor/modelo/credencial/projeto, tokens de entrada/saída/contexto/raciocínio, custo estimado, 429/5xx, cooldown e resets. Limite desconhecido aparece como “não publicado”, nunca como número inventado. A telemetria usa somente `ai_gateway_usage_events`; o JSON duplicado antigo em `bot_settings` não é mais escrito. Para retenção, agende `select public.prune_ai_gateway_usage_events(90);` diariamente.
 
 ### Cérebro de conversa humanizado
 
@@ -136,11 +138,6 @@ node scripts/verify-lari-humanization.cjs
 node scripts/verify-conversation-brain.cjs
 node scripts/verify-ai-orchestration.cjs
 ```
-
-Padrao sem variaveis de ordem:
-
-1. OpenRouter
-2. Gemini, apenas se `GEMINI_API_KEY` existir
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

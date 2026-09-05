@@ -1,8 +1,17 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 
-export const DEFAULT_PREVIEW_VISION_MODEL = 'google/gemini-2.5-flash';
-export const DEFAULT_PREVIEW_VISION_FALLBACK_MODEL = 'dots-studio/dots-3-note-preview:free';
+export const DEFAULT_PREVIEW_VISION_MODEL = 'google/gemini-3.8-flash';
+export const DEFAULT_PREVIEW_VISION_FALLBACK_MODEL = 'google/gemini-3.7-flash';
+const APPROVED_PREVIEW_VISION_MODELS = [
+    DEFAULT_PREVIEW_VISION_MODEL,
+    DEFAULT_PREVIEW_VISION_FALLBACK_MODEL,
+    'google/gemini-3.6-flash',
+] as const;
+const normalizePreviewVisionModel = (value: unknown, fallback: string) => {
+    const model = String(value || '').trim();
+    return (APPROVED_PREVIEW_VISION_MODELS as readonly string[]).includes(model) ? model : fallback;
+};
 
 export type PreviewVisionAnalysis = {
     name: string;
@@ -78,8 +87,8 @@ const getSettings = async () => {
         baseUrl: map.openrouter_base_url || 'https://openrouter.ai/api/v1',
         referer: map.openrouter_referer || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000',
         title: map.openrouter_title || 'Lari Telegram Bot',
-        primaryModel: map.preview_vision_model || process.env.PREVIEW_VISION_MODEL || DEFAULT_PREVIEW_VISION_MODEL,
-        fallbackModel: map.preview_vision_fallback_model || process.env.PREVIEW_VISION_FALLBACK_MODEL || DEFAULT_PREVIEW_VISION_FALLBACK_MODEL,
+        primaryModel: normalizePreviewVisionModel(map.preview_vision_model || process.env.PREVIEW_VISION_MODEL, DEFAULT_PREVIEW_VISION_MODEL),
+        fallbackModel: normalizePreviewVisionModel(map.preview_vision_fallback_model || process.env.PREVIEW_VISION_FALLBACK_MODEL, DEFAULT_PREVIEW_VISION_FALLBACK_MODEL),
         apiKey: map.openrouter_api_key || process.env.OPENROUTER_API_KEY || '',
     };
 };
@@ -294,7 +303,6 @@ Retorne SOMENTE um JSON válido com a estrutura:
             settings.fallbackModel,
             DEFAULT_PREVIEW_VISION_MODEL,
             DEFAULT_PREVIEW_VISION_FALLBACK_MODEL,
-            'qwen/qwen3.8-27b',
         ].filter(Boolean)));
 
         for (const model of candidateModels) {
@@ -323,6 +331,7 @@ Retorne SOMENTE um JSON válido com a estrutura:
                         temperature: 0.1,
                         max_tokens: 1600,
                         response_format: { type: 'json_object' },
+                        provider: { allow_fallbacks: false },
                     }),
                 });
 
@@ -342,27 +351,33 @@ Retorne SOMENTE um JSON válido com a estrutura:
 
     // 2. Tenta Google Gemini diretamente se chave estiver disponível
     if (settings.geminiKey) {
-        try {
-            const genAI = new GoogleGenerativeAI(settings.geminiKey);
-            const geminiModel = genAI.getGenerativeModel({
-                model: 'gemini-3.6-flash',
-                generationConfig: { responseMimeType: 'application/json' },
-            });
-            const result = await geminiModel.generateContent([
-                prompt,
-                {
-                    inlineData: {
-                        mimeType: input.mimeType,
-                        data: input.buffer.toString('base64'),
-                    },
+        const genAI = new GoogleGenAI({ apiKey: settings.geminiKey });
+        for (const model of ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash']) try {
+            const result = await genAI.models.generateContent({
+                model,
+                contents: [{
+                    role: 'user',
+                    parts: [
+                        { text: prompt },
+                        {
+                            inlineData: {
+                                mimeType: input.mimeType,
+                                data: input.buffer.toString('base64'),
+                            },
+                        },
+                    ],
+                }],
+                config: {
+                    responseMimeType: 'application/json',
+                    httpOptions: { timeout: 30_000, retryOptions: { attempts: 2 } },
                 },
-            ]);
-            const text = result.response.text();
+            });
+            const text = result.text;
             if (text) {
-                return normalizeAnalysis(parseJsonContent(text), 'gemini-3.6-flash-direct');
+                return normalizeAnalysis(parseJsonContent(text), String(result.modelVersion || `${model}-direct`));
             }
         } catch (geminiError: any) {
-            console.warn('[PREVIEW VISION] Gemini direto falhou:', geminiError?.message || geminiError);
+            console.warn(`[PREVIEW VISION] Gemini direto ${model} falhou:`, geminiError?.message || geminiError);
         }
     }
 

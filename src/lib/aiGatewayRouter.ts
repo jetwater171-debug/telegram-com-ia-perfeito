@@ -41,6 +41,7 @@ type GatewayRuntimeState = {
 export type GatewayLease<T = unknown> = {
     candidate: GatewayRouteCandidate<T>;
     queueWaitMs: number;
+    recordRetry: (estimatedTokens?: number) => void;
     succeed: (durationMs: number, actualTokens?: number) => void;
     fail: (error: unknown, durationMs: number, retryAfterMs?: number) => GatewayFailureKind;
     cancelBeforeDispatch: () => void;
@@ -58,6 +59,15 @@ export class GatewayCapacityError extends Error {
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
+// Provedores como Gemini publicam a cota efetiva por projeto/conta, não uma
+// tabela universal por modelo. Quando o administrador ainda não informou a
+// cota real, o router não inventa um teto baixo que derrube uma credencial
+// saudável. Estes sentinelas cabem nos tipos do Postgres e deixam 429/cooldown
+// governarem a capacidade até os limites reais serem cadastrados.
+const UNKNOWN_RPM = 1_000_000_000;
+const UNKNOWN_TPM = 9_000_000_000_000;
+const UNKNOWN_RPD = 1_000_000_000;
+const UNKNOWN_TPD = 9_000_000_000_000;
 const clampPositive = (value: unknown, fallback: number) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
@@ -70,65 +80,59 @@ const readLimit = (env: Record<string, string | undefined>, provider: string, su
 
 const providerDefaults = (provider: string, model: string): GatewayRatePolicy => {
     const normalizedProvider = provider.toLowerCase();
-    const normalizedModel = model.toLowerCase();
+    void model;
+
+    const unknownQuota = (operational: Pick<GatewayRatePolicy, 'maxConcurrency' | 'timeoutMs' | 'maxQueueMs'>): GatewayRatePolicy => ({
+        rpm: UNKNOWN_RPM,
+        tpm: UNKNOWN_TPM,
+        rpd: UNKNOWN_RPD,
+        tpd: UNKNOWN_TPD,
+        ...operational,
+    });
 
     if (normalizedProvider === 'bai') {
-        return {
-            rpm: 60,
-            tpm: 1_000_000,
-            rpd: 100_000,
-            tpd: 1_000_000_000,
+        return unknownQuota({
             maxConcurrency: 12,
             // O V4 continua sendo sempre o primeiro, mas um canal lento nao
             // pode segurar uma chamada critica e seu fallback. Depois deste limite o
             // roteador usa imediatamente o proximo fallback configurado.
             timeoutMs: 20_000,
             maxQueueMs: 1_000,
-        };
+        });
     }
 
     if (normalizedProvider === 'groq') {
-        const instant8b = normalizedModel.includes('llama-3.1-8b-instant') || normalizedModel.includes('8b');
-        return {
-            rpm: 30,
-            tpm: instant8b ? 6_000 : 8_000,
-            rpd: instant8b ? 14_400 : 1_000,
-            tpd: instant8b ? 500_000 : 200_000,
+        return unknownQuota({
             maxConcurrency: 4,
             timeoutMs: 14_000,
             maxQueueMs: 2_500,
-        };
+        });
     }
 
     if (normalizedProvider === 'nvidia') {
-        return { rpm: 20, tpm: 120_000, rpd: 2_000, tpd: 2_000_000, maxConcurrency: 4, timeoutMs: 16_000, maxQueueMs: 2_400 };
+        return unknownQuota({ maxConcurrency: 4, timeoutMs: 16_000, maxQueueMs: 2_400 });
     }
 
     if (normalizedProvider === 'openrouter') {
-        return { rpm: 18, tpm: 200_000, rpd: 50, tpd: 2_000_000, maxConcurrency: 3, timeoutMs: 18_000, maxQueueMs: 2_200 };
+        return unknownQuota({ maxConcurrency: 3, timeoutMs: 18_000, maxQueueMs: 2_200 });
     }
     if (normalizedProvider === 'gemini') {
-        const isFlashLite = normalizedModel.includes('flash-lite');
-        return {
-            rpm: isFlashLite ? 15 : 10,
-            tpm: 1_000_000,
-            rpd: isFlashLite ? 500 : 20,
-            tpd: isFlashLite ? 500_000_000 : 20_000_000,
-            maxConcurrency: isFlashLite ? 6 : 4,
+        return unknownQuota({
+            maxConcurrency: 4,
             timeoutMs: 15_000,
             maxQueueMs: 1_500,
-        };
+        });
     }
     if (normalizedProvider === 'cloudflare') {
-        return { rpm: 30, tpm: 300_000, rpd: 5_000, tpd: 5_000_000, maxConcurrency: 6, timeoutMs: 16_000, maxQueueMs: 2_500 };
+        return unknownQuota({ maxConcurrency: 6, timeoutMs: 16_000, maxQueueMs: 2_500 });
     }
     if (normalizedProvider === 'mistral') {
-        return { rpm: 10, tpm: 100_000, rpd: 2_000, tpd: 2_000_000, maxConcurrency: 4, timeoutMs: 17_000, maxQueueMs: 2_500 };
+        return unknownQuota({ maxConcurrency: 4, timeoutMs: 17_000, maxQueueMs: 2_500 });
     }
     if (normalizedProvider === 'cerebras') {
-        return { rpm: 5, tpm: 30_000, rpd: 1_000, tpd: 1_000_000, maxConcurrency: 2, timeoutMs: 12_000, maxQueueMs: 2_000 };
+        return unknownQuota({ maxConcurrency: 2, timeoutMs: 12_000, maxQueueMs: 2_000 });
     }
-    return { rpm: 30, tpm: 250_000, rpd: 10_000, tpd: 10_000_000, maxConcurrency: 6, timeoutMs: 18_000, maxQueueMs: 2_500 };
+    return unknownQuota({ maxConcurrency: 6, timeoutMs: 18_000, maxQueueMs: 2_500 });
 };
 
 export const resolveGatewayRatePolicy = (
@@ -275,6 +279,15 @@ export class AdaptiveGatewayRouter {
                 return {
                     candidate: selected.candidate,
                     queueWaitMs: now - startedAt,
+                    recordRetry: (retryTokens = options.estimatedTokens) => {
+                        const retryEvent: UsageEvent = {
+                            id: ++this.sequence,
+                            at: Date.now(),
+                            tokens: Math.max(1, Math.floor(retryTokens)),
+                        };
+                        selected.state.minute.push(retryEvent);
+                        selected.state.day.push(retryEvent);
+                    },
                     succeed: (durationMs, actualTokens) => {
                         if (!release()) return;
                         reconcile(actualTokens);

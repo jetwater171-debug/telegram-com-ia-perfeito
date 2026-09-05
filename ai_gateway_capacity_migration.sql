@@ -41,6 +41,7 @@ declare
     v_minute_blocked boolean;
     v_day_blocked boolean;
     v_retry_after_ms integer := 0;
+    v_day_reset_at timestamptz;
 begin
     insert into public.ai_gateway_capacity(bucket_key)
     values (left(p_bucket_key, 240))
@@ -61,12 +62,24 @@ begin
         v_minute_tokens := v_row.minute_tokens;
     end if;
 
-    if v_now - v_row.day_started_at >= interval '24 hours' then
+    if left(p_bucket_key, 8) = 'gemini:' then
+        v_day_started := date_trunc('day', v_now at time zone 'America/Los_Angeles') at time zone 'America/Los_Angeles';
+        v_day_reset_at := (date_trunc('day', v_now at time zone 'America/Los_Angeles') + interval '1 day') at time zone 'America/Los_Angeles';
+        if v_row.day_started_at < v_day_started then
+            v_day_requests := 0;
+            v_day_tokens := 0;
+        else
+            v_day_requests := v_row.day_requests;
+            v_day_tokens := v_row.day_tokens;
+        end if;
+    elsif v_now - v_row.day_started_at >= interval '24 hours' then
         v_day_started := v_now;
+        v_day_reset_at := v_now + interval '24 hours';
         v_day_requests := 0;
         v_day_tokens := 0;
     else
         v_day_started := v_row.day_started_at;
+        v_day_reset_at := v_row.day_started_at + interval '24 hours';
         v_day_requests := v_row.day_requests;
         v_day_tokens := v_row.day_tokens;
     end if;
@@ -80,7 +93,7 @@ begin
         v_retry_after_ms := greatest(v_retry_after_ms, ceil(extract(epoch from (v_minute_started + interval '60 seconds' - v_now)) * 1000)::integer);
     end if;
     if v_day_blocked then
-        v_retry_after_ms := greatest(v_retry_after_ms, ceil(extract(epoch from (v_day_started + interval '24 hours' - v_now)) * 1000)::integer);
+        v_retry_after_ms := greatest(v_retry_after_ms, ceil(extract(epoch from (v_day_reset_at - v_now)) * 1000)::integer);
     end if;
 
     if not v_minute_blocked and not v_day_blocked then

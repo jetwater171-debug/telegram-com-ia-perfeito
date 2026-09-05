@@ -21,7 +21,7 @@ export async function adminFetchJson<T>(input: RequestInfo | URL, init: RequestI
 
     if (response.status === 401 && typeof window !== 'undefined') {
         const next = `${window.location.pathname}${window.location.search}`;
-        window.location.assign(`/admin/login?next=${encodeURIComponent(next)}`);
+        window.location.replace(`/admin/login?next=${encodeURIComponent(next)}`);
         throw new AdminApiError('Sua sessão expirou. Entre novamente.', 401);
     }
 

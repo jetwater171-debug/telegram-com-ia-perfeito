@@ -22,20 +22,23 @@ const loadTypeScript = (relativePath) => {
 };
 
 const models = loadTypeScript('../src/lib/aiModels.ts');
-assert.equal(models.DEFAULT_GEMINI_MODEL, 'gemini-3.7-flash');
-assert.equal(models.DEFAULT_GEMINI_FALLBACK_MODEL, 'gemini-3.6-flash');
+assert.equal(models.DEFAULT_GEMINI_MODEL, 'gemini-3.8-flash');
+assert.equal(models.DEFAULT_GEMINI_FALLBACK_MODEL, 'gemini-3.7-flash');
 assert.deepEqual([...models.GEMINI_MODEL_OPTIONS], [
+    'gemini-3.8-flash',
     'gemini-3.7-flash',
     'gemini-3.6-flash',
     'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
 ]);
 assert.ok(!models.OPENROUTER_MODEL_FALLBACK_ORDER.includes('openrouter/free'));
 assert.deepEqual([...models.OPENROUTER_MODEL_FALLBACK_ORDER], ['deepseek/deepseek-chat']);
 
 const geminiSource = fs.readFileSync(path.resolve(__dirname, '../src/lib/gemini.ts'), 'utf8');
-assert.match(geminiSource, /gateways\.map\(\(gateway, priority\)/);
-assert.match(geminiSource, /DEFAULT_GEMINI_MODEL,[\s\S]*DEFAULT_GEMINI_FALLBACK_MODEL,[\s\S]*'gemini-3\.5-flash',[\s\S]*DEFAULT_GEMINI_LITE_MODEL/);
-assert.match(geminiSource, /priority,/);
+assert.match(geminiSource, /GoogleGenAI/);
+assert.match(geminiSource, /usageMetadata/);
+assert.doesNotMatch(geminiSource, /findIndex\(\(candidate\) => candidate\.quotaGroupId === credential\.quotaGroupId\)/, 'keys do mesmo projeto não devem ser descartadas');
+assert.match(geminiSource, /gemini:project:unassigned/);
+assert.match(geminiSource, /retryOptions: \{ attempts: 1 \}/);
+assert.match(geminiSource, /allow_fallbacks: false/);
 
-console.log('GEMINI_MODEL_ROUTING_OK first=gemini-3.7-flash second=gemini-3.6-flash third=gemini-3.5-flash capacity=gemini-3.5-flash-lite openrouter=deepseek-chat');
+console.log('GEMINI_MODEL_ROUTING_OK first=gemini-3.8-flash project_quota_group=1 usage_metadata=1 sdk=current openrouter=deepseek-chat');
