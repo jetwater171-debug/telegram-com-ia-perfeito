@@ -1960,22 +1960,24 @@ const callAiGatewayJson = async <T,>(options: {
 
 export const probeAiRouterHealth = async () => {
     const settings = await getAiRuntimeSettings();
-    const result = await callAiGatewayJson<{ ok: boolean }>({
+    const result = await callAiGatewayJson<AIResponse>({
         settings,
         role: 'draft',
         routingKey: `production-probe:${Date.now()}`,
         orchestrationTier: 'starter',
-        schemaName: 'routerHealthProbe',
-        systemInstruction: 'Teste interno de saúde. Responda somente JSON válido no schema pedido.',
-        responseSchemaConfig: {
-            type: 'OBJECT',
-            properties: { ok: { type: 'BOOLEAN' } },
-            required: ['ok'],
-        },
+        schemaName: 'responseSchema',
+        systemInstruction: 'Teste interno de saúde do contrato completo da Lari. Responda ao cumprimento de forma curta, natural e segura. Preencha todos os campos obrigatórios do JSON sem inventar venda, pagamento ou mídia.',
+        responseSchemaConfig: responseSchema as any,
         history: [],
-        text: 'Retorne {"ok":true}.',
+        text: 'Oi',
     });
-    return { provider: result.gateway.provider, model: result.gateway.model, attempts: result.attempts };
+    return {
+        provider: result.gateway.provider,
+        model: result.gateway.model,
+        attempts: result.attempts,
+        messageCount: normalizeAiMessageList(result.data?.messages).length,
+        action: result.data?.action || null,
+    };
 };
 
 export const extractLeadTextFromPrompt = (message: string) => {
