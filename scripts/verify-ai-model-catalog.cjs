@@ -27,14 +27,14 @@ new Function('require', 'module', 'exports', '__filename', '__dirname', compiled
 const models = loaded.exports;
 const nvidiaIds = models.NVIDIA_MODEL_CATALOG.map((model) => model.id);
 assert.deepEqual(nvidiaIds, [
-    'deepseek-ai/deepseek-v4-pro-0813',
     'deepseek-ai/deepseek-v4-flash-0731',
+    'deepseek-ai/deepseek-v4-pro-0813',
     'moonshotai/kimi-k3',
     'nvidia/nemotron-3.5-lightning-30b-a3b',
 ], 'catálogo NVIDIA deve usar os IDs versionados exatos e a ordem de prioridade');
 assert.deepEqual([...models.NVIDIA_TEXT_MODEL_ORDER], nvidiaIds);
 assert.deepEqual([...models.NVIDIA_IMAGE_MODEL_ORDER], ['moonshotai/kimi-k3']);
-assert.equal(models.DEFAULT_NVIDIA_MODEL, 'deepseek-ai/deepseek-v4-pro-0813');
+assert.equal(models.DEFAULT_NVIDIA_MODEL, 'deepseek-ai/deepseek-v4-flash-0731');
 
 assert.deepEqual([...models.GEMINI_MODEL_OPTIONS], [
     'gemini-3.8-flash',

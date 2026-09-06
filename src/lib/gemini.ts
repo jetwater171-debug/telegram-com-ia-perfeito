@@ -908,7 +908,7 @@ const ROLE_ENV_KEYS: Record<AiRole, string> = {
 };
 
 const AUTO_GATEWAY_PROVIDERS: AiProvider[] = ['bai', 'gemini', 'nvidia'];
-const DEFAULT_PROVIDER_ORDER = "bai,gemini,nvidia";
+const DEFAULT_PROVIDER_ORDER = "nvidia,gemini,bai";
 const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
     strategy: DEFAULT_OPENROUTER_MODEL,
     draft: DEFAULT_OPENROUTER_MODEL,

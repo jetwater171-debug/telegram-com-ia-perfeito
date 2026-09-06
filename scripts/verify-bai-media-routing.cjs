@@ -31,7 +31,7 @@ assert.match(catalog, /id: "hy3", label: [^\n]+ acceptsImage: false/);
 assert.match(models, /DEFAULT_BAI_MODEL\s*=\s*BAI_TEXT_MODEL_ORDER\[0\]/);
 assert.match(models, /BAI_MODEL_BY_ID\.get\(normalized\)\?\.id \|\| DEFAULT_BAI_MODEL/);
 assert.match(gemini, /type AiProvider = [^\n]*["']bai["']/);
-assert.match(gemini, /DEFAULT_PROVIDER_ORDER\s*=\s*["']bai,gemini,nvidia["']/);
+assert.match(gemini, /DEFAULT_PROVIDER_ORDER\s*=\s*["']nvidia,gemini,bai["']/);
 assert.match(gemini, /BAI_TEXT_MODEL_ORDER\.forEach\(\(baiModel, index\) => addProvider\(/);
 assert.match(gemini, /provider:\s*["']bai["']/);
 assert.match(gemini, /https:\/\/api\.b\.ai\/v1/);

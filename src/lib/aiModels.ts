@@ -24,14 +24,14 @@ export const DEFAULT_GROQ_QUALITY_MODEL = "openai/gpt-oss-120b";
 // endpoint hosted OpenAI-compatible; não são aliases inventados pelo painel.
 export const NVIDIA_MODEL_CATALOG = [
     {
-        id: "deepseek-ai/deepseek-v4-pro-0813",
-        label: "DeepSeek V4 Pro 0813",
+        id: "deepseek-ai/deepseek-v4-flash-0731",
+        label: "DeepSeek V4 Flash 0731",
         acceptsImage: false,
         contextTokens: 1_000_000,
     },
     {
-        id: "deepseek-ai/deepseek-v4-flash-0731",
-        label: "DeepSeek V4 Flash 0731",
+        id: "deepseek-ai/deepseek-v4-pro-0813",
+        label: "DeepSeek V4 Pro 0813",
         acceptsImage: false,
         contextTokens: 1_000_000,
     },

@@ -53,7 +53,7 @@ const DEFAULTS = {
     openrouter_base_url: "https://openrouter.ai/api/v1",
     openrouter_referer: process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
     openrouter_title: "Lari Telegram Bot",
-    provider_order: ACTIVE_PROVIDERS.join(","),
+    provider_order: "nvidia,gemini,bai",
     openrouter_strategy_model: process.env.OPENROUTER_STRATEGY_MODEL || DEFAULT_OPENROUTER_MODEL,
     openrouter_draft_model: process.env.OPENROUTER_DRAFT_MODEL || DEFAULT_OPENROUTER_MODEL,
     openrouter_review_model: process.env.OPENROUTER_REVIEW_MODEL || DEFAULT_OPENROUTER_MODEL,
