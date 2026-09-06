@@ -31,7 +31,8 @@ const router = compile('../src/lib/baiChatRouter.ts', (id) => {
     ]);
 
     const calls = [];
-    const result = await router.callBaiChatWithFallback({
+    const responders = new Map();
+    const resultPromise = router.callBaiChatWithFallback({
         apiKey: 'test-key',
         baseUrl: 'https://api.b.ai/v1',
         buildBody: (model) => ({ model }),
@@ -39,14 +40,25 @@ const router = compile('../src/lib/baiChatRouter.ts', (id) => {
         fetcher: async (_url, init) => {
             const model = JSON.parse(init.body).model;
             calls.push(model);
-            if (calls.length === 1) return new Response('{"error":"limit"}', { status: 429 });
-            if (calls.length === 2) return new Response('not-json', { status: 200 });
-            return new Response(JSON.stringify({ ok: true, model }), { status: 200 });
+            return new Promise((resolve) => responders.set(model, resolve));
         },
     });
+
+    // Os três modelos gratuitos devem competir pela primeira resposta válida:
+    // não pode haver espera de um modelo antes de disparar o próximo.
+    await new Promise((resolve) => setTimeout(resolve, 25));
     assert.deepEqual(calls, ['glm-5.3-flash', 'qwen3.8-flash', 'hy3']);
-    assert.equal(result.model, 'hy3');
+
+    responders.get('glm-5.3-flash')(new Response('{"error":"limit"}', { status: 429 }));
+    responders.get('hy3')(new Response('not-json', { status: 200 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    responders.get('qwen3.8-flash')(new Response(JSON.stringify({ ok: true, model: 'qwen3.8-flash' }), { status: 200 }));
+
+    const result = await resultPromise;
+    assert.equal(result.model, 'qwen3.8-flash');
     assert.equal(result.attempts.length, 2);
+    assert.match(result.attempts[0], /glm-5\.3-flash/);
+    assert.match(result.attempts[1], /hy3/);
 
     let authCalls = 0;
     await assert.rejects(() => router.callBaiChatWithFallback({
@@ -59,9 +71,9 @@ const router = compile('../src/lib/baiChatRouter.ts', (id) => {
             return new Response('{"error":"invalid key"}', { status: 401 });
         },
     }), /401/);
-    assert.equal(authCalls, 1);
+    assert.equal(authCalls, 3);
 
-    console.log('BAI_CHAT_ROUTER_OK order=3 free_only=1 rate_limit_fallback=1 invalid_response_fallback=1 auth_fast_fail=1');
+    console.log('BAI_CHAT_ROUTER_OK order=3 free_only=1 parallel_race=1 per_model_accounting=1 auth_fast_fail=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

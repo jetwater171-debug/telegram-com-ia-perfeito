@@ -22,6 +22,7 @@ import {
     OPENROUTER_MODEL_FALLBACK_ORDER,
 } from '@/lib/aiModels';
 import { loadAiCredentials, type AiCredential, type AiCredentialLimits } from '@/lib/aiCredentials';
+import { callBaiChatWithFallback } from '@/lib/baiChatRouter';
 import { persistAiGatewayUsage } from '@/lib/aiGatewayTelemetry';
 import { loadFullConversationHistory, buildGeminiConversationHistory, buildProviderConversationHistory, sanitizeConversationHistoryText, selectRecentConversationHistory } from '@/lib/fullConversationHistory';
 import { toSerializableDebugValue } from '@/lib/aiDebug';
@@ -1450,6 +1451,8 @@ const callOpenRouterJson = async <T,>(
     usageOutputTokens?: number;
     usageReasoningTokens?: number;
     providerRequestId?: string;
+    providerAttempts?: string[];
+    accountingHandled?: boolean;
 }> => {
     const apiKey = gateway.apiKey || settings.openRouterApiKey;
     const baseUrl = String(gateway.baseUrl || settings.openRouterBaseUrl).replace(/\/$/, '');
@@ -1531,6 +1534,75 @@ const callOpenRouterJson = async <T,>(
         };
     }
 
+    if (gateway.provider === 'bai') {
+        type BaiParsed = {
+            data: T;
+            resolvedModel: string;
+            usageTotalTokens?: number;
+            usageInputTokens?: number;
+            usageOutputTokens?: number;
+            usageReasoningTokens?: number;
+            providerRequestId?: string;
+        };
+        const estimatedInputTokens = estimateAiTokens(systemInstruction, history, userContent, mediaPart ? '[media]' : '');
+        const baiQuotaGroupId = gateway.quotaGroupId || `bai:credential:${gateway.credentialId || 'legacy'}`;
+        try {
+            const raced = await callBaiChatWithFallback<BaiParsed>({
+                apiKey,
+                baseUrl,
+                preferredModel: gateway.model,
+                timeoutMs,
+                totalTimeoutMs: timeoutMs,
+                buildBody: (model) => ({ ...body, model }),
+                parseResponse: (responseText, model) => {
+                    const payload = parseJsonText<any>(responseText);
+                    const content = payload?.choices?.[0]?.message?.content;
+                    if (!content) throw new Error(`bai empty response from ${model}`);
+                    return {
+                        data: parseJsonText<T>(String(content)),
+                        resolvedModel: String(payload?.model || model),
+                        usageTotalTokens: Number(payload?.usage?.total_tokens || 0) || undefined,
+                        usageInputTokens: Number(payload?.usage?.prompt_tokens || payload?.usage?.input_tokens || 0) || undefined,
+                        usageOutputTokens: Number(payload?.usage?.completion_tokens || payload?.usage?.output_tokens || 0) || undefined,
+                        usageReasoningTokens: Number(payload?.usage?.completion_tokens_details?.reasoning_tokens || payload?.usage?.output_tokens_details?.reasoning_tokens || 0) || undefined,
+                        providerRequestId: String(payload?.id || '') || undefined,
+                    };
+                },
+                onAttempt: (model) => recordPersistentAiUsage({
+                    provider: 'bai', model, credentialId: gateway.credentialId,
+                    quotaGroupId: baiQuotaGroupId, projectId: gateway.projectId,
+                    role, status: 'attempt', requestCount: 1, estimatedInputTokens,
+                    metadata: { parallelRace: true },
+                }),
+                onFailure: (model, error, durationMs) => recordPersistentAiUsage({
+                    provider: 'bai', model, credentialId: gateway.credentialId,
+                    quotaGroupId: baiQuotaGroupId, projectId: gateway.projectId,
+                    role, status: 'error', requestCount: 0, durationMs, estimatedInputTokens,
+                    httpStatus: Number((error as any)?.status || 0) || undefined,
+                    errorKind: classifyGatewayFailure(error), errorMessage: error.message,
+                    metadata: { parallelRace: true },
+                }),
+                onSuccess: (model, parsed, _responseText, durationMs) => recordPersistentAiUsage({
+                    provider: 'bai', model: parsed.resolvedModel || model, credentialId: gateway.credentialId,
+                    quotaGroupId: baiQuotaGroupId, projectId: gateway.projectId,
+                    role, status: 'success', requestCount: 0, durationMs, estimatedInputTokens,
+                    inputTokens: parsed.usageInputTokens, outputTokens: parsed.usageOutputTokens,
+                    reasoningTokens: parsed.usageReasoningTokens,
+                    contextTokens: parsed.usageInputTokens || estimatedInputTokens,
+                    totalTokens: parsed.usageTotalTokens || estimatedInputTokens,
+                    inputCostPerMillion: gateway.inputCostPerMillion,
+                    outputCostPerMillion: gateway.outputCostPerMillion,
+                    providerRequestId: parsed.providerRequestId,
+                    metadata: { parallelRace: true, winner: true },
+                }),
+            });
+            return { ...raced.data, providerAttempts: raced.attempts, accountingHandled: true };
+        } catch (error: any) {
+            error.baiParallelAccounted = true;
+            throw error;
+        }
+    }
+
     let response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         signal: AbortSignal.timeout(timeoutMs),
@@ -1539,21 +1611,6 @@ const callOpenRouterJson = async <T,>(
     });
 
     let responseBody = await response.text();
-    if (gateway.provider === 'bai'
-        && response.status === 400
-        && /json_schema|response_format|schema|additionalproperties|required/i.test(responseBody)) {
-        // Compatibilidade temporária para contas/rotas B.AI que ainda não
-        // propagam JSON Schema ao modelo selecionado. O reminder JSON e o hard
-        // validator continuam obrigatórios; a telemetria registra o modelo real.
-        body.response_format = { type: 'json_object' };
-        response = await fetch(`${baseUrl}/chat/completions`, {
-            method: 'POST',
-            signal: AbortSignal.timeout(timeoutMs),
-            headers,
-            body: JSON.stringify(body),
-        });
-        responseBody = await response.text();
-    }
     if (!response.ok) {
         throw new AiGatewayHttpError(
             `${gateway.provider} ${response.status}: ${responseBody.slice(0, 500)}`,
@@ -1755,19 +1812,22 @@ const callAiGatewayJson = async <T,>(options: {
         const policy = lease.candidate.policy;
         const startedAt = Date.now();
         let requestCount = 0;
-        const recordAttempt = (status: 'attempt' | 'retry') => recordPersistentAiUsage({
-            provider: gateway.provider,
-            model: gateway.model,
-            credentialId: gateway.credentialId,
-            quotaGroupId: quotaGroupIdFor(gateway),
-            projectId: gateway.projectId,
-            role: options.role,
-            tier: options.orchestrationTier,
-            status,
-            requestCount: 1,
-            estimatedInputTokens: estimatedTokens,
-            metadata: { attemptNumber: requestCount, queueWaitMs: lease.queueWaitMs },
-        });
+        const recordAttempt = (status: 'attempt' | 'retry') => {
+            if (gateway.provider === 'bai') return;
+            recordPersistentAiUsage({
+                provider: gateway.provider,
+                model: gateway.model,
+                credentialId: gateway.credentialId,
+                quotaGroupId: quotaGroupIdFor(gateway),
+                projectId: gateway.projectId,
+                role: options.role,
+                tier: options.orchestrationTier,
+                status,
+                requestCount: 1,
+                estimatedInputTokens: estimatedTokens,
+                metadata: { attemptNumber: requestCount, queueWaitMs: lease.queueWaitMs },
+            });
+        };
         const attemptBudget = resolveGatewayLatencyBudget({
             role: options.role,
             schemaName: options.schemaName,
@@ -1831,6 +1891,7 @@ const callAiGatewayJson = async <T,>(options: {
                         requestTimeoutMs,
                     );
                 } catch (initialError: any) {
+                    if (gateway.provider === 'bai') throw initialError;
                     const hasAlternative = candidates.some((candidate) =>
                         candidate.key !== lease.candidate.key && !excluded.has(candidate.key));
                     const retryDelayMs = hasAlternative ? 0 : boundedRetryDelayMs(initialError);
@@ -1858,6 +1919,7 @@ const callAiGatewayJson = async <T,>(options: {
                         Math.max(1_000, Math.min(24_000, policy.timeoutMs + 4_000, retryBudgetMs)),
                     );
                 }
+                if (result.providerAttempts?.length) attempts.push(...result.providerAttempts);
                 const resolvedGateway = {
                     ...gateway,
                     model: result.resolvedModel,
@@ -1866,28 +1928,30 @@ const callAiGatewayJson = async <T,>(options: {
                 assertAiGatewayPayload(result.data, options.schemaName, options.responseSchemaConfig);
                 const durationMs = Date.now() - startedAt;
                 lease.succeed(durationMs, result.usageTotalTokens);
-                recordPersistentAiUsage({
-                    provider: gateway.provider,
-                    model: result.resolvedModel,
-                    credentialId: gateway.credentialId,
-                    quotaGroupId: quotaGroupIdFor(gateway),
-                    projectId: gateway.projectId,
-                    role: options.role,
-                    tier: options.orchestrationTier,
-                    status: 'success',
-                    requestCount: 0,
-                    durationMs,
-                    estimatedInputTokens: estimatedTokens,
-                    inputTokens: result.usageInputTokens,
-                    outputTokens: result.usageOutputTokens,
-                    reasoningTokens: result.usageReasoningTokens,
-                    contextTokens: result.usageInputTokens || estimatedTokens,
-                    totalTokens: result.usageTotalTokens || estimatedTokens,
-                    inputCostPerMillion: gateway.inputCostPerMillion,
-                    outputCostPerMillion: gateway.outputCostPerMillion,
-                    providerRequestId: result.providerRequestId,
-                    metadata: { queueWaitMs: lease.queueWaitMs },
-                });
+                if (!result.accountingHandled) {
+                    recordPersistentAiUsage({
+                        provider: gateway.provider,
+                        model: result.resolvedModel,
+                        credentialId: gateway.credentialId,
+                        quotaGroupId: quotaGroupIdFor(gateway),
+                        projectId: gateway.projectId,
+                        role: options.role,
+                        tier: options.orchestrationTier,
+                        status: 'success',
+                        requestCount: 0,
+                        durationMs,
+                        estimatedInputTokens: estimatedTokens,
+                        inputTokens: result.usageInputTokens,
+                        outputTokens: result.usageOutputTokens,
+                        reasoningTokens: result.usageReasoningTokens,
+                        contextTokens: result.usageInputTokens || estimatedTokens,
+                        totalTokens: result.usageTotalTokens || estimatedTokens,
+                        inputCostPerMillion: gateway.inputCostPerMillion,
+                        outputCostPerMillion: gateway.outputCostPerMillion,
+                        providerRequestId: result.providerRequestId,
+                        metadata: { queueWaitMs: lease.queueWaitMs },
+                    });
+                }
                 return { data: result.data, gateway: resolvedGateway, attempts };
             }
 
@@ -1977,6 +2041,21 @@ const callAiGatewayJson = async <T,>(options: {
                         && (!gateway.credentialId || candidate.value.credentialId === gateway.credentialId))
                     .forEach((candidate) => excluded.add(candidate.key));
             }
+            // Se o endpoint NVIDIA inteiro está lento/fora do ar, não queimamos
+            // o prazo repetindo o mesmo prompt grande em outros modelos da chave.
+            // Erros de quota/formato ainda percorrem o fallback interno normal.
+            if (gateway.provider === 'nvidia' && ['timeout', 'network', 'server'].includes(failureKind)) {
+                candidates
+                    .filter((candidate) => candidate.provider === 'nvidia'
+                        && candidate.value.credentialId === gateway.credentialId)
+                    .forEach((candidate) => excluded.add(candidate.key));
+            }
+            if (gateway.provider === 'bai') {
+                candidates
+                    .filter((candidate) => candidate.provider === 'bai'
+                        && candidate.value.credentialId === gateway.credentialId)
+                    .forEach((candidate) => excluded.add(candidate.key));
+            }
             if (failureKind === 'format') {
                 candidates
                     .filter((candidate) => candidate.provider === gateway.provider && candidate.model === gateway.model)
@@ -1986,23 +2065,25 @@ const callAiGatewayJson = async <T,>(options: {
             attempts.push(message);
             console.warn(`[AI Gateway] ${message}`);
             const runtimeState = aiGatewayRouter.snapshot().find((item) => item.key === lease.candidate.key);
-            recordPersistentAiUsage({
-                provider: gateway.provider,
-                model: gateway.model,
-                credentialId: gateway.credentialId,
-                quotaGroupId: quotaGroupIdFor(gateway),
-                projectId: gateway.projectId,
-                role: options.role,
-                tier: options.orchestrationTier,
-                status: 'error',
-                requestCount: 0,
-                durationMs,
-                estimatedInputTokens: estimatedTokens,
-                httpStatus: Number(error?.status || 0) || undefined,
-                errorKind: failureKind,
-                errorMessage: String(error?.message || error),
-                cooldownUntil: runtimeState?.cooldownMs ? new Date(Date.now() + runtimeState.cooldownMs).toISOString() : undefined,
-            });
+            if (!error?.baiParallelAccounted) {
+                recordPersistentAiUsage({
+                    provider: gateway.provider,
+                    model: gateway.model,
+                    credentialId: gateway.credentialId,
+                    quotaGroupId: quotaGroupIdFor(gateway),
+                    projectId: gateway.projectId,
+                    role: options.role,
+                    tier: options.orchestrationTier,
+                    status: 'error',
+                    requestCount: 0,
+                    durationMs,
+                    estimatedInputTokens: estimatedTokens,
+                    httpStatus: Number(error?.status || 0) || undefined,
+                    errorKind: failureKind,
+                    errorMessage: String(error?.message || error),
+                    cooldownUntil: runtimeState?.cooldownMs ? new Date(Date.now() + runtimeState.cooldownMs).toISOString() : undefined,
+                });
+            }
         }
     }
 

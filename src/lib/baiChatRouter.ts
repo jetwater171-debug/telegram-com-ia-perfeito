@@ -18,6 +18,9 @@ export const callBaiChatWithFallback = async <T>({
     fetcher = fetch,
     timeoutMs = 8_000,
     totalTimeoutMs = 18_000,
+    onAttempt,
+    onSuccess,
+    onFailure,
 }: {
     apiKey: string;
     baseUrl: string;
@@ -27,16 +30,21 @@ export const callBaiChatWithFallback = async <T>({
     fetcher?: FetchLike;
     timeoutMs?: number;
     totalTimeoutMs?: number;
+    onAttempt?: (model: string) => void;
+    onSuccess?: (model: string, data: T, responseText: string, durationMs: number) => void;
+    onFailure?: (model: string, error: Error, durationMs: number) => void;
 }): Promise<{ data: T; model: string; attempts: string[] }> => {
     const models = resolveBaiTextModelOrder(preferredModel);
     const attempts: string[] = [];
-    const deadline = Date.now() + Math.max(3_000, totalTimeoutMs);
     let lastError: Error | null = null;
-
-    for (const model of models) {
-        const remainingMs = deadline - Date.now();
-        if (remainingMs < 750) break;
-
+    const totalController = new AbortController();
+    const totalTimer = setTimeout(() => totalController.abort(), Math.max(3_000, totalTimeoutMs));
+    const controllers = new Map<string, AbortController>();
+    const tasks = models.map(async (model) => {
+        const startedAt = Date.now();
+        const controller = new AbortController();
+        controllers.set(model, controller);
+        onAttempt?.(model);
         try {
             const response = await fetcher(`${String(baseUrl || 'https://api.b.ai/v1').replace(/\/$/, '')}/chat/completions`, {
                 method: 'POST',
@@ -45,7 +53,11 @@ export const callBaiChatWithFallback = async <T>({
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(buildBody(model)),
-                signal: AbortSignal.timeout(Math.min(Math.max(1_000, timeoutMs), remainingMs)),
+                signal: AbortSignal.any([
+                    controller.signal,
+                    totalController.signal,
+                    AbortSignal.timeout(Math.max(1_000, timeoutMs)),
+                ]),
             });
             const responseText = await response.text();
             if (!response.ok) {
@@ -54,23 +66,46 @@ export const callBaiChatWithFallback = async <T>({
                     { status: response.status },
                 );
                 attempts.push(error.message);
-                if (response.status === 401 || response.status === 403) throw error;
                 lastError = error;
-                continue;
+                onFailure?.(model, error, Date.now() - startedAt);
+                throw error;
             }
 
             try {
-                return { data: parseResponse(responseText, model), model, attempts };
+                const data = parseResponse(responseText, model);
+                onSuccess?.(model, data, responseText, Date.now() - startedAt);
+                return { data, model };
             } catch (parseError: any) {
                 lastError = new Error(`B.AI ${model} retornou resposta invalida: ${parseError?.message || parseError}`);
                 attempts.push(lastError.message);
+                onFailure?.(model, lastError, Date.now() - startedAt);
+                throw lastError;
             }
         } catch (error: any) {
-            lastError = error instanceof Error ? error : new Error(String(error));
-            if (!attempts.includes(lastError.message)) attempts.push(lastError.message);
-            if (Number(error?.status) === 401 || Number(error?.status) === 403) throw lastError;
+            const normalized = error instanceof Error ? error : new Error(String(error));
+            const cancelledByWinner = controller.signal.aborted && !totalController.signal.aborted;
+            if (!cancelledByWinner && normalized !== lastError) {
+                lastError = normalized;
+                if (!attempts.includes(normalized.message)) attempts.push(normalized.message);
+                onFailure?.(model, normalized, Date.now() - startedAt);
+            }
+            throw normalized;
         }
-    }
+    });
 
-    throw lastError || new Error(`Todos os modelos B.AI falharam: ${attempts.join(' | ')}`);
+    try {
+        const winner = await Promise.any(tasks);
+        controllers.forEach((controller, model) => {
+            if (model !== winner.model) controller.abort();
+        });
+        await Promise.allSettled(tasks);
+        return { ...winner, attempts };
+    } catch {
+        await Promise.allSettled(tasks);
+        const aggregate = new Error(`Todos os modelos B.AI falharam: ${attempts.join(' | ')}`);
+        Object.assign(aggregate, { status: Number((lastError as any)?.status || 0) || undefined });
+        throw aggregate;
+    } finally {
+        clearTimeout(totalTimer);
+    }
 };
