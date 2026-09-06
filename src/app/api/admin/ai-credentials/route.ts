@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer as supabase } from "@/lib/supabaseServer";
 import {
     AI_CREDENTIAL_PROVIDERS,
+    AI_CREDENTIALS_FALLBACK_SETTING,
     encryptAiCredentialSecret,
     fingerprintAiCredential,
     isAiCredentialEncryptionReady,
@@ -9,6 +10,7 @@ import {
     maskAiCredential,
     type AiCredentialProvider,
 } from "@/lib/aiCredentials";
+import { DEFAULT_NVIDIA_MODEL } from "@/lib/aiModels";
 
 export const dynamic = "force-dynamic";
 const ACTIVE_ROUTER_PROVIDERS = new Set<AiCredentialProvider>(["bai", "gemini", "nvidia"]);
@@ -32,6 +34,82 @@ const loadLegacySettings = async () => {
         "cerebras_api_key", "ai_custom_gateway_api_key",
     ]);
     return Object.fromEntries((data || []).map((row: any) => [row.key, row.value || ""]));
+};
+
+const credentialTableMissing = (error: unknown) => /ai_provider_credentials|schema cache|does not exist|could not find the table/i
+    .test(String((error as any)?.message || error || ""));
+
+const loadFallbackCredentialRows = async () => {
+    const { data, error } = await supabase.from("bot_settings")
+        .select("value").eq("key", AI_CREDENTIALS_FALLBACK_SETTING).maybeSingle();
+    if (error) throw error;
+    try {
+        const parsed = JSON.parse(String(data?.value || "[]"));
+        return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+};
+
+const saveFallbackCredentialRows = async (rows: any[]) => {
+    const { error } = await supabase.from("bot_settings").upsert({
+        key: AI_CREDENTIALS_FALLBACK_SETTING,
+        value: JSON.stringify(rows.slice(-2_000)),
+    });
+    if (error) throw error;
+};
+
+const safeProviderError = (value: unknown) => String(value || "teste falhou")
+    .replace(/(?:Bearer|key|api[_ -]?key)\s+[^\s,;]+/gi, "[redacted]")
+    .slice(0, 300);
+
+const testCredential = async (credential: Awaited<ReturnType<typeof loadAiCredentials>>[number]) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Math.min(15_000, credential.limits.timeoutMs || 8_000));
+    const startedAt = Date.now();
+    try {
+        let url: string;
+        let init: RequestInit;
+        if (credential.provider === "gemini") {
+            url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(credential.apiKey)}`;
+            init = { signal: controller.signal };
+        } else if (credential.provider === "nvidia") {
+            url = `${credential.baseUrl || "https://integrate.api.nvidia.com/v1"}/chat/completions`;
+            init = {
+                method: "POST",
+                headers: { Authorization: `Bearer ${credential.apiKey}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    model: credential.model || DEFAULT_NVIDIA_MODEL,
+                    messages: [{ role: "user", content: "Responda apenas OK" }],
+                    max_tokens: 2,
+                    temperature: 0,
+                }),
+                signal: controller.signal,
+            };
+        } else {
+            url = `${credential.baseUrl || "https://api.b.ai/v1"}/models`;
+            init = { headers: { Authorization: `Bearer ${credential.apiKey}` }, signal: controller.signal };
+        }
+        const response = await fetch(url, init);
+        const responseText = await response.text();
+        if (!response.ok) throw new Error(`http_${response.status}: ${responseText}`);
+        let modelCount: number | null = null;
+        try {
+            const payload = JSON.parse(responseText || "{}");
+            modelCount = Array.isArray(payload?.models) ? payload.models.length
+                : Array.isArray(payload?.data) ? payload.data.length
+                    : null;
+        } catch {
+            // Uma resposta 2xx já confirma autenticação; a contagem é opcional.
+        }
+        return {
+            ok: true,
+            provider: credential.provider,
+            credentialId: credential.id,
+            latencyMs: Date.now() - startedAt,
+            modelCount,
+        };
+    } finally {
+        clearTimeout(timeout);
+    }
 };
 
 export async function GET() {
@@ -110,11 +188,38 @@ export async function POST(req: NextRequest) {
             updated_at: new Date().toISOString(),
         };
         const { error } = await supabase.from("ai_provider_credentials").upsert(row);
-        if (error) throw error;
-        return NextResponse.json({ ok: true, id, masked: `${secret.slice(0, 6)}…${secret.slice(-4)}` });
+        let compatibilityStorage = false;
+        if (error) {
+            if (!credentialTableMissing(error)) throw error;
+            const rows = await loadFallbackCredentialRows();
+            const existingIndex = rows.findIndex((item: any) => String(item?.id || "") === id);
+            if (existingIndex >= 0) rows[existingIndex] = row;
+            else rows.push(row);
+            await saveFallbackCredentialRows(rows);
+            compatibilityStorage = true;
+        }
+        return NextResponse.json({ ok: true, id, compatibilityStorage, masked: `${secret.slice(0, 6)}…${secret.slice(-4)}` });
     } catch (error: any) {
         const status = /ENCRYPTION_KEY|credential_secret/i.test(String(error?.message || "")) ? 503 : 500;
         return NextResponse.json({ error: error?.message || "erro" }, { status });
+    }
+}
+
+// Testa uma credencial salva sem nunca devolver seu segredo. É PATCH para não
+// conflitar com o POST, que cadastra uma nova credencial.
+export async function PATCH(req: NextRequest) {
+    try {
+        const body = await req.json().catch(() => ({}));
+        const id = cleanText(body.id || req.nextUrl.searchParams.get("id"), 120);
+        if (!id) return NextResponse.json({ error: "credential_id_obrigatorio" }, { status: 400 });
+        const credential = (await loadAiCredentials(await loadLegacySettings()))
+            .find((item) => item.id === id && ACTIVE_ROUTER_PROVIDERS.has(item.provider));
+        if (!credential) return NextResponse.json({ error: "credential_not_found_or_disabled" }, { status: 404 });
+        const result = await testCredential(credential);
+        return NextResponse.json(result);
+    } catch (error: any) {
+        const status = /AbortError|aborted|timeout/i.test(String(error?.name || error?.message || "")) ? 504 : 400;
+        return NextResponse.json({ ok: false, error: safeProviderError(error?.message || error) }, { status });
     }
 }
 
@@ -130,8 +235,16 @@ export async function DELETE(req: NextRequest) {
             .eq("id", id)
             .select("id")
             .maybeSingle();
-        if (error) throw error;
-        if (!data) return NextResponse.json({ error: "credential_not_found" }, { status: 404 });
+        if (error && !credentialTableMissing(error)) throw error;
+        let fallbackDisabled = false;
+        const rows = await loadFallbackCredentialRows();
+        const fallbackIndex = rows.findIndex((item: any) => String(item?.id || "") === id);
+        if (fallbackIndex >= 0) {
+            rows[fallbackIndex] = { ...rows[fallbackIndex], enabled: false, updated_at: new Date().toISOString() };
+            await saveFallbackCredentialRows(rows);
+            fallbackDisabled = true;
+        }
+        if (!data && !fallbackDisabled) return NextResponse.json({ error: "credential_not_found" }, { status: 404 });
         return NextResponse.json({ ok: true, id, disabled: true });
     } catch (error: any) {
         return NextResponse.json({ error: error?.message || "erro" }, { status: 500 });

@@ -178,6 +178,18 @@ export async function GET() {
             error: usage.ready ? null : usage.error,
             capacityReady: capacity.ready,
             capacityMigrationMissing: capacity.migrationMissing,
+            diagnostic: usage.ready && capacity.ready
+                ? null
+                : {
+                    code: usage.migrationMissing || capacity.migrationMissing
+                        ? "AI_GATEWAY_TELEMETRY_MIGRATION_REQUIRED"
+                        : "AI_GATEWAY_TELEMETRY_UNAVAILABLE",
+                    message: usage.migrationMissing || capacity.migrationMissing
+                        ? "A persistência do router ainda não está instalada. Rode ai_gateway_v2_migration.sql e ai_gateway_capacity_migration.sql no banco conectado a este ambiente."
+                        : "Não foi possível ler a telemetria agora. Confira a conexão do banco e tente novamente.",
+                    usageError: usage.error,
+                    capacityError: capacity.error,
+                },
             generatedAt: new Date().toISOString(),
             credentials: credentials.map((credential) => ({
                 id: credential.id,

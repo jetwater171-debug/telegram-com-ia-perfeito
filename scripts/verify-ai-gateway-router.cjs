@@ -22,7 +22,7 @@ const {
     AdaptiveGatewayRouter,
     GatewayCapacityError,
     assertAiGatewayPayload,
-    buildInterleavedGatewayPriorities,
+    buildProviderFirstGatewayPriorities,
     classifyGatewayFailure,
     estimateAiTokens,
     resolveGatewayLatencyBudget,
@@ -65,18 +65,30 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         /nenhuma mensagem utilizável/,
         'lista vazia não pode ser contabilizada como sucesso',
     );
-    const interleavedPriorities = buildInterleavedGatewayPriorities([
+    assert.throws(
+        () => assertAiGatewayPayload({ messages: ['sou um modelo de linguagem chamado Nemotron'], action: 'none' }, 'responseSchema', speechSchema),
+        /identidade do provedor\/modelo/,
+        'modelo não pode expor a infraestrutura ao lead',
+    );
+    const providerFirstPriorities = buildProviderFirstGatewayPriorities([
         { provider: 'bai', model: 'glm', credentialPriority: 10 },
         { provider: 'bai', model: 'qwen', credentialPriority: 10 },
         { provider: 'gemini', model: '3.8', credentialPriority: 10 },
         { provider: 'gemini', model: '3.7', credentialPriority: 10 },
         { provider: 'nvidia', model: 'v4', credentialPriority: 10 },
     ]);
-    const interleavedOrder = interleavedPriorities
+    const providerFirstOrder = providerFirstPriorities
         .map((priority, index) => ({ priority, index }))
         .sort((left, right) => left.priority - right.priority)
         .map(({ index }) => index);
-    assert.deepEqual(interleavedOrder, [0, 2, 4, 1, 3], 'o primeiro modelo de cada provedor deve vir antes dos modelos secundários');
+    assert.deepEqual(providerFirstOrder, [0, 1, 2, 3, 4], 'cada provedor deve percorrer seus modelos antes de avançar ao próximo');
+    const preferredModelPriorities = buildProviderFirstGatewayPriorities([
+        { provider: 'nvidia', model: 'pro', modelPriority: 1, credentialPriority: 10 },
+        { provider: 'nvidia', model: 'flash', modelPriority: 0, credentialPriority: 10 },
+        { provider: 'gemini', model: '3.8', modelPriority: 0, credentialPriority: 10 },
+    ]);
+    assert.ok(preferredModelPriorities[1] < preferredModelPriorities[0]);
+    assert.ok(preferredModelPriorities[0] < preferredModelPriorities[2]);
     assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'gemini' }), { totalMs: 28_000, attemptMs: 18_000 });
     assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'nvidia' }), { totalMs: 28_000, attemptMs: 16_000 });
     assert.deepEqual(resolveGatewayLatencyBudget({ role: 'review', schemaName: 'reviewSchema', provider: 'gemini' }), { totalMs: 6_000, attemptMs: 5_000 });
@@ -192,7 +204,7 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         (error) => error instanceof GatewayCapacityError,
     );
 
-    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 shared_quota_group=1 credential_health_isolation=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1 payload_validation=1 provider_interleave=1 latency_budget=1');
+    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 shared_quota_group=1 credential_health_isolation=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1 payload_validation=1 provider_first=1 latency_budget=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

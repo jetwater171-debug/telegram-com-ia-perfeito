@@ -105,6 +105,7 @@ export interface AiDebugStage {
     user_prompt?: string;
     clean_history?: Array<{ role: string; content: string }>;
     gateway_attempts?: string[];
+    recovered_from?: string;
     output?: any;
 }
 
@@ -128,6 +129,7 @@ export interface AiDebugData {
         review?: AiDebugStage;
         evaluator?: AiDebugStage;
         operational_repair?: AiDebugStage;
+        availability_recovery?: AiDebugStage;
     };
     history?: { source_messages: number; included_messages: number; excluded_current_turn: number; chars: number; complete: boolean };
     tokens_estimated?: number;

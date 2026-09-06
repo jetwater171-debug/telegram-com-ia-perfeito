@@ -66,8 +66,46 @@ create table if not exists public.ai_gateway_usage_events (
     metadata jsonb not null default '{}'::jsonb
 );
 
+-- Upgrades seguros para instalações que receberam uma versão inicial desta
+-- migração. Mantemos cada coluna separada para que o script seja idempotente.
 alter table public.ai_gateway_usage_events
     add column if not exists request_count integer not null default 1;
+alter table public.ai_gateway_usage_events
+    add column if not exists estimated_input_tokens bigint not null default 0,
+    add column if not exists input_tokens bigint not null default 0,
+    add column if not exists output_tokens bigint not null default 0,
+    add column if not exists reasoning_tokens bigint not null default 0,
+    add column if not exists context_tokens bigint not null default 0,
+    add column if not exists total_tokens bigint not null default 0,
+    add column if not exists estimated_cost_usd numeric not null default 0,
+    add column if not exists http_status integer,
+    add column if not exists error_kind text,
+    add column if not exists error_message text,
+    add column if not exists cooldown_until timestamptz,
+    add column if not exists provider_request_id text,
+    add column if not exists metadata jsonb not null default '{}'::jsonb;
+
+-- Registros de versões antigas podem conter NULL. Normalizar antes da view
+-- impede que um único dado antigo esconda totais de uso atuais.
+update public.ai_gateway_usage_events
+set request_count = coalesce(request_count, 1),
+    estimated_input_tokens = coalesce(estimated_input_tokens, 0),
+    input_tokens = coalesce(input_tokens, 0),
+    output_tokens = coalesce(output_tokens, 0),
+    reasoning_tokens = coalesce(reasoning_tokens, 0),
+    context_tokens = coalesce(context_tokens, 0),
+    total_tokens = coalesce(total_tokens, 0),
+    estimated_cost_usd = coalesce(estimated_cost_usd, 0),
+    metadata = coalesce(metadata, '{}'::jsonb)
+where request_count is null
+   or estimated_input_tokens is null
+   or input_tokens is null
+   or output_tokens is null
+   or reasoning_tokens is null
+   or context_tokens is null
+   or total_tokens is null
+   or estimated_cost_usd is null
+   or metadata is null;
 
 alter table public.ai_gateway_usage_events
     drop constraint if exists ai_gateway_usage_events_status_check;

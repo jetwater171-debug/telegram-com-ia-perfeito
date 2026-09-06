@@ -191,11 +191,20 @@ export const assertAiGatewayPayload = (
         if (messages.length === 0) {
             throw new Error(`${schemaName} JSON incompleto: nenhuma mensagem utilizável`);
         }
+        const speech = messages.join(' ');
+        if (/(?:como|sou|somos|me chamo|fui treinad[oa]).{0,24}(?:modelo de linguagem|assistente virtual|intelig[eê]ncia artificial|\bIA\b)|\b(?:Nemotron|DeepSeek|Gemini|NVIDIA|B\.AI)\b/i.test(speech)) {
+            throw new Error(`${schemaName} resposta inválida: identidade do provedor/modelo exposta ao lead`);
+        }
     }
 };
 
-export const buildInterleavedGatewayPriorities = (
-    gateways: Array<{ provider: string; model: string; credentialPriority?: number }>,
+/**
+ * Mantém a preferência configurada de provedor e esgota a cadeia de modelos
+ * desse provedor antes de avançar ao próximo. Credenciais com a mesma
+ * prioridade continuam sendo balanceadas por saúde/capacidade/peso.
+ */
+export const buildProviderFirstGatewayPriorities = (
+    gateways: Array<{ provider: string; model: string; modelPriority?: number; credentialPriority?: number }>,
 ) => {
     const providerRanks = new Map<string, number>();
     const modelRanks = new Map<string, Map<string, number>>();
@@ -206,12 +215,19 @@ export const buildInterleavedGatewayPriorities = (
         const providerModels = modelRanks.get(gateway.provider)!;
         if (!providerModels.has(gateway.model)) providerModels.set(gateway.model, providerModels.size);
 
-        const round = Number(providerModels.get(gateway.model) || 0);
+        const catalogModelRank = Number(providerModels.get(gateway.model) || 0);
+        const modelRank = Number.isFinite(gateway.modelPriority)
+            ? Math.max(0, Math.floor(Number(gateway.modelPriority)))
+            : catalogModelRank;
         const providerRank = Number(providerRanks.get(gateway.provider) || 0);
         const credentialRank = Math.max(0, Math.min(99_999, Number(gateway.credentialPriority ?? 100)));
-        return round * 1_000_000 + providerRank * 100_000 + credentialRank;
+        return providerRank * 10_000_000 + modelRank * 100_000 + credentialRank;
     });
 };
+
+// Alias temporário para verificações/imports antigos. A semântica atual é
+// provider-first, conforme a cadeia configurada no painel.
+export const buildInterleavedGatewayPriorities = buildProviderFirstGatewayPriorities;
 
 export const resolveGatewayLatencyBudget = ({
     role,

@@ -1,4 +1,4 @@
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold, ThinkingLevel } from "@google/genai";
 import { AIResponse, LeadStats, AiDebugData } from "@/types";
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import {
@@ -23,7 +23,7 @@ import {
 } from '@/lib/aiModels';
 import { loadAiCredentials, type AiCredential, type AiCredentialLimits } from '@/lib/aiCredentials';
 import { persistAiGatewayUsage } from '@/lib/aiGatewayTelemetry';
-import { loadFullConversationHistory, buildGeminiConversationHistory, buildProviderConversationHistory, selectRecentConversationHistory } from '@/lib/fullConversationHistory';
+import { loadFullConversationHistory, buildGeminiConversationHistory, buildProviderConversationHistory, sanitizeConversationHistoryText, selectRecentConversationHistory } from '@/lib/fullConversationHistory';
 import { toSerializableDebugValue } from '@/lib/aiDebug';
 import { normalizeAiMessageList } from '@/lib/aiMessageNormalization';
 import { filterConversationEpisodeMessages } from '@/lib/conversationEpisode';
@@ -36,7 +36,7 @@ import {
 import {
     aiGatewayRouter,
     assertAiGatewayPayload,
-    buildInterleavedGatewayPriorities,
+    buildProviderFirstGatewayPriorities,
     classifyGatewayFailure,
     estimateAiTokens,
     GatewayCapacityError,
@@ -813,6 +813,7 @@ type AiGatewayConfig = {
     role?: AiRole;
     tiers?: AiIntelligenceTier[];
     weight?: number;
+    modelPriority?: number;
     policy?: GatewayRatePolicy;
     credentialId?: string;
     credentialPriority?: number;
@@ -953,6 +954,7 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
         models,
         tiers,
         weight,
+        modelPriority,
     }: {
         provider: AiProvider;
         apiKey: string;
@@ -960,6 +962,7 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
         models: Partial<Record<AiRole, string>>;
         tiers: AiIntelligenceTier[];
         weight: number;
+        modelPriority?: number;
     }) => {
         const configuredCredentials = credentials.filter((credential) => credential.provider === provider);
         const fallbackKey = readSecret(apiKey);
@@ -975,7 +978,10 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
             }] : [];
         for (const credential of availableCredentials) {
             for (const role of Object.keys(models) as AiRole[]) {
-                const rawModel = String(credential.model || models[role] || '').trim();
+                // A preferência salva na credencial muda a ordem, mas nunca
+                // prende a chave em um único modelo: todos os fallbacks do
+                // catálogo continuam disponíveis.
+                const rawModel = String(models[role] || credential.model || '').trim();
                 const model = provider === 'gemini'
                     ? normalizeGeminiModelName(rawModel, DEFAULT_GEMINI_MODEL)
                     : provider === 'groq'
@@ -990,6 +996,17 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
                 if (!model) continue;
                 const effectiveBaseUrl = String(credential.baseUrl || baseUrl).replace(/\/$/, '');
                 const modelCost = currentGatewayModelCost(provider, model);
+                const preferredRaw = String(credential.model || '').trim();
+                const preferredModel = provider === 'gemini'
+                    ? normalizeGeminiModelName(preferredRaw, DEFAULT_GEMINI_MODEL)
+                    : provider === 'bai'
+                        ? normalizeBaiModelName(preferredRaw)
+                        : provider === 'nvidia'
+                            ? normalizeNvidiaModelName(preferredRaw)
+                            : preferredRaw;
+                const effectiveModelPriority = preferredRaw
+                    ? model === preferredModel ? 0 : Number(modelPriority ?? 0) + 1
+                    : modelPriority;
                 gateways.push({
                     provider,
                     apiKey: credential.apiKey,
@@ -998,6 +1015,7 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
                     role,
                     tiers,
                     weight: Math.max(0.1, weight * Number(credential.weight || 1)),
+                    modelPriority: effectiveModelPriority,
                     label: `${provider}:${model}:${credential.id}`,
                     credentialId: credential.id,
                     credentialPriority: credential.priority,
@@ -1025,6 +1043,7 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
         },
         tiers: ['starter', 'buyer', 'premium', 'elite'],
         weight: Math.max(20, 60 - index * 6),
+        modelPriority: index,
     }));
 
     OPENROUTER_MODEL_FALLBACK_ORDER.forEach((openRouterModel, index) => addProvider({
@@ -1043,6 +1062,7 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
         models: { strategy: geminiModel, draft: geminiModel, review: geminiModel, evaluator: geminiModel },
         tiers: ['starter', 'buyer', 'premium', 'elite'],
         weight: Math.max(16, 34 - index * 3),
+        modelPriority: index,
     }));
 
     const groqApiKey = configured('groq_api_key', 'GROQ_API_KEY');
@@ -1080,6 +1100,7 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
         },
         tiers: ['starter', 'buyer', 'premium', 'elite'],
         weight: Math.max(10, 30 - index * 4),
+        modelPriority: index,
     }));
 
     const cerebrasModel = configured('cerebras_model', 'CEREBRAS_DRAFT_MODEL', 'gpt-oss-120b');
@@ -1443,15 +1464,20 @@ const callOpenRouterJson = async <T,>(
         headers["X-Title"] = settings.openRouterTitle;
     }
 
+    const isFullBrainReply = schemaName === 'responseSchema';
     const body: Record<string, unknown> = {
         model: gateway.provider === 'openrouter'
             ? normalizeOpenRouterPrimaryModel(gateway.model)
             : gateway.model,
         messages: toOpenRouterMessages(systemInstruction, history, userContent, mediaPart),
         temperature: role === "draft" ? 0.85 : 0.35,
-        max_tokens: gateway.provider === 'bai'
-            ? role === 'review' ? 900 : role === 'strategy' ? 1_200 : 1_400
-            : 1_400,
+        // O contrato completo da Lari inclui memória, ação e fala. 1400 tokens
+        // truncavam JSONs válidos em alguns modelos e eram contados como falha.
+        max_tokens: isFullBrainReply
+            ? 2_400
+            : gateway.provider === 'bai'
+                ? role === 'review' ? 900 : role === 'strategy' ? 1_200 : 1_400
+                : 1_400,
     };
     const deepSeekV4 = /deepseek-v4/i.test(String(gateway.model || ''));
     if (deepSeekV4 && gateway.provider !== 'nvidia') {
@@ -1580,6 +1606,13 @@ const callGeminiJson = async <T,>(
             config: {
                 systemInstruction,
                 safetySettings,
+                // Gemini 3.x usa MEDIUM por padrão. LOW mantém boa qualidade
+                // conversacional sem gastar a janela inteira pensando.
+                thinkingConfig: {
+                    thinkingLevel: ThinkingLevel.LOW,
+                    includeThoughts: false,
+                },
+                maxOutputTokens: 2_400,
                 responseMimeType: "application/json",
                 responseJsonSchema: toOpenRouterJsonSchema(responseSchemaConfig),
                 httpOptions: {
@@ -1638,9 +1671,9 @@ const callAiGatewayJson = async <T,>(options: {
         settings: options.settings,
         tier: options.orchestrationTier,
         routingKey: options.routingKey,
-        preferGemini: (hasMedia && !hasImage)
-            || options.schemaName === 'responseSchema'
-            || options.schemaName === 'operationalReply',
+        // Áudio/vídeo dependem do Gemini. Em texto e imagem, a ordem definida
+        // no painel é respeitada e cada provedor percorre seus próprios modelos.
+        preferGemini: hasMedia && !hasImage,
     })
         .filter((gateway) => !(options.excludedModels || []).includes(gateway.model))
         .filter((gateway) => !providerOnly || gateway.provider === providerOnly)
@@ -1670,7 +1703,7 @@ const callAiGatewayJson = async <T,>(options: {
         credentialCandidateCounts.set(credentialKey, count + 1);
         return true;
     });
-    const gatewayPriorities = buildInterleavedGatewayPriorities(boundedGateways);
+    const gatewayPriorities = buildProviderFirstGatewayPriorities(boundedGateways);
     const candidates: GatewayRouteCandidate<AiGatewayConfig>[] = boundedGateways.map((gateway, gatewayIndex) => {
         const defaultPolicy = gateway.policy || resolveGatewayRatePolicy(gateway.provider, gateway.model);
         const policy = { ...defaultPolicy, ...(gateway.rateLimits || {}) };
@@ -1781,9 +1814,7 @@ const callAiGatewayJson = async <T,>(options: {
                     }
                 }
                 let result: Awaited<ReturnType<typeof callOpenRouterJson<T>>>;
-                const providerSystemInstruction = options.schemaName === 'responseSchema'
-                    ? options.systemInstruction
-                    : `${options.systemInstruction}${buildJsonReminder(options.schemaName, options.responseSchemaConfig)}`;
+                const providerSystemInstruction = `${options.systemInstruction}${buildJsonReminder(options.schemaName, options.responseSchemaConfig)}`;
                 try {
                     requestCount += 1;
                     recordAttempt('attempt');
@@ -1978,13 +2009,72 @@ const callAiGatewayJson = async <T,>(options: {
     throw new Error(`Todos os gateways de IA falharam (${options.role}): ${attempts.join(" | ")}`);
 };
 
+type EmergencyAiReplyOptions = {
+    history?: any[];
+    failureReason?: string;
+    context?: {
+        userCity?: string;
+        isConversationStart?: boolean;
+        currentTurnMessageIds?: string[];
+        leadMemory?: any;
+        promptContext?: LariPromptContext;
+    };
+};
+
+const loadEmergencyConversationHistory = async (
+    sessionId: string,
+    currentTurnMessageIds: string[] = [],
+) => {
+    const { data, error } = await supabase
+        .from('messages')
+        .select('id,sender,content,created_at')
+        .eq('session_id', sessionId)
+        .in('sender', ['user', 'bot'])
+        .order('created_at', { ascending: false })
+        .limit(24);
+    if (error) throw error;
+    const excluded = new Set(currentTurnMessageIds.map(String));
+    const recent = [...(data || [])]
+        .reverse()
+        .filter((row: any) => !excluded.has(String(row.id)))
+        .map((row: any) => ({
+            id: String(row.id),
+            sender: row.sender === 'bot' ? 'bot' : 'user',
+            role: row.sender === 'bot' ? 'model' : 'user',
+            text: sanitizeConversationHistoryText(row.content),
+            createdAt: String(row.created_at || ''),
+        }))
+        .filter((row: any) => row.text)
+        .slice(-16);
+    return buildGeminiConversationHistory(recent as any);
+};
+
 export const sendEmergencyAiReply = async (
     sessionId: string,
     userMessage: string,
     currentStats: LeadStats,
+    options: EmergencyAiReplyOptions = {},
 ): Promise<AIResponse> => {
     const leadText = extractLeadTextFromPrompt(userMessage).slice(0, 1_500);
     let result: Awaited<ReturnType<typeof callAiGatewayJson<{ messages: string[] }>>> | null = null;
+    let recentHistory = Array.isArray(options.history) ? options.history.slice(-16) : [];
+    if (recentHistory.length === 0) {
+        try {
+            recentHistory = await loadEmergencyConversationHistory(
+                sessionId,
+                options.context?.currentTurnMessageIds || [],
+            );
+        } catch (historyError: any) {
+            console.warn('[AI Gateway] Historico curto indisponivel na recuperacao:', historyError?.message || historyError);
+        }
+    }
+    const compactContext = JSON.stringify(toSerializableDebugValue({
+        city: options.context?.userCity || null,
+        conversationStart: Boolean(options.context?.isConversationStart),
+        stats: currentStats,
+        memory: options.context?.leadMemory || null,
+        state: options.context?.promptContext || null,
+    })).slice(0, 4_000);
     try {
         const settings = await getAiRuntimeSettings();
         result = await callAiGatewayJson<{ messages: string[] }>({
@@ -1993,19 +2083,19 @@ export const sendEmergencyAiReply = async (
             routingKey: `${sessionId}:emergency-reply`,
             orchestrationTier: 'starter',
             schemaName: 'operationalReply',
-            // O V4 Pro recusou o prompt grande por quota. Na recuperacao curta,
-            // priorizamos o V4 Flash e ainda mantemos Kimi/Nemotron no pool.
-            excludedModels: ['deepseek-ai/deepseek-v4-pro-0813'],
             systemInstruction: `Voce e a Lari, uma jovem brasileira conversando naturalmente no Telegram.
-Responda diretamente ao que o lead acabou de dizer, em portugues informal, com 1 ou 2 mensagens curtas.
-Nao mencione sistema, erro, IA ou indisponibilidade. Nao invente preco, pagamento, compra, envio de midia ou audio.
+Continue exatamente o assunto e a intimidade do historico recente. Use nomes, genero, fatos e promessas ja ditos sem se reapresentar.
+Responda diretamente ao que o lead acabou de dizer, em portugues informal, com 1 ou 2 mensagens curtas e humanas.
+Nunca diga que e modelo, IA, assistente, robo, Nemotron, DeepSeek, Gemini, NVIDIA ou B.AI. Nunca mencione sistema, erro ou indisponibilidade.
+Nao use uma saudacao generica se a conversa ja comecou. Nao invente preco, pagamento, compra, encontro, envio de midia ou audio.
+Contexto operacional confiavel: ${compactContext}
 Retorne somente JSON no formato {"messages":["texto"]}.`,
             responseSchemaConfig: {
                 type: 'OBJECT',
                 properties: { messages: { type: 'ARRAY', items: { type: 'STRING' } } },
                 required: ['messages'],
             },
-            history: [],
+            history: recentHistory,
             text: leadText || 'Oi',
         });
     } catch (error: any) {
@@ -2013,9 +2103,11 @@ Retorne somente JSON no formato {"messages":["texto"]}.`,
     }
     const messages = result
         ? normalizeAiMessageList(result.data.messages)
-        : [/[?]/.test(leadText)
-            ? 'tô aqui sim 😅 me explica só mais um pouquinho pra eu te responder direito'
-            : 'oii, tô aqui 😊 me conta'];
+        : [/^(?:oi+|ol[aá]|eae|hey)\b/i.test(leadText)
+            ? 'oii 😊 tava te lendo aqui, continua comigo'
+            : /[?]/.test(leadText)
+                ? 'pera, quero te responder direito 😅 fala isso de outro jeito pra mim?'
+                : 'tô te acompanhando sim 😅 continua daqui comigo'];
     const emergencyGateway = result?.gateway;
     return {
         internal_thought: emergencyGateway
@@ -2047,6 +2139,18 @@ Retorne somente JSON no formato {"messages":["texto"]}.`,
             user_prompt: leadText,
             raw_response: { messages },
             final_response: { messages, action: 'none' },
+            clean_history: recentHistory.map((entry: any) => ({
+                role: entry.role === 'model' ? 'assistant' : 'user',
+                content: (entry.parts || []).map((part: any) => String(part?.text || '')).join('\n'),
+            })),
+            stages: {
+                availability_recovery: {
+                    provider: emergencyGateway?.provider || 'local',
+                    model: emergencyGateway?.model || 'local-last-resort',
+                    gateway_attempts: result?.attempts || [],
+                    recovered_from: String(options.failureReason || '').slice(0, 2_000),
+                },
+            },
         },
     };
 };
@@ -2749,7 +2853,11 @@ Faca a avaliacao final.`
 
             // Se esgotou todas as tentativas com todas as IAs reais
             if (attempt >= maxRetries) {
-                throw new Error(`[AI Gateway] Todas as IAs reais falharam após ${maxRetries} tentativas: ${error?.message || error}`);
+                return sendEmergencyAiReply(sessionId, userMessage, currentStats, {
+                    history: cleanHistory,
+                    context,
+                    failureReason: `[AI Gateway] Master Brain falhou: ${error?.message || error}`,
+                });
             }
         }
     }

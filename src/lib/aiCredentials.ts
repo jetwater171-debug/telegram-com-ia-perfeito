@@ -49,6 +49,8 @@ export type AiCredential = {
     outputCostPerMillion?: number;
 };
 
+export const AI_CREDENTIALS_FALLBACK_SETTING = "ai_credentials_encrypted_json_v1";
+
 type EncryptedSecret = {
     ciphertext: string;
     iv: string;
@@ -99,7 +101,12 @@ export const fingerprintAiCredential = (secret: string) =>
     createHash("sha256").update(secret).digest("hex").slice(0, 16);
 
 const encryptionKey = () => {
-    const configured = cleanSecret(process.env.AI_CREDENTIALS_ENCRYPTION_KEY);
+    // Chave dedicada é preferida. Em instalações antigas, a service-role já é
+    // um segredo exclusivo do servidor e mantém o cofre funcional sem guardar
+    // nenhuma API key em texto puro. Definir a chave dedicada desacopla futuras
+    // rotações da credencial do banco.
+    const configured = cleanSecret(process.env.AI_CREDENTIALS_ENCRYPTION_KEY)
+        || cleanSecret(process.env.SUPABASE_SERVICE_ROLE_KEY);
     if (!configured) return null;
     return createHash("sha256").update(configured).digest();
 };
@@ -277,12 +284,25 @@ const databaseCredentials = async () => {
         }
         if (error) {
             const message = String(error.message || "");
-            if (/ai_provider_credentials|schema cache|does not exist/i.test(message)) return [] as AiCredential[];
+            if (/ai_provider_credentials|schema cache|does not exist/i.test(message)) break;
             throw error;
         }
         rows.push(...(data || []));
         if (!data || data.length < pageSize) break;
         from += pageSize;
+    }
+    const { data: fallbackSetting, error: fallbackError } = await supabase
+        .from("bot_settings")
+        .select("value")
+        .eq("key", AI_CREDENTIALS_FALLBACK_SETTING)
+        .maybeSingle();
+    if (!fallbackError) {
+        try {
+            const fallbackRows = JSON.parse(String(fallbackSetting?.value || "[]"));
+            if (Array.isArray(fallbackRows)) rows.push(...fallbackRows);
+        } catch {
+            console.warn("[AI Credentials] fallback criptografado invalido; ignorando");
+        }
     }
     return rows.map((row, index) => {
         const apiKey = decryptAiCredentialSecret(row);

@@ -28,6 +28,7 @@ const compileAndLoad = (filename, sourceText) => {
                         return {
                             select() { return this; },
                             eq() { return this; },
+                            maybeSingle: async () => ({ data: null, error: null }),
                             range: async () => ({ data: [], error: null }),
                         };
                     },

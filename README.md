@@ -71,7 +71,7 @@ NVIDIA_CREDENTIALS_JSON=[{"apiKey":"nvapi-...","accountId":"conta-nvidia-a","lab
 BAI_CREDENTIALS_JSON=[{"apiKey":"...","accountId":"conta-bai-a","label":"B.AI 1","limits":{"rpm":30}}]
 ```
 
-Para quantidade maior, aplique `ai_gateway_v2_migration.sql`, configure `AI_CREDENTIALS_ENCRYPTION_KEY` no secret store e use a API administrativa `GET/POST/DELETE /api/admin/ai-credentials`. Os segredos persistidos são AES-256-GCM e a exclusão administrativa é recuperável (desabilita a credencial).
+Também é possível adicionar quantas chaves forem necessárias em **Admin → Inteligência**. Os segredos são persistidos com AES-256-GCM; a chave dedicada `AI_CREDENTIALS_ENCRYPTION_KEY` é recomendada, e instalações antigas podem usar a `SUPABASE_SERVICE_ROLE_KEY` já existente como chave de cofre. Sem as tabelas dedicadas, o painel usa armazenamento criptografado compatível em `bot_settings`; ao aplicar `ai_gateway_v2_migration.sql` e `ai_gateway_capacity_migration.sql`, telemetria e capacidade passam automaticamente para a estrutura de maior escala. A exclusão administrativa é recuperável (desabilita a credencial).
 
 ### Roteamento adaptativo para volume
 

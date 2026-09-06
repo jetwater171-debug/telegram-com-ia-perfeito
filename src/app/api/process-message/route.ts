@@ -1530,7 +1530,10 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
         aiResponse = await sendMessageToGemini(session.id, finalUserMessage, context, mediaData);
     } catch (error: any) {
         console.error('[PROCESSADOR] Master Brain indisponível; usando recuperação curta por IA:', error?.message || error);
-        aiResponse = await sendEmergencyAiReply(String(session.id), finalUserMessage, session.lead_score);
+        aiResponse = await sendEmergencyAiReply(String(session.id), finalUserMessage, session.lead_score, {
+            context,
+            failureReason: String(error?.message || error),
+        });
     } finally {
         clearInterval(typingHeartbeat);
     }
@@ -2076,7 +2079,10 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
             await repairModelReply(String(session.id), aiResponse, replyContract);
         } catch (error: any) {
             console.error('[PROCESSADOR] Ajuste operacional indisponivel; usando resposta segura:', error?.message || error);
-            aiResponse = await sendEmergencyAiReply(String(session.id), finalUserMessage, session.lead_score);
+            aiResponse = await sendEmergencyAiReply(String(session.id), finalUserMessage, session.lead_score, {
+                context,
+                failureReason: String(error?.message || error),
+            });
         }
     }
 
@@ -3659,7 +3665,9 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
         // 503 retryable e tenta novamente sem registrar uma entrega falsa.
         if (!externalDeliveryStarted) {
             try {
-                const recovery = await sendEmergencyAiReply(String(sessionId), emergencyUserText || 'Oi', session.lead_score);
+                const recovery = await sendEmergencyAiReply(String(sessionId), emergencyUserText || 'Oi', session.lead_score, {
+                    failureReason: reason,
+                });
                 const recoveryMessage = normalizeAiMessageList(recovery.messages)[0];
                 if (recoveryMessage) {
                     await sendTelegramMessageStrict(botToken, chatId, recoveryMessage);
