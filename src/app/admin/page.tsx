@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { BASE_LEAD_SCORE, parseLeadScore, parseLeadScoreMeta } from "@/lib/leadScoring";
 
@@ -30,6 +30,7 @@ interface LastMessage {
     content: string;
     sender: string;
     created_at: string;
+    media_type?: string;
 }
 
 const FUNNEL_STEPS = [
@@ -54,6 +55,10 @@ export default function AdminDashboard() {
     const [latestFunnelBySession, setLatestFunnelBySession] = useState<Record<string, string>>({});
     const [lastMessageBySession, setLastMessageBySession] = useState<Record<string, LastMessage>>({});
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
+    const [visibleCount, setVisibleCount] = useState(50);
+    const fetching = useRef(false);
+    const syncingPayments = useRef(false);
     const [lastSync, setLastSync] = useState<Date | null>(null);
     const [recalculating, setRecalculating] = useState(false);
     const [scoreMessage, setScoreMessage] = useState("");
@@ -62,6 +67,7 @@ export default function AdminDashboard() {
 
     useEffect(() => {
         fetchSessions();
+        syncPayments();
 
         const channel = supabase
             .channel("admin_live_dashboard")
@@ -85,17 +91,18 @@ export default function AdminDashboard() {
             })
             .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
                 const msg = payload.new as any;
-                if (!msg?.session_id) return;
-                setLastMessageBySession((prev) => ({
+                if (!msg?.session_id || !["user", "bot", "admin"].includes(msg.sender)) return;
+                setLastMessageBySession((prev) => prev[msg.session_id]?.created_at > msg.created_at ? prev : ({
                     ...prev,
                     [msg.session_id]: {
                         content: msg.content || "",
                         sender: msg.sender || "",
                         created_at: msg.created_at || new Date().toISOString(),
+                        media_type: msg.media_type,
                     },
                 }));
                 setSessions((prev) => sortSessions(prev.map((s) => (
-                    s.id === msg.session_id ? { ...s, last_message_at: msg.created_at || s.last_message_at } : s
+                    s.id === msg.session_id && msg.created_at > s.last_message_at ? { ...s, last_message_at: msg.created_at } : s
                 ))));
                 setLastSync(new Date());
             })
@@ -107,15 +114,19 @@ export default function AdminDashboard() {
             .subscribe();
 
         const fallback = window.setInterval(fetchSessions, 30000);
+        const paymentFallback = window.setInterval(syncPayments, 30000);
         return () => {
             window.clearInterval(fallback);
+            window.clearInterval(paymentFallback);
             supabase.removeChannel(channel);
         };
     }, []);
 
-    const fetchSessions = async () => {
+    const syncPayments = async () => {
+        if (syncingPayments.current) return;
+        syncingPayments.current = true;
         // A WiinPay nem sempre entrega webhook. O painel força uma conciliação
-        // idempotente antes de ler a receita, sem depender do lead dizer "paguei".
+        // idempotente em paralelo, sem bloquear a abertura das conversas.
         try {
             const syncResponse = await fetch("/api/admin/payment-sync", {
                 method: "POST",
@@ -124,32 +135,59 @@ export default function AdminDashboard() {
             if (!syncResponse.ok) console.warn("Falha ao sincronizar pagamentos no painel");
         } catch (error) {
             console.warn("Sincronização de pagamentos indisponível", error);
+        } finally {
+            syncingPayments.current = false;
         }
+    };
 
-        const { data } = await supabase
-            .from("sessions")
-            .select("id,telegram_chat_id,user_name,status,last_message_at,lead_score,user_city,device_type,total_paid,funnel_step")
-            .order("last_message_at", { ascending: false });
-
-        if (!data) {
+    const fetchSessions = async () => {
+        if (fetching.current) return;
+        fetching.current = true;
+        try {
+            const rows: (Session & { last_message: LastMessage[]; latest_step: { step: string }[] })[] = [];
+            const batchSize = 500;
+            for (let offset = 0; ; offset += batchSize) {
+                // Limit inside each relationship: one busy lead cannot displace another's preview.
+                const { data, error } = await supabase.from("sessions")
+                    .select("id,telegram_chat_id,user_name,status,last_message_at,lead_score,user_city,device_type,total_paid,funnel_step,last_message:messages(content,sender,created_at,media_type),latest_step:funnel_events(step)")
+                    .order("last_message_at", { ascending: false, nullsFirst: false })
+                    .order("id", { ascending: true })
+                    .in("last_message.sender", ["user", "bot", "admin"])
+                    .order("created_at", { referencedTable: "last_message", ascending: false })
+                    .limit(1, { referencedTable: "last_message" })
+                    .order("created_at", { referencedTable: "latest_step", ascending: false })
+                    .limit(1, { referencedTable: "latest_step" })
+                    .range(offset, offset + batchSize - 1);
+                if (error) throw error;
+                rows.push(...(data || []));
+                if (!data || data.length < batchSize) break;
+            }
+            const stepMap: Record<string, string> = {};
+            const messageMap: Record<string, LastMessage> = {};
+            for (const row of rows) {
+                if (row.latest_step[0]) stepMap[row.id] = row.latest_step[0].step;
+                if (row.last_message[0]) messageMap[row.id] = row.last_message[0];
+            }
+            setLatestFunnelBySession(stepMap);
+            setLastMessageBySession((previous) => {
+                for (const row of rows) {
+                    const live = previous[row.id];
+                    if (row.status !== "blocked" && live && live.created_at > (messageMap[row.id]?.created_at || "")) {
+                        messageMap[row.id] = live;
+                    }
+                }
+                return messageMap;
+            });
+            setSessions(sortSessions(rows));
+            setLastSync(new Date());
+            setLoadError("");
+        } catch (error) {
+            console.error("Falha ao carregar conversas", error);
+            setLoadError("Não foi possível atualizar as conversas. Tente sincronizar novamente.");
+        } finally {
+            fetching.current = false;
             setLoading(false);
-            return;
         }
-
-        const sessionsData = data as Session[];
-        const sessionIds = sessionsData.map((s) => s.id);
-        const idsNeedingSteps = sessionsData.filter((s) => !s.funnel_step).map((s) => s.id);
-
-        const [stepMap, lastMessageMap] = await Promise.all([
-            idsNeedingSteps.length ? fetchLatestFunnelSteps(idsNeedingSteps) : Promise.resolve({}),
-            sessionIds.length ? fetchLatestMessages(sessionIds) : Promise.resolve({}),
-        ]);
-
-        setLatestFunnelBySession(stepMap);
-        setLastMessageBySession(lastMessageMap);
-        setSessions(sortSessions(sessionsData));
-        setLastSync(new Date());
-        setLoading(false);
     };
 
     const recalculateScores = async () => {
@@ -193,42 +231,7 @@ export default function AdminDashboard() {
         }
     };
 
-    const fetchLatestFunnelSteps = async (sessionIds: string[]) => {
-        const { data, error } = await supabase
-            .from("funnel_events")
-            .select("session_id, step, created_at")
-            .in("session_id", sessionIds)
-            .order("created_at", { ascending: false });
-        if (error || !data) return {};
-
-        const map: Record<string, string> = {};
-        for (const row of data as any[]) {
-            if (!map[row.session_id]) map[row.session_id] = row.step;
-        }
-        return map;
-    };
-
-    const fetchLatestMessages = async (sessionIds: string[]) => {
-        const { data, error } = await supabase
-            .from("messages")
-            .select("session_id, sender, content, created_at")
-            .in("session_id", sessionIds)
-            .order("created_at", { ascending: false })
-            .limit(Math.max(200, sessionIds.length * 4));
-        if (error || !data) return {};
-
-        const map: Record<string, LastMessage> = {};
-        for (const row of data as any[]) {
-            if (!map[row.session_id]) {
-                map[row.session_id] = {
-                    content: row.content || "",
-                    sender: row.sender || "",
-                    created_at: row.created_at || "",
-                };
-            }
-        }
-        return map;
-    };
+    useEffect(() => { setVisibleCount(50); }, [filter, search, phaseFilter]);
 
     const filteredSessions = useMemo(() => {
         let filtered = sessions;
@@ -329,7 +332,7 @@ export default function AdminDashboard() {
                 <section className="min-w-0">
                     <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                         <div>
-                            <p className="text-sm text-slate-400">Mostrando {filteredSessions.length} de {sessions.length} conversas</p>
+                            <p className="text-sm text-slate-400">Mostrando {Math.min(visibleCount, filteredSessions.length)} de {filteredSessions.length} conversas · {sessions.length} no total</p>
                             <h2 className="text-lg font-medium tracking-tight">Conversas recentes</h2>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
@@ -353,6 +356,7 @@ export default function AdminDashboard() {
                         </div>
                     </div>
 
+                    {loadError && <p role="alert" className="rounded-lg border border-amber-300/30 p-3 text-sm text-amber-200">{loadError}</p>}
                     <div className="admin-card overflow-hidden">
                         <div className="admin-lead-columns admin-lead-heading border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
                             <span>Lead</span>
@@ -364,7 +368,7 @@ export default function AdminDashboard() {
 
                         {loading && <div className="p-8 text-center text-slate-500">Carregando painel...</div>}
 
-                        {!loading && filteredSessions.map((session) => {
+                        {!loading && filteredSessions.slice(0, visibleCount).map((session) => {
                             const safeStats = getSafeStats(session);
                             const last = lastMessageBySession[session.id];
                             const funnelStep = getEffectiveFunnelStep(session, latestFunnelBySession);
@@ -375,6 +379,7 @@ export default function AdminDashboard() {
                             return (
                                 <Link
                                     key={session.id}
+                                    prefetch={false}
                                     href={`/admin/chat/${session.telegram_chat_id}`}
                                     className="admin-lead-columns gap-4 border-b border-white/10 px-4 py-5 transition last:border-b-0 hover:bg-white/[0.025]"
                                 >
@@ -393,7 +398,7 @@ export default function AdminDashboard() {
                                     <div className="min-w-0">
                                         <p className="truncate text-sm text-slate-200">
                                             <span className="text-slate-500">{labelSender(last?.sender)} </span>
-                                            {session.status === "blocked" ? "BLOQUEOU · Histórico apagado" : cleanPreview(last?.content) || "Sem mensagem ainda"}
+                                            {session.status === "blocked" ? "BLOQUEOU · Histórico apagado" : cleanPreview(last?.content) || (last ? last.media_type === "audio" ? "Áudio" : last.media_type === "photo" ? "Foto" : last.media_type === "video" ? "Vídeo" : "Mensagem sem texto" : "Sem mensagem ainda")}
                                         </p>
                                         <p className="mt-1 text-xs text-slate-500">{formatTimeAgo(last?.created_at || session.last_message_at)}</p>
                                     </div>
@@ -421,10 +426,11 @@ export default function AdminDashboard() {
                             );
                         })}
 
-                        {!loading && filteredSessions.length === 0 && (
+                        {!loading && !loadError && filteredSessions.length === 0 && (
                             <div className="p-10 text-center text-slate-500">Nenhum chat encontrado com esse filtro.</div>
                         )}
                     </div>
+                    {!loading && visibleCount < filteredSessions.length && <button onClick={() => setVisibleCount((count) => count + 50)} className="rounded-lg border border-white/10 px-4 py-3 text-sm text-cyan-200">Mostrar mais 50 conversas</button>}
                 </section>
                 </div>
             </main>
