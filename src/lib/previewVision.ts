@@ -18,6 +18,7 @@ export type PreviewVisionAnalysis = {
     name: string;
     description: string;
     visual_summary: string;
+    visual_details: string[];
     pose: string;
     camera_angle: string;
     framing: string;
@@ -27,6 +28,9 @@ export type PreviewVisionAnalysis = {
     expression: string;
     plausible_as_recent: boolean;
     moment_context: string;
+    time_of_day: 'day' | 'night' | 'any';
+    temporal_evidence: string;
+    time_confidence: number;
     time_compatibility: Array<'madrugada' | 'manha' | 'tarde' | 'noite' | 'qualquer'>;
     explicitness: 'safe' | 'suggestive' | 'nude' | 'explicit';
     sensuality_level: 'casual' | 'sensual' | 'hot' | 'explicit';
@@ -48,6 +52,11 @@ const cleanText = (value: unknown, max = 500) => String(value || '').replace(/\s
 const cleanList = (value: unknown, limit = 16) => Array.from(new Set(
     (Array.isArray(value) ? value : [])
         .map((item) => cleanText(item, 80).toLowerCase())
+        .filter(Boolean),
+)).slice(0, limit);
+const cleanObservationList = (value: unknown, limit = 20) => Array.from(new Set(
+    (Array.isArray(value) ? value : [])
+        .map((item) => cleanText(item, 180))
         .filter(Boolean),
 )).slice(0, limit);
 const clamp = (value: unknown, min: number, max: number, fallback: number) => {
@@ -141,11 +150,15 @@ const generateHeuristicAnalysis = (filename: string): PreviewVisionAnalysis => {
             : explicitness === 'suggestive'
                 ? 'sensual'
                 : 'casual';
+    const isNight = /noite|night|escuro|luz baixa/i.test(lower);
+    const isDay = /sol|dia|day|praia|externa/i.test(lower);
+    const timeOfDay: PreviewVisionAnalysis['time_of_day'] = isNight ? 'night' : isDay ? 'day' : 'any';
 
     return {
         name: nameClean.slice(0, 80) || 'Prévia da Lari',
         description: `Foto sensual da Larissa Morais catalogada (${nameClean})`,
         visual_summary: `Foto temática da Larissa: ${nameClean}`,
+        visual_details: ['análise visual detalhada indisponível; catalogação baseada no nome do arquivo'],
         pose: 'espontânea e sensual',
         camera_angle: 'frontal ou detalhe',
         framing: 'plano médio / detalhe',
@@ -159,7 +172,18 @@ const generateHeuristicAnalysis = (filename: string): PreviewVisionAnalysis => {
             : /bed|cama|deitada|quarto/i.test(lower)
                 ? 'deitada no quarto'
                 : 'selfie espontanea',
-        time_compatibility: /bed|cama|deitada|quarto/i.test(lower) ? ['madrugada', 'manha', 'tarde', 'noite'] : ['qualquer'],
+        time_of_day: timeOfDay,
+        temporal_evidence: isNight
+            ? 'O nome do arquivo sugere noite, mas não substitui a inspeção visual da iluminação.'
+            : isDay
+                ? 'O nome do arquivo sugere dia, mas não substitui a inspeção visual da iluminação.'
+                : 'Não há evidência temporal confiável no nome do arquivo; qualquer horário é apenas uma hipótese.',
+        time_confidence: isNight || isDay ? 0.35 : 0.2,
+        time_compatibility: timeOfDay === 'night'
+            ? ['noite', 'madrugada']
+            : timeOfDay === 'day'
+                ? ['manha', 'tarde']
+                : ['madrugada', 'manha', 'tarde', 'noite'],
         explicitness,
         sensuality_level: sensualityLevel,
         lighting: /noite|night|escuro|luz baixa/i.test(lower) ? 'night' : /sol|dia|day|praia|externa/i.test(lower) ? 'daylight' : 'indoor',
@@ -206,6 +230,13 @@ const normalizeAnalysis = (input: any, model: string): PreviewVisionAnalysis => 
     const lighting = ['daylight', 'night', 'indoor', 'neutral'].includes(input?.lighting)
         ? input.lighting
         : 'neutral';
+    const timeOfDay: PreviewVisionAnalysis['time_of_day'] = ['day', 'night', 'any'].includes(input?.time_of_day)
+        ? input.time_of_day
+        : lighting === 'daylight'
+            ? 'day'
+            : lighting === 'night'
+                ? 'night'
+                : 'any';
 
     let name = cleanText(input?.name, 100);
     name = name.replace(/^(mulher jovem|mulher morena|uma mulher|garota|modelo)\b/i, 'Lari');
@@ -219,13 +250,40 @@ const normalizeAnalysis = (input: any, model: string): PreviewVisionAnalysis => 
     let visualSummary = cleanText(input?.visual_summary, 700) || description;
     visualSummary = visualSummary.replace(/\b(mulher jovem|mulher morena|uma mulher)\b/gi, 'Larissa');
 
+    const visualDetails = cleanObservationList(input?.visual_details, 20);
+    if (!visualDetails.length) {
+        visualDetails.push(...cleanObservationList([
+            input?.outfit,
+            input?.pose,
+            input?.expression,
+            input?.setting,
+            input?.camera_angle,
+            input?.framing,
+        ], 20));
+    }
+    if (!visualDetails.length) visualDetails.push('não foi possível identificar detalhes visuais suficientes');
+
     const tags = cleanList(input?.tags, 25);
     if (!tags.includes('lari')) tags.unshift('lari');
+
+    const detectedPeriods = cleanList(input?.time_compatibility, 5)
+        .map((period) => period.normalize('NFD').replace(/\p{Diacritic}/gu, ''))
+        .filter((period): period is 'madrugada' | 'manha' | 'tarde' | 'noite' | 'qualquer' =>
+            ['madrugada', 'manha', 'tarde', 'noite', 'qualquer'].includes(period)
+        );
+    const timeCompatibility: PreviewVisionAnalysis['time_compatibility'] = detectedPeriods.length
+        ? detectedPeriods
+        : timeOfDay === 'day'
+            ? ['manha', 'tarde']
+            : timeOfDay === 'night'
+                ? ['noite', 'madrugada']
+                : ['madrugada', 'manha', 'tarde', 'noite'];
 
     return {
         name,
         description,
         visual_summary: visualSummary,
+        visual_details: visualDetails,
         pose: cleanText(input?.pose, 120),
         camera_angle: cleanText(input?.camera_angle, 100),
         framing: cleanText(input?.framing, 100),
@@ -235,11 +293,11 @@ const normalizeAnalysis = (input: any, model: string): PreviewVisionAnalysis => 
         expression: cleanText(input?.expression, 120),
         plausible_as_recent: input?.plausible_as_recent !== false,
         moment_context: cleanText(input?.moment_context, 180),
-        time_compatibility: cleanList(input?.time_compatibility, 5)
-            .map((period) => period.normalize('NFD').replace(/\p{Diacritic}/gu, ''))
-            .filter((period): period is 'madrugada' | 'manha' | 'tarde' | 'noite' | 'qualquer' =>
-                ['madrugada', 'manha', 'tarde', 'noite', 'qualquer'].includes(period)
-            ),
+        time_of_day: timeOfDay,
+        temporal_evidence: cleanText(input?.temporal_evidence, 320)
+            || 'Não há evidência temporal suficiente na imagem para distinguir dia e noite.',
+        time_confidence: clamp(input?.time_confidence, 0, 1, timeOfDay === 'any' ? 0.5 : 0.8),
+        time_compatibility: timeCompatibility,
         explicitness,
         sensuality_level: sensualityLevel,
         lighting,
@@ -269,7 +327,15 @@ export const analyzePreviewImage = async (input: {
     const prompt = `Você é o especialista visual do catálogo privado da modelo e criadora de conteúdo adulta Larissa Morais (Lari, 19 anos).
 TODA imagem enviada é obrigatoriamente da Larissa Morais (Lari). NUNCA a chame de "mulher jovem" ou "mulher morena desconhecida" — refira-se sempre a ela como "Larissa" ou "Lari".
 
-Analise minuciosamente a foto com foco em catalogação e casamento perfeito em conversas no Telegram:
+Analise a imagem em duas passagens, sem inventar elementos que não estejam visíveis, com foco em catalogação e casamento perfeito em conversas no Telegram.
+
+PASSAGEM A — INVENTÁRIO VISUAL OBSERVÁVEL:
+Registre de 8 a 20 detalhes concretos que realmente aparecem na imagem: quantidade de pessoas, posição e orientação do corpo, partes do corpo visíveis, roupa/tecido/cor/corte/transparência, expressão/olhar/boca, cabelo e acessórios, ângulo da câmera, distância e enquadramento, ambiente e superfícies, objetos/textos, fontes de luz, sombras, céu/janelas e sinais de edição. Quando algo não aparecer, escreva "não visível" ou "não identificável". Não deduza roupa, objeto, intenção ou ação apenas pelo contexto.
+
+PASSAGEM B — HORÁRIO E CONTINUIDADE TEMPORAL:
+Classifique 'time_of_day' como 'day' somente quando houver evidência visual de luz do dia, céu/sol, janela iluminada ou sombras claramente diurnas. Classifique como 'night' somente quando houver escuridão/céu noturno ou iluminação artificial com ausência de sinais diurnos. Use 'any' quando a imagem for interna ou neutra e não houver evidência confiável. Quarto, cama, lingerie, nudez, sensualidade ou filtro de cor, sozinhos, NÃO provam dia nem noite. Explique a evidência em 'temporal_evidence', dê 'time_confidence' de 0 a 1 e derive os períodos compatíveis.
+
+Detalhe a foto com foco em catalogação e casamento perfeito em conversas no Telegram:
 1. IDENTIDADE: A modelo é sempre a Lari.
 2. ROUPA & NUDEZ: Descreva exatamente o que ela está vestindo (tecido, cor, corte, transparência) ou se está nua/sem roupa.
 3. EXPRESSÃO FACIAL & OLHAR: Descreva a expressão do rosto (sorriso safado, olhar penetrante para a câmera, boca entreaberta, biquinho, carinha de travessa).
@@ -277,7 +343,7 @@ Analise minuciosamente a foto com foco em catalogação e casamento perfeito em 
 5. AMBIENTE & OBJETOS: Cenário (quarto, cama, banheiro, espelho) e qualquer elemento ou fetiche na cena (ex: lata de leite condensado, toalha, óleo, calcinha).
 6. INTENÇÃO & CONTEXTO: Qual é o clima da foto? (brincadeira com comida/food play, fetiche de gozar na cara/boca, exibicionismo, carinho deitada, provocação).
 7. TRIGGERS DE CONVERSA: Liste de 10 a 20 frases reais que um lead no Telegram digitaria quando quiser ver EXATAMENTE essa foto (ex: "manda foto com leite", "quero ver sua boquinha", "foto na cama", "quero sujar sua cara", "foto safada").
-8. CONTINUIDADE DO MOMENTO: Diga se a imagem parece uma foto espontânea que poderia ter acabado de ser tirada durante a conversa. Considere cenário, iluminação, pose, roupa e aparência de ensaio profissional. Descreva o momento natural coerente (ex: acabou de sair do banho, está deitada à noite, selfie no espelho) e em quais períodos do dia a cena é plausível. Não marque ensaio, praia diurna ou evento como foto instantânea fora de contexto.
+8. CONTINUIDADE DO MOMENTO: Diga se a imagem parece uma foto espontânea que poderia ter acabado de ser tirada durante a conversa. Considere cenário, iluminação, pose, roupa e aparência de ensaio profissional. Descreva o momento natural coerente (ex: acabou de sair do banho, está deitada à noite, selfie no espelho) sem contradizer as evidências visuais. Não marque ensaio, praia diurna ou evento como foto instantânea fora de contexto.
 9. MOMENTO DE ENVIO: Classifique separadamente a intensidade como casual, sensual, hot ou explicit; a iluminação como daylight, night, indoor ou neutral; e liste os contextos de conversa em que a imagem deve aparecer. Uma foto nua nunca é casual. Uma selfie comum nunca deve ser classificada como hot só porque pertence ao catálogo adulto.
 10. REGRAS DE COERÊNCIA: Escreva quando enviar e quando evitar. Considere primeiro contato, conversa casual, flerte, conversa quente, pedido explícito, pós-banho, manhã, tarde, noite e madrugada. Não invente que uma foto diurna externa acabou de ser tirada à noite.
 
@@ -286,6 +352,7 @@ Retorne SOMENTE um JSON válido com a estrutura:
   "name": "Nome atraente da foto da Lari (ex: Lari na cama com leite condensado na boca)",
   "description": "Descrição rica, envolvente e detalhada da Lari na cena, destacando roupa, expressão, corpo e fetiche",
   "visual_summary": "Resumo objetivo dos elementos visuais da Larissa",
+  "visual_details": ["8 a 20 observações concretas e independentes, sem inventar o que não aparece"],
   "pose": "pose detalhada da Lari",
   "camera_angle": "ângulo da câmera",
   "framing": "enquadramento",
@@ -295,6 +362,9 @@ Retorne SOMENTE um JSON válido com a estrutura:
   "expression": "expressão facial e olhar da Lari",
   "plausible_as_recent": true,
   "moment_context": "situação natural coerente para apresentar a foto como recém-tirada",
+  "time_of_day": "day" | "night" | "any",
+  "temporal_evidence": "sinais visuais usados para classificar o horário; diga quando não houver evidência",
+  "time_confidence": 0.0,
   "time_compatibility": ["madrugada", "manha", "tarde", "noite"],
   "explicitness": "safe" | "suggestive" | "nude" | "explicit",
   "sensuality_level": "casual" | "sensual" | "hot" | "explicit",
@@ -326,7 +396,7 @@ Retorne SOMENTE um JSON válido com a estrutura:
                     method: 'POST',
                     signal: AbortSignal.timeout(30_000),
                     headers: {
-                        Authorization: `Bearer ${settings.openRouterKey}`,
+                        Authorization: `Bearer ${settings.apiKey}`,
                         'Content-Type': 'application/json',
                         'HTTP-Referer': settings.referer,
                         'X-Title': settings.title,
@@ -344,7 +414,7 @@ Retorne SOMENTE um JSON válido com a estrutura:
                             ],
                         }],
                         temperature: 0.1,
-                        max_tokens: 1600,
+                        max_tokens: 2400,
                         ...(settings.provider === 'openrouter' ? {
                             response_format: { type: 'json_object' },
                             provider: { allow_fallbacks: false },
