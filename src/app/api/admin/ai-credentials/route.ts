@@ -68,7 +68,7 @@ const testCredential = async (credential: Awaited<ReturnType<typeof loadAiCreden
     }
     const controller = new AbortController();
     const defaultTimeoutMs = 8_000;
-    const timeout = setTimeout(() => controller.abort(), Math.min(20_000, credential.limits.timeoutMs || defaultTimeoutMs));
+    const timeout = setTimeout(() => controller.abort(), Math.min(30_000, credential.limits.timeoutMs || defaultTimeoutMs));
     const startedAt = Date.now();
     try {
         let url: string;

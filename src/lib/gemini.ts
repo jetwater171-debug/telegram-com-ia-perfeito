@@ -1674,7 +1674,7 @@ export const testRoteiaConversationContract = async (credential: AiCredential) =
         { provider: 'roteia', apiKey: credential.apiKey, baseUrl: 'https://api.roteia.ai/v1', model: credential.model || 'deepseek/deepseek-v4-flash', label: 'roteia:diagnostic' },
         'draft',
         'Teste técnico de integração. Responda ao cumprimento em uma frase curta. Use action none, classificação desconhecido e estado WELCOME. Não execute operações externas. Preencha o contrato completo e deixe memórias novas vazias.',
-        [], 'Olá', 'responseSchema', responseSchema, undefined, 20_000,
+        [], 'Olá', 'responseSchema', responseSchema, undefined, 30_000,
     );
     assertAiGatewayPayload(result.data, 'responseSchema', responseSchema);
     if (!result.data.messages?.some((message) => String(message).trim())) throw new Error('Roteia retornou JSON sem mensagem');
@@ -2029,7 +2029,7 @@ const callAiGatewayJson = async <T,>(options: {
                 const retryDelayMs = hasAlternative ? 0 : boundedRetryDelayMs(geminiError);
                 const retryBudgetMs = deadlineAt - Date.now() - retryDelayMs;
                 if (retryDelayMs && retryBudgetMs > 1_000) {
-                    const retryTimeoutMs = Math.max(1_000, Math.min(20_000, policy.timeoutMs + 4_000, retryBudgetMs));
+                    const retryTimeoutMs = Math.max(1_000, Math.min(30_000, policy.timeoutMs + 4_000, retryBudgetMs));
                     await sleep(retryDelayMs);
                     const retryCapacity = await reserveSharedGatewayCapacity(options.settings, gateway, policy, estimatedTokens);
                     if (retryCapacity?.allowed === false) {

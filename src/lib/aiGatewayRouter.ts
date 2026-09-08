@@ -292,13 +292,13 @@ export const resolveGatewayLatencyBudget = ({
     // modelos saudáveis expirarem antes de concluir o JSON e deixavam o turno
     // sem resposta. A revisão separada permanece desativada, então esta janela
     // não é multiplicada por uma segunda chamada.
-    const totalMs = auxiliary ? 6_000 : operationalRepair ? 16_000 : 28_000;
+    const totalMs = auxiliary ? 6_000 : operationalRepair ? 16_000 : 38_000;
     const providerAttemptMs = provider === 'bai'
         ? 10_000
         : provider === 'nvidia'
             ? 16_000
             : provider === 'roteia'
-                ? 20_000
+                ? 30_000
             : 18_000;
     const attemptMs = auxiliary
         ? Math.min(5_000, providerAttemptMs)
