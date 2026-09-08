@@ -160,7 +160,7 @@ try {
   assert.match(migration, /lead_events_idempotency_idx/);
   const newPixBlock = route.slice(route.indexOf("if (payment && payment.pixCopiaCola)"));
   assert.ok(newPixBlock.indexOf('paymentRecordWrite') >= 0);
-  assert.ok(newPixBlock.indexOf('paymentRecordWrite') < newPixBlock.indexOf('ta aqui o pix`'));
+  assert.ok(!newPixBlock.includes('ta aqui o pix'));
   assert.match(route, /markPaymentFulfillmentWriteDeferred/);
   assert.doesNotMatch(route, /throw new Error\('custom_order_(?:record|recovery)_failed'\)/);
   assert.match(reconciliationSource, /trackPaymentOutcomeSafe/);
