@@ -17,6 +17,7 @@ import {
   getCommercialFulfillmentBrief,
   getCommercialOffer,
   getCommercialPaymentConfirmationMessage,
+  readCommercialLineItems,
   type CommercialSku,
 } from '@/lib/commercialCatalog';
 
@@ -54,20 +55,35 @@ const paymentLedgerKey = (paymentData: any, index: number) => String(
 
 export const inspectCommercialPaymentIntegrity = (paymentData: Record<string, any> = {}) => {
   const value = Number(paymentData.value || 0);
-  const amountCents = Number(paymentData.amount_cents || Math.round(value * 100));
+  const rawAmountCents = paymentData.amount_cents;
+  const hasAmountCents = rawAmountCents !== undefined && rawAmountCents !== null && rawAmountCents !== '';
+  const amountCents = hasAmountCents ? Number(rawAmountCents) : Math.round(value * 100);
+  const valueAmountCents = Math.round(value * 100);
   const product = String(paymentData.product || 'produto');
   const description = String(paymentData.description || product);
   const commercialOffer = getCommercialOffer(paymentData.sku as CommercialSku);
   const fixedCommercialProduct = product === 'vip' || product === 'video_call';
+  const rawLineItems = paymentData.line_items ?? paymentData.lineItems;
+  const hasLineItems = rawLineItems !== undefined
+    && rawLineItems !== null
+    && (!Array.isArray(rawLineItems) || rawLineItems.length > 0);
+  const commercialLineItems = readCommercialLineItems(rawLineItems, commercialOffer, amountCents);
+  const amountValueMismatch = !Number.isFinite(value)
+    || value <= 0
+    || !Number.isInteger(amountCents)
+    || amountCents <= 0
+    || (hasAmountCents && amountCents !== valueAmountCents);
+  const matchesFixedOffer = Boolean(commercialOffer
+    && commercialOffer.amountCents === amountCents
+    && Math.round(commercialOffer.value * 100) === valueAmountCents);
   const catalogMismatch = Boolean(
-    (commercialOffer && (
-      commercialOffer.product !== product
-      || commercialOffer.amountCents !== amountCents
-      || Math.round(commercialOffer.value * 100) !== Math.round(value * 100)
-    ))
+    amountValueMismatch
+    || (commercialOffer && commercialOffer.product !== product)
+    || (commercialOffer && hasLineItems && !commercialLineItems)
+    || (commercialOffer && !matchesFixedOffer && !commercialLineItems)
     || (fixedCommercialProduct && !commercialOffer),
   );
-  return { value, amountCents, product, description, commercialOffer, catalogMismatch };
+  return { value, amountCents, product, description, commercialOffer, commercialLineItems, catalogMismatch };
 };
 
 export const calculatePaidLedgerTotal = (rows: Array<{ payment_data?: any }>) => {
@@ -130,6 +146,7 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
     product,
     description,
     commercialOffer,
+    commercialLineItems,
     catalogMismatch: commercialCatalogMismatch,
   } = inspectCommercialPaymentIntegrity(paymentData);
   const awaitingManualFulfillment = Boolean(commercialOffer)
@@ -138,6 +155,20 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
   const mismatchBrief = commercialCatalogMismatch
     ? `REVISAO MANUAL OBRIGATORIA: SKU, produto ou valor incompatível. Recebido ${String(paymentData.sku || 'sem_sku')} / ${product} / ${amountCents} centavos.`
     : null;
+  const commercialFulfillmentBrief = commercialOffer
+    ? [
+      getCommercialFulfillmentBrief(commercialOffer.sku),
+      ...(commercialLineItems || []).filter((item) => item.kind === 'order_bump').map((item) => item.description),
+    ].join(' | ')
+    : null;
+  const customRequestBrief = String(paymentData.custom_request_brief || '').trim();
+  const commercialRequestBrief = commercialFulfillmentBrief
+    ? [
+      commercialFulfillmentBrief,
+      ...(customRequestBrief && !commercialFulfillmentBrief.toLocaleLowerCase('pt-BR')
+        .includes(customRequestBrief.toLocaleLowerCase('pt-BR')) ? [customRequestBrief] : []),
+    ].join(' | ')
+    : null;
   const paymentId = String(paymentData.paymentId || '').trim();
   const fulfillmentOrderRecorded = paid && requiresManualOrder
     ? (paymentId ? await recordCustomOrderSafe({
@@ -145,7 +176,9 @@ export const reconcilePaymentMessage = async (paymentMessage: PaymentMessage, op
       paymentId,
       gateway,
       requestBrief: mismatchBrief
-        || (commercialOffer ? getCommercialFulfillmentBrief(commercialOffer.sku) : String(paymentData.custom_request_brief || description)),
+        || commercialRequestBrief
+        || customRequestBrief
+        || description,
       amount: value,
       product,
       orderId: String(paymentData.order_id || ''),

@@ -66,6 +66,34 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         'lista vazia não pode ser contabilizada como sucesso',
     );
     assert.throws(
+        () => assertAiGatewayPayload({ messages: [{ text: 'oi' }], action: 'none' }, 'responseSchema', speechSchema),
+        /somente strings não vazias/,
+        'objetos normalizáveis não são strings reais do contrato',
+    );
+    const completeSchema = {
+        type: 'OBJECT',
+        properties: {
+            messages: { type: 'ARRAY', items: { type: 'STRING' } },
+            action: { type: 'STRING', enum: ['none'] },
+            stats: {
+                type: 'OBJECT',
+                properties: { score: { type: 'NUMBER' } },
+                required: ['score'],
+            },
+        },
+        required: ['messages', 'action', 'stats'],
+    };
+    assert.doesNotThrow(() => assertAiGatewayPayload({ messages: ['oi'], action: 'none', stats: { score: 1 } }, 'responseSchema', completeSchema));
+    assert.throws(
+        () => assertAiGatewayPayload({ messages: ['oi'], action: 'none', stats: {} }, 'responseSchema', completeSchema),
+        /stats JSON incompleto: faltam score/,
+        'campos obrigatórios aninhados fazem parte do contrato completo',
+    );
+    assert.throws(
+        () => assertAiGatewayPayload({ messages: ['oi'], action: 'invalid', stats: { score: 1 } }, 'responseSchema', completeSchema),
+        /valor fora do enum/,
+    );
+    assert.throws(
         () => assertAiGatewayPayload({ messages: ['sou um modelo de linguagem chamado Nemotron'], action: 'none' }, 'responseSchema', speechSchema),
         /identidade do provedor\/modelo/,
         'modelo não pode expor a infraestrutura ao lead',
@@ -204,7 +232,7 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
         (error) => error instanceof GatewayCapacityError,
     );
 
-    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 shared_quota_group=1 credential_health_isolation=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1 payload_validation=1 provider_first=1 latency_budget=1');
+    console.log('AI_GATEWAY_ROUTER_OK adaptive=1 strict_priority=1 bai_chain=3 bai_free_only=1 bai_failover=1 concurrency=1 rpm=1 circuit=1 shared_quota_group=1 credential_health_isolation=1 env_limits=1 unknown_quota_nonblocking=1 retry_accounting=1 full_payload_validation=1 provider_first=1 latency_budget=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

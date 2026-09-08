@@ -76,7 +76,7 @@ export const AI_ACTION_DEFINITIONS = [
         label: 'Gerar PIX',
         category: 'payment',
         description: 'Solicita a criação ou recuperação idempotente de uma cobrança PIX no multigateway.',
-        requirements: 'Exige produto/SKU, valor e aceite inequívocos, além de pedido autoritativo aceito pelo backend.',
+        requirements: 'Exige produto/SKU, itens adicionais, valor e aceite inequívocos, além de pedido autoritativo aceito pelo backend.',
         backendResult: 'O backend define produto e preço reais, gera ou recupera a cobrança e envia o código copia-e-cola.',
     },
     {
@@ -167,7 +167,11 @@ export const AI_ACTION_STAGE_MAP: Record<string, string> = {
     check_payment_status: 'PAYMENT_CHECK',
 };
 
-export const buildAiActionCatalogPrompt = () => [
+export const buildAiActionCatalogPrompt = (options: { compact?: boolean } = {}) => options.compact ? [
+    '# FUNÇÕES DISPONÍVEIS NESTE BACKEND',
+    'Escolha uma action do responseSchema; execução e resultado dependem do backend.',
+    ...AI_ACTION_DEFINITIONS.map((action) => `- ${action.name} — ${action.label}`),
+].join('\n') : [
     '# FUNÇÕES DISPONÍVEIS NESTE BACKEND',
     'Escolha no máximo uma action por turno. A action é um pedido de execução: o backend ainda valida autorização, dados, disponibilidade, idempotência e resultado. Nunca anuncie sucesso antes do retorno operacional.',
     ...AI_ACTION_DEFINITIONS.map((action) =>
@@ -187,6 +191,7 @@ export const buildAiToolRuntimePrompt = (input: {
     canGeneratePayment: boolean;
     hasPendingPayment: boolean;
     allowModelCustomPrice?: boolean;
+    orderBump?: { eligible: boolean; status: 'none' | 'offered' | 'accepted' | 'declined'; shouldOffer: boolean } | null;
     selectedOffer?: { sku?: string | null; value: number; description: string } | null;
 }) => {
     const offer = input.selectedOffer
@@ -197,7 +202,10 @@ export const buildAiToolRuntimePrompt = (input: {
 - send_voice_reply: ${input.voiceConfigured ? 'voz configurada' : 'indisponível; responda em texto'}${input.voiceRequested ? '; o lead pediu áudio neste turno' : ''}.
 - generate_pix_payment: ${input.canGeneratePayment ? `autorizada agora para ${offer}` : 'não autorizada agora; falta pedido aceito ou escolha inequívoca'}.
 - check_payment_status: ${input.hasPendingPayment ? 'há cobrança identificável para consultar' : 'não há cobrança pendente identificável'}.
-${input.allowModelCustomPrice ? '- custom_request: escolha um preço positivo entre R$ 5,00 e R$ 5.000,00 conforme o briefing e preencha payment_details com valor e descrição, mesmo quando action=none. Esse valor vira a oferta autoritativa após validação do backend.' : ''}
+${input.allowModelCustomPrice ? '- custom_request: escolha um preço entre R$ 15,00 e R$ 5.000,00 conforme o briefing e preencha payment_details com valor e descrição, mesmo quando action=none. Esse valor vira a oferta autoritativa após validação do backend.' : ''}
+${input.orderBump?.shouldOffer ? '- O VIP foi aceito. Antes do PIX, apresente uma única vez o adicional opcional de foto personalizada com nome por R$ 10,00. Não gere PIX neste turno.' : ''}
+${input.orderBump?.status === 'accepted' ? '- O adicional opcional foi aceito. O preço autoritativo já inclui todos os itens; siga para o PIX quando autorizado.' : ''}
+${input.orderBump?.status === 'declined' ? '- O adicional opcional foi recusado. Siga apenas com o VIP aceito e não ofereça o adicional outra vez.' : ''}
 - A disponibilidade acima orienta a escolha, mas o resultado só existe depois da confirmação do backend. Nunca anuncie ferramenta concluída em messages.`;
 };
 

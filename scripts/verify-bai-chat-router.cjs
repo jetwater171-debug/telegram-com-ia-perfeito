@@ -32,11 +32,21 @@ const router = compile('../src/lib/baiChatRouter.ts', (id) => {
 
     const calls = [];
     const responders = new Map();
+    const successes = [];
+    const failures = [];
     const resultPromise = router.callBaiChatWithFallback({
         apiKey: 'test-key',
         baseUrl: 'https://api.b.ai/v1',
         buildBody: (model) => ({ model }),
         parseResponse: (text) => JSON.parse(text),
+        validateResponse: (data) => {
+            if (!Array.isArray(data.messages) || data.messages.length === 0
+                || data.messages.some((message) => typeof message !== 'string' || !message.trim())) {
+                throw new Error('contrato messages invalido');
+            }
+        },
+        onSuccess: (model) => successes.push(model),
+        onFailure: (model) => failures.push(model),
         fetcher: async (_url, init) => {
             const model = JSON.parse(init.body).model;
             calls.push(model);
@@ -49,16 +59,19 @@ const router = compile('../src/lib/baiChatRouter.ts', (id) => {
     await new Promise((resolve) => setTimeout(resolve, 25));
     assert.deepEqual(calls, ['glm-5.3-flash', 'qwen3.8-flash', 'hy3']);
 
-    responders.get('glm-5.3-flash')(new Response('{"error":"limit"}', { status: 429 }));
+    // JSON parseável, mas contrato inválido, também não pode vencer a corrida.
+    responders.get('glm-5.3-flash')(new Response('{"messages":[{"text":"fake"}]}', { status: 200 }));
     responders.get('hy3')(new Response('not-json', { status: 200 }));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    responders.get('qwen3.8-flash')(new Response(JSON.stringify({ ok: true, model: 'qwen3.8-flash' }), { status: 200 }));
+    responders.get('qwen3.8-flash')(new Response(JSON.stringify({ messages: ['resposta real'], model: 'qwen3.8-flash' }), { status: 200 }));
 
     const result = await resultPromise;
     assert.equal(result.model, 'qwen3.8-flash');
     assert.equal(result.attempts.length, 2);
     assert.match(result.attempts[0], /glm-5\.3-flash/);
     assert.match(result.attempts[1], /hy3/);
+    assert.deepEqual(successes, ['qwen3.8-flash'], 'somente o vencedor validado pode registrar sucesso');
+    assert.deepEqual(failures.sort(), ['glm-5.3-flash', 'hy3']);
 
     let authCalls = 0;
     await assert.rejects(() => router.callBaiChatWithFallback({
@@ -73,7 +86,7 @@ const router = compile('../src/lib/baiChatRouter.ts', (id) => {
     }), /401/);
     assert.equal(authCalls, 3);
 
-    console.log('BAI_CHAT_ROUTER_OK order=3 free_only=1 parallel_race=1 per_model_accounting=1 auth_fast_fail=1');
+    console.log('BAI_CHAT_ROUTER_OK order=3 free_only=1 parallel_race=1 full_candidate_validation=1 winner_accounting=1 auth_fast_fail=1');
 })().catch((error) => {
     console.error(error);
     process.exit(1);

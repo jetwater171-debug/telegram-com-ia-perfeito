@@ -48,4 +48,10 @@ for (const neutral of [
 ]) assert.deepEqual(inspect([neutral]), [], neutral);
 
 assert.ok(inspect(['vou te mandar assim que o áudio ficar pronto'], { voiceUnavailable: true }).includes('unavailable_delivery_promise'));
-console.log('MODEL_REPLY_CONTRACT_OK cases=14');
+assert.deepEqual(inspect(['quer uma foto personalizada com seu nome por R$ 10,00?'], {
+    orderBumpRequired: true,
+    offer: { value: 29.90, description: 'VIP Mensal' },
+}), []);
+assert.ok(inspect(['quer um adicional surpresa?'], { orderBumpRequired: true }).includes('order_bump_price'));
+assert.ok(inspect(['quer adicionar R$ 10,00?'], { orderBumpRequired: true }).includes('order_bump_description'));
+console.log('MODEL_REPLY_CONTRACT_OK cases=17');

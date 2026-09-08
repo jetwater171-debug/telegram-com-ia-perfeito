@@ -67,7 +67,7 @@ const editorModule = loadStandaloneTs('src/lib/systemInstructionEditor.ts', {
   '@/lib/systemInstructionKeys': { SYSTEM_INSTRUCTION_BLOCK_KEY: 'system_instruction_primary', SYSTEM_INSTRUCTION_BLOCK_LABEL: 'System instruction completo' },
 });
 assert.equal(editorModule.findMissingSystemInstructionTokens(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE).length, 0);
-assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# FUNÇÕES DISPONÍVEIS NESTE BACKEND/);
+assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# CONTRATO OPERACIONAL PROTEGIDO DO BACKEND/);
 assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# CATÁLOGO COMERCIAL PRINCIPAL DO BACKEND/);
 assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# LARI — MASTER BRAIN DE CONVERSA/);
 assert.match(editorModule.DEFAULT_FULL_SYSTEM_INSTRUCTION_TEMPLATE, /# CONTRATO FINAL DE FORMATO/);
@@ -155,12 +155,11 @@ const assembledInstruction = geminiModule.exports.getSystemInstruction(
 assert.ok(assembledInstruction.startsWith('CUSTOM_AGENT\n\nBACKEND_CONTRACT\n\nACTION_CATALOG'));
 assert.equal(capturedTemplateValues.MINUTES_SINCE_OFFER, 0, 'zero não pode virar o fallback 999');
 const memorySummary = JSON.parse(capturedTemplateValues.LEAD_MEMORY);
-assert.match(memorySummary, /tipo dominante \(hipótese\)/);
-assert.match(memorySummary, /contexto emocional \(hipótese\)/);
-assert.match(memorySummary, /lembranças legadas sem comprovação/);
-assert.match(memorySummary, /fato-15-/);
-assert.doesNotMatch(memorySummary, /fato-16-/);
-assert.doesNotMatch(memorySummary, /x{161}/);
+const compactMemory = JSON.parse(memorySummary);
+assert.equal(compactMemory.relationship, 'new');
+assert.deepEqual(compactMemory.wants, []);
+assert.deepEqual(compactMemory.open_loops, []);
+assert.doesNotMatch(memorySummary, /tipo dominante|contexto emocional|lembranças legadas|fato-/);
 const profile = JSON.parse(JSON.parse(capturedTemplateValues.LEAD_PROFILE));
 assert.equal(profile.identity.name, 'Mateus');
 assert.equal(profile.origin, undefined, 'origem de aquisição não entra no prompt conversacional');

@@ -100,12 +100,23 @@ export type RetrievedMemory = {
     score: number;
 };
 
+/** Resumo determinístico do que ficou antes da janela curta de conversa. */
+export type ConversationCheckpoint = {
+    summary: string;
+    throughMessageId: string | null;
+    throughMessageAt: string | null;
+    openLoops: string[];
+    commitments: string[];
+    updatedAt: string | null;
+};
+
 export type BrainRuntimeState = {
     reality: RealityState;
     twin: LeadTwinState;
     episode: EpisodeState;
     temporal: TemporalState;
     memories: RetrievedMemory[];
+    checkpoint: ConversationCheckpoint | null;
     migrationReady: boolean;
 };
 

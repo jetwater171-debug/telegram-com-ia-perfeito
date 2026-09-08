@@ -18,13 +18,26 @@ const commercialRecord = { exports: {} };
 new Function('require', 'module', 'exports', commercialCompiled)(require, commercialRecord, commercialRecord.exports);
 const commercial = commercialRecord.exports;
 new Function('require', 'module', 'exports', compiled)(
-  (name) => name === '@/lib/commercialCatalog' ? commercial : require(name), record, record.exports,
+  (name) => {
+    if (name === '@/lib/commercialCatalog') return commercial;
+    if (name === '@/lib/funnelEngine') {
+      const funnelFilename = path.resolve(__dirname, '../src/lib/funnelEngine.ts');
+      const funnelCompiled = ts.transpileModule(fs.readFileSync(funnelFilename, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+        fileName: funnelFilename,
+      }).outputText;
+      const funnelRecord = { exports: {} };
+      new Function('require', 'module', 'exports', funnelCompiled)(require, funnelRecord, funnelRecord.exports);
+      return funnelRecord.exports;
+    }
+    return require(name);
+  }, record, record.exports,
 );
 const { buildModelPricedCustomOffer } = record.exports;
 
 assert.equal(buildModelPricedCustomOffer(null, 'pedido'), null);
 assert.equal(buildModelPricedCustomOffer(-10, 'pedido'), null);
-assert.equal(buildModelPricedCustomOffer(2, 'pedido').value, 5);
+assert.equal(buildModelPricedCustomOffer(2, 'pedido').value, 15);
 assert.equal(buildModelPricedCustomOffer(67.345, 'vídeo específico').value, 67.35);
 assert.equal(buildModelPricedCustomOffer(67.345, 'vídeo específico').tier, 'core');
 assert.equal(buildModelPricedCustomOffer(99999, 'pedido').value, 5000);
@@ -33,11 +46,12 @@ assert.equal(buildModelPricedCustomOffer(120, 'pedido').valueSource, 'model_prop
 const routeSource = fs.readFileSync(path.resolve(__dirname, '../src/app/api/process-message/route.ts'), 'utf8');
 const actionsSource = fs.readFileSync(path.resolve(__dirname, '../src/lib/aiActions.ts'), 'utf8');
 assert.match(routeSource, /const modelCanPriceCustom = salesTiming\.activeProduct === 'custom_request'/);
-assert.match(routeSource, /PREÇO PERSONALIZADO LIVRE/);
+assert.match(routeSource, /PRECO_PERSONALIZADO/);
 assert.match(routeSource, /buildModelPricedCustomOffer\(modelProposedValue, salesTiming\.customRequestBrief\)/);
 assert.match(routeSource, /if \(modelPricedOffer\) offerPlan = modelPricedOffer/);
 assert.match(routeSource, /sales_active_order: activeSalesOrder/);
 assert.match(actionsSource, /allowModelCustomPrice\?: boolean/);
+assert.match(actionsSource, /R\$ 15,00 e R\$ 5\.000,00/);
 assert.match(actionsSource, /Esse valor vira a oferta autoritativa após validação do backend/);
 
-console.log('CUSTOM_PRICING_OK freedom=1 backend_range=5-5000 runtime_bridge=1 persisted_offer=1');
+console.log('CUSTOM_PRICING_OK freedom=1 backend_range=15-5000 runtime_bridge=1 persisted_offer=1');

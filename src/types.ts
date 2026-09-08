@@ -84,6 +84,11 @@ export interface AIResponse {
     | "COOLDOWN" | "CHANGE_TOPIC";
     decision_confidence?: number;
     offer_id?: string | null;
+    conversation_checkpoint?: {
+        summary: string;
+        openLoops: string[];
+        commitments: string[];
+    } | null;
     memory_updates?: Array<{
         kind: "fact" | "hypothesis" | "preference" | "episode" | "outcome";
         key: string;

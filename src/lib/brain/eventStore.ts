@@ -1,5 +1,5 @@
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
-import type { BrainRuntimeState, StructuredMemoryUpdate } from '@/lib/brain/types';
+import type { BrainRuntimeState, ConversationCheckpoint, StructuredMemoryUpdate } from '@/lib/brain/types';
 import { evolveConversationStyle } from '@/lib/brain/conversationStyle';
 
 const missingArchitectureRelation = (error: any) => {
@@ -9,6 +9,127 @@ const missingArchitectureRelation = (error: any) => {
         || message.includes('lead_events')
         || message.includes('lead_memory_items')
         || message.includes('ai_decisions');
+};
+
+const compactText = (value: unknown, limit: number) => String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limit);
+const uniqueShortList = (values: unknown, limit: number, itemLimit = 220) => {
+    const seen = new Set<string>();
+    return (Array.isArray(values) ? values : [])
+        .map((value) => compactText(value, itemLimit))
+        .filter((value) => {
+            const key = value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        })
+        .slice(0, limit);
+};
+
+/**
+ * Normaliza o snapshot completo produzido pelo modelo, sem concatenar versões.
+ * A repetição do mesmo snapshot não duplica conteúdo.
+ */
+export const buildConversationCheckpoint = ({
+    previous,
+    summary,
+    openLoops = [],
+    commitments = [],
+}: {
+    previous?: ConversationCheckpoint | null;
+    summary?: string | null;
+    openLoops?: string[];
+    commitments?: string[];
+}) => {
+    const merged = compactText(summary || previous?.summary, 1200);
+    return {
+        summary: merged,
+        openLoops: uniqueShortList(openLoops, 5),
+        commitments: uniqueShortList(commitments, 3),
+    };
+};
+
+/**
+ * Grava o checkpoint depois do turno, sem depender do caminho de resposta.
+ * A função SQL recusa um marcador mais antigo e transforma retries no mesmo
+ * through_message_id em upsert idempotente.
+ */
+export const persistConversationCheckpointSafe = async ({
+    sessionId,
+    throughMessageId,
+    throughMessageAt,
+    previous,
+    summary,
+    openLoops,
+    commitments,
+}: {
+    sessionId: string;
+    throughMessageId: string;
+    throughMessageAt: string;
+    previous?: ConversationCheckpoint | null;
+    summary?: string | null;
+    openLoops?: string[];
+    commitments?: string[];
+}) => {
+    const markerId = String(throughMessageId || '').trim();
+    const markerAt = String(throughMessageAt || '').trim();
+    if (!sessionId || !markerId || !Number.isFinite(Date.parse(markerAt))) return false;
+    if (!String(summary || '').trim()) return false;
+    const next = buildConversationCheckpoint({ previous, summary, openLoops, commitments });
+    try {
+        const { data, error } = await supabase.rpc('upsert_lead_conversation_checkpoint', {
+            p_session_id: sessionId,
+            p_expected_previous_id: previous?.throughMessageId || null,
+            p_through_message_id: markerId,
+            p_through_message_at: markerAt,
+            p_summary: next.summary,
+            p_open_loops: next.openLoops,
+            p_commitments: next.commitments,
+        });
+        if (error) {
+            if (!['42P01', '42883', 'PGRST202', 'PGRST205'].includes(String(error.code || ''))) {
+                console.warn('[CHECKPOINT] persistência falhou:', error.message);
+            }
+            return false;
+        }
+        if (data === false) console.warn('[CHECKPOINT] versão concorrente preservada; resumo antigo descartado');
+        return data === true;
+    } catch (error: any) {
+        if (!['42P01', '42883', 'PGRST202', 'PGRST205'].includes(String(error?.code || ''))) {
+            console.warn('[CHECKPOINT] indisponível:', error?.message || error);
+        }
+        return false;
+    }
+};
+
+/** Persiste após a entrega e antes de liberar o lease do turno. */
+export const scheduleBrainConversationCheckpoint = async ({
+    sessionId,
+    throughMessageId,
+    throughMessageAt,
+    state,
+    checkpoint,
+}: {
+    sessionId: string;
+    throughMessageId: string;
+    throughMessageAt: string;
+    state: BrainRuntimeState;
+    checkpoint?: { summary: string; openLoops: string[]; commitments: string[] } | null;
+}) => {
+    // Sem resumo novo não avançamos o marcador: não declaramos como compactado
+    // conteúdo que a chamada principal deixou de resumir.
+    if (!checkpoint || typeof checkpoint.summary !== 'string' || !checkpoint.summary.trim()) return false;
+    return persistConversationCheckpointSafe({
+        sessionId,
+        throughMessageId,
+        throughMessageAt,
+        previous: state.checkpoint,
+        summary: checkpoint.summary,
+        openLoops: checkpoint.openLoops,
+        commitments: checkpoint.commitments,
+    });
 };
 
 export const appendLeadEventSafe = async ({

@@ -32,9 +32,17 @@ const loadPureTypeScriptModule = (relativePath) => {
     assert.match(gateway, /response_format/);
     assert.match(gateway, /require_parameters: true/);
     assert.match(gateway, /normalizeAiMessageList\(jsonResponse\.messages\)/);
+    assert.match(gateway, /validateResponse: \(parsed\)/);
+    assert.doesNotMatch(gateway, /emergencyAiReplyAttempts|sendEmergencyAiReply/);
+    assert.doesNotMatch(gateway, /RECUPERACAO LOCAL DE ULTIMO RECURSO|local-last-resort/);
+    assert.doesNotMatch(gateway, /tava te lendo aqui|fala isso de outro jeito pra mim|tô te acompanhando sim/);
+    assert.doesNotMatch(gateway, /return sendEmergencyAiReply\(sessionId, userMessage/);
     assert.match(worker, /normalizeAiMessageList\(aiResponse\.messages\)/);
     assert.match(worker, /Falha recuperavel na sessao/);
     assert.match(worker, /ai_response_unavailable/);
+    assert.match(worker, /const retryable = !externalDeliveryConfirmed && !externalDeliveryAttempted/);
+    assert.match(worker, /voiceDeliveryAttempted = true;\s*externalDeliveryAttempted = true;\s*await sendTelegramVoice/);
+    assert.match(worker, /if \(voiceDeliveryConfirmed \|\| voiceDeliveryAttempted\) throw error/);
     assert.match(worker, /canned_reply_sent: false/);
     assert.match(worker, /sendTelegramMessageStrict/);
     assert.match(worker, /insertMessageWithAiDebug\(supabase/);

@@ -188,6 +188,7 @@ const runCase = async ({
     customOrderWrites: 0,
     telegramConfirmations: 0,
     externalReservations: 0,
+    lastCustomOrderRequest: null,
   };
   const fakeSupabase = createFakeSupabase(paymentData, effectCounts);
   let claimUsed = false;
@@ -226,8 +227,9 @@ const runCase = async ({
     },
     '@/lib/brain/previewBandit': { recordPreviewPurchaseSafe: async () => undefined },
     '@/lib/customOrders': {
-      recordCustomOrderSafe: async () => {
+      recordCustomOrderSafe: async (request) => {
         effectCounts.customOrderWrites += 1;
+        effectCounts.lastCustomOrderRequest = clone(request);
         return recordCustomOrder;
       },
       markCustomOrderPaidSafe: async () => markCustomOrder,
@@ -376,6 +378,27 @@ const runCase = async ({
   assert.equal(coherent.paymentData.catalog_integrity, 'valid');
   assert.equal(coherent.paymentData.fulfillment_status, 'paid_awaiting_fulfillment');
   assert.equal(coherent.results[0].fulfillmentReady, true);
+
+  // 4b. Composição válida preserva o adicional no briefing de fulfillment,
+  // em vez de o reprocessamento reduzir o pedido ao produto-base.
+  const composedVip = await runCase({
+    paymentData: {
+      paymentId: 'payment-1', gateway: 'wiinpay', paid: false, counted: false,
+      product: 'vip', sku: 'vip_monthly', value: 39.90, amount_cents: 3990,
+      description: 'VIP Mensal Lari + foto personalizada', order_id: 'order-1',
+      custom_request_brief: 'Liberar um mês de acesso ao VIP da Lari',
+      line_items: [
+        { kind: 'vip', sku: 'vip_monthly', value: 29.90, amountCents: 2990 },
+        { kind: 'order_bump', sku: 'vip_name_photo_addon', value: 10, amountCents: 1000 },
+      ],
+    },
+    recordCustomOrder: true,
+    claim: 'claimed',
+  });
+  assert.equal(composedVip.results[0].catalogMismatch, false);
+  const composedBrief = composedVip.effectCounts.lastCustomOrderRequest.requestBrief;
+  assert.match(composedBrief, /Foto personalizada com o nome/);
+  assert.equal((composedBrief.match(/Liberar um mês de acesso ao VIP da Lari/g) || []).length, 1);
 
   // 5. Persistir o pedido não basta: se a transição para pago falhar, o estado
   // fica explicitamente reparável e o poll tentará novamente.

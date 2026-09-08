@@ -7,6 +7,8 @@ export type ModelReplyContract = {
     action: string;
     adultConfirmationRequired?: boolean;
     mustPresentVipMenu?: boolean;
+    /** VIP aceito: a fala deve apresentar uma única vez o adicional opcional de R$ 10. */
+    orderBumpRequired?: boolean;
     offer?: { value: number; description: string } | null;
     requireOfferPrice?: boolean;
     mediaUnavailable?: boolean;
@@ -70,6 +72,10 @@ export const inspectModelReply = (value: unknown, contract: ModelReplyContract):
         const allowed = VIP_OFFERS.map((offer) => offer.amountCents as number);
         if (allowed.some((price) => !prices.includes(price)) || prices.some((price) => !allowed.includes(price))) issues.push('vip_catalog_prices');
         if (!/mensal/i.test(text) || !/vital[ií]ci[oa]/i.test(text) || !/chamada/i.test(text)) issues.push('vip_catalog_options');
+    } else if (contract.orderBumpRequired) {
+        const allowed = new Set([1_000, ...(contract.offer ? [Math.round(contract.offer.value * 100)] : [])]);
+        if (!prices.includes(1_000) || prices.some((price) => !allowed.has(price))) issues.push('order_bump_price');
+        if (!/foto/i.test(text) || !/(?:nome|personaliz)/i.test(text)) issues.push('order_bump_description');
     } else if (contract.offer && (prices.length || contract.requireOfferPrice)) {
         const expected = Math.round(contract.offer.value * 100);
         if (prices.some((price) => price !== expected) || (contract.requireOfferPrice && !prices.includes(expected))) issues.push('offer_price_mismatch');

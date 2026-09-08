@@ -77,6 +77,32 @@ try {
     product: 'vip', value: 49.9, amount_cents: 4990,
   });
   assert.equal(fixedProductWithoutSku.catalogMismatch, true);
+  const negotiatedMonthly = reconciliation.inspectCommercialPaymentIntegrity({
+    product: 'vip', sku: 'vip_monthly', value: 20, amount_cents: 2000,
+    line_items: [{ kind: 'vip', sku: 'vip_monthly', value: 20, amountCents: 2000 }],
+  });
+  assert.equal(negotiatedMonthly.catalogMismatch, false);
+  assert.equal(negotiatedMonthly.commercialLineItems[0].amountCents, 2000);
+  const monthlyWithAddon = reconciliation.inspectCommercialPaymentIntegrity({
+    product: 'vip', sku: 'vip_monthly', value: 39.9, amount_cents: 3990,
+    line_items: [
+      { kind: 'vip', sku: 'vip_monthly', value: 29.9, amountCents: 2990 },
+      { kind: 'order_bump', sku: 'vip_name_photo_addon', value: 10, amountCents: 1000 },
+    ],
+  });
+  assert.equal(monthlyWithAddon.catalogMismatch, false);
+  assert.equal(monthlyWithAddon.commercialLineItems.length, 2);
+  assert.equal(reconciliation.inspectCommercialPaymentIntegrity({
+    product: 'vip', sku: 'vip_monthly', value: 39.9, amount_cents: 3990,
+    line_items: [
+      { kind: 'vip', sku: 'vip_monthly', value: 29.9, amountCents: 2990 },
+      { kind: 'order_bump', sku: 'vip_name_photo_addon', value: 11, amountCents: 1000 },
+    ],
+  }).catalogMismatch, true);
+  assert.equal(reconciliation.inspectCommercialPaymentIntegrity({
+    product: 'vip', sku: 'vip_monthly', value: 39.9, amount_cents: 3890,
+    line_items: monthlyWithAddon.commercialLineItems,
+  }).catalogMismatch, true);
 
   assert.equal(previews.shouldDeliverRequestedMedia({ userAskedMedia: false, userAffirmedMedia: false, isInitialGreeting: false }), false);
   assert.equal(previews.shouldDeliverRequestedMedia({ userAskedMedia: true, userAffirmedMedia: false, isInitialGreeting: false }), true);

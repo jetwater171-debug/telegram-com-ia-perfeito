@@ -58,7 +58,10 @@ export type LoadFullConversationHistoryOptions = {
     supabase: FullConversationHistorySupabase;
     sessionId: string;
     throughCreatedAt?: string | Date;
+    throughMessageId?: string;
+    /** @deprecated Mantido para compatibilidade; a leitura agora e limitada. */
     pageSize?: number;
+    sourceMessageLimit?: number;
     currentTurnMessageIds?: ReadonlyArray<string | number>;
 };
 
@@ -67,8 +70,9 @@ export type ConversationHistoryWindowOptions = {
     maxChars: number;
 };
 
-const MAX_PAGE_SIZE = 1_000;
-const DEFAULT_PAGE_SIZE = 500;
+export const MAX_CONVERSATION_SOURCE_MESSAGES = 80;
+export const MAX_CONVERSATION_WINDOW_MESSAGES = 60;
+export const MAX_CONVERSATION_WINDOW_CHARS = 8_000;
 
 const toSnapshotIso = (value?: string | Date) => {
     if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : new Date().toISOString();
@@ -180,59 +184,36 @@ const toHistoryMessage = (row: ConversationHistoryRow): FullConversationMessage 
 };
 
 /**
- * Carrega todo o histórico user/bot até um snapshot estável. A paginação usa
- * created_at + id e nunca corta por quantidade, tamanho ou episódio.
+ * Carrega somente a cauda estável da conversa. O histórico completo não entra
+ * mais no turno: fatos duráveis pertencem à memória estruturada/checkpoint.
  */
 export const loadFullConversationHistory = async ({
     supabase,
     sessionId,
     throughCreatedAt,
-    pageSize = DEFAULT_PAGE_SIZE,
+    throughMessageId,
+    sourceMessageLimit = MAX_CONVERSATION_SOURCE_MESSAGES,
     currentTurnMessageIds = [],
 }: LoadFullConversationHistoryOptions): Promise<FullConversationHistoryResult> => {
     const snapshotThroughCreatedAt = toSnapshotIso(throughCreatedAt);
-    const safePageSize = Math.max(1, Math.min(MAX_PAGE_SIZE, Math.floor(Number(pageSize) || DEFAULT_PAGE_SIZE)));
+    const safeSourceLimit = Math.max(1, Math.min(
+        MAX_CONVERSATION_SOURCE_MESSAGES,
+        Math.floor(Number(sourceMessageLimit) || MAX_CONVERSATION_SOURCE_MESSAGES),
+    ));
     const currentIds = new Set(currentTurnMessageIds.map((id) => String(id)));
-    const rows: ConversationHistoryRow[] = [];
-    let pagesFetched = 0;
-    let rowsFetched = 0;
-    let expectedSourceCount: number | null = null;
+    const result = await supabase
+        .from('messages')
+        .select('id,sender,content,created_at,media_type')
+        .eq('session_id', sessionId)
+        .in('sender', ['user', 'bot'])
+        .lte('created_at', snapshotThroughCreatedAt)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(safeSourceLimit) as unknown as { data?: ConversationHistoryRow[] | null; error?: unknown };
+    if (result?.error) throw result.error;
+    if (!Array.isArray(result?.data)) throw new Error('conversation history: consulta sem dados');
 
-    for (let offset = 0; ; ) {
-        const query = supabase
-            .from('messages')
-            .select('id,sender,content,created_at,media_type', { count: 'exact' })
-            .eq('session_id', sessionId)
-            .in('sender', ['user', 'bot'])
-            .lte('created_at', snapshotThroughCreatedAt)
-            .order('created_at', { ascending: true })
-            .order('id', { ascending: true })
-            .range(offset, offset + safePageSize - 1);
-        const result = await query as unknown as {
-            data?: ConversationHistoryRow[] | null;
-            error?: unknown;
-            count?: number | null;
-        };
-        if (result?.error) throw result.error;
-        if (!Array.isArray(result?.data)) throw new Error('full conversation history: página sem dados');
-        if (!Number.isInteger(result.count) || Number(result.count) < 0) {
-            throw new Error('full conversation history: count exact indisponível');
-        }
-        if (expectedSourceCount === null) expectedSourceCount = Number(result.count);
-        if (Number(result.count) !== expectedSourceCount) {
-            throw new Error('full conversation history: count mudou durante o snapshot');
-        }
-        const page = result.data;
-        pagesFetched += 1;
-        rowsFetched += page.length;
-        rows.push(...page);
-        if (rows.length > expectedSourceCount) throw new Error('full conversation history: paginação excedeu count exact');
-        if (rows.length === expectedSourceCount) break;
-        if (page.length === 0) throw new Error('full conversation history: página vazia antes do count exact');
-        offset += page.length;
-    }
-
-    const orderedRows = [...rows].sort(compareRows);
+    const orderedRows = [...result.data].sort(compareRows);
     let rowsExcludedAsCurrentTurn = 0;
     let rowsIgnoredForSender = 0;
     let rowsIgnoredWithoutText = 0;
@@ -251,7 +232,9 @@ export const loadFullConversationHistory = async ({
         }
         const createdAt = String(row.created_at || '');
         if (!Number.isFinite(Date.parse(createdAt))) rowsWithInvalidCreatedAt += 1;
-        if (isSnapshotAfter(createdAt, snapshotThroughCreatedAt)) {
+        if (isSnapshotAfter(createdAt, snapshotThroughCreatedAt)
+            || (throughMessageId && compareTimestamps(createdAt, snapshotThroughCreatedAt) === 0
+                && compareIds(String(row.id), throughMessageId) > 0)) {
             rowsIgnoredAfterSnapshot += 1;
             continue;
         }
@@ -267,12 +250,12 @@ export const loadFullConversationHistory = async ({
         messages,
         diagnostics: {
             snapshotThroughCreatedAt,
-            sourceMessageCount: rowsFetched,
+            sourceMessageCount: orderedRows.length,
             includedMessageCount: messages.length,
             excludedCurrentTurnCount: rowsExcludedAsCurrentTurn,
             chars: messages.reduce((total, message) => total + message.text.length, 0),
-            pagesFetched,
-            rowsFetched,
+            pagesFetched: 1,
+            rowsFetched: orderedRows.length,
             rowsIncluded: messages.length,
             rowsExcludedAsCurrentTurn,
             rowsIgnoredForSender,
@@ -293,25 +276,88 @@ export const selectRecentConversationHistory = (
     messages: FullConversationMessage[],
     { maxMessages, maxChars }: ConversationHistoryWindowOptions,
 ) => {
-    const safeMessageLimit = Math.max(1, Math.floor(Number(maxMessages) || 1));
-    const safeCharLimit = Math.max(500, Math.floor(Number(maxChars) || 500));
-    const selected: FullConversationMessage[] = [];
-    let chars = 0;
-
-    for (let index = (messages || []).length - 1; index >= 0; index -= 1) {
-        if (selected.length >= safeMessageLimit) break;
-        const message = messages[index];
-        const text = sanitizeConversationHistoryText(message?.text);
-        if (!text) continue;
-        const remaining = safeCharLimit - chars;
-        if (remaining <= 0) break;
-        if (text.length > remaining && selected.length > 0) break;
-        const visibleText = text.length <= remaining ? text : text.slice(-remaining).trimStart();
-        selected.push({ ...message, text: visibleText });
-        chars += visibleText.length;
+    const safeMessageLimit = Math.max(1, Math.min(
+        MAX_CONVERSATION_WINDOW_MESSAGES,
+        Math.floor(Number(maxMessages) || MAX_CONVERSATION_WINDOW_MESSAGES),
+    ));
+    const safeCharLimit = Math.max(500, Math.min(
+        MAX_CONVERSATION_WINDOW_CHARS,
+        Math.floor(Number(maxChars) || MAX_CONVERSATION_WINDOW_CHARS),
+    ));
+    const normalized = (messages || []).map((message) => ({
+        ...message,
+        text: sanitizeConversationHistoryText(message?.text),
+    })).filter((message) => message.text);
+    const turns: FullConversationMessage[][] = [];
+    for (const message of normalized) {
+        const current = turns.at(-1);
+        if (current && current[0].sender === message.sender) current.push(message);
+        else turns.push([message]);
     }
 
-    return selected.reverse();
+    const selectedTurns: FullConversationMessage[][] = [];
+    let messageCount = 0;
+    let chars = 0;
+    for (let index = turns.length - 1; index >= 0; index -= 1) {
+        const turn = turns[index];
+        const turnChars = turn.reduce((total, message) => total + message.text.length, 0);
+        if (messageCount + turn.length > safeMessageLimit || chars + turnChars > safeCharLimit) {
+            // Um turno excepcionalmente longo não pode apagar todo o histórico.
+            // Preserva a cauda mais recente e sinaliza explicitamente qualquer corte.
+            if (selectedTurns.length === 0) {
+                const tail: FullConversationMessage[] = [];
+                let remaining = safeCharLimit;
+                for (let item = turn.length - 1; item >= 0 && tail.length < safeMessageLimit && remaining > 0; item -= 1) {
+                    const message = turn[item];
+                    if (message.text.length <= remaining) {
+                        tail.push(message);
+                        remaining -= message.text.length;
+                    } else {
+                        const marker = '[trecho anterior omitido] ';
+                        if (remaining > marker.length) {
+                            tail.push({ ...message, text: marker + message.text.slice(-(remaining - marker.length)) });
+                        }
+                        break;
+                    }
+                }
+                selectedTurns.push(tail.reverse());
+            }
+            break;
+        }
+        selectedTurns.push(turn);
+        messageCount += turn.length;
+        chars += turnChars;
+    }
+    return selectedTurns.reverse().flat();
+};
+
+const localBubbleStamp = (createdAt: string, timezone = 'America/Sao_Paulo'): string => {
+    const parsed = new Date(createdAt);
+    if (!Number.isFinite(parsed.getTime())) return '';
+    try {
+        const parts = new Intl.DateTimeFormat('pt-BR', {
+            timeZone: timezone,
+            day: '2-digit',
+            month: '2-digit',
+            year: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hourCycle: 'h23',
+        }).formatToParts(parsed);
+        const value = (type: string) => parts.find((part) => part.type === type)?.value || '';
+        return `${value('day')}/${value('month')}/${value('year')} ${value('hour')}:${value('minute')}`;
+    } catch {
+        return timezone === 'America/Sao_Paulo' ? '' : localBubbleStamp(createdAt, 'America/Sao_Paulo');
+    }
+};
+
+/** Formato legível e datado, comum a todos os provedores. */
+export const formatConversationBubble = (message: FullConversationMessage, timezone = 'America/Sao_Paulo') => {
+    const text = sanitizeConversationHistoryText(message.text);
+    if (!text) return '';
+    const stamp = localBubbleStamp(message.createdAt, timezone);
+    const speaker = message.sender === 'bot' ? 'LARI' : 'LEAD';
+    return `${stamp ? `[${stamp}] ` : ''}${speaker}: ${text}`;
 };
 
 /**
@@ -320,25 +366,19 @@ export const selectRecentConversationHistory = (
  */
 export const buildGeminiConversationHistory = (
     messages: FullConversationMessage[],
+    timezone = 'America/Sao_Paulo',
 ): GeminiConversationHistoryEntry[] => {
     const history: GeminiConversationHistoryEntry[] = [];
-    let previousUtcDay = '';
     for (const message of messages || []) {
         if (message.sender !== 'user' && message.sender !== 'bot') continue;
-        const text = sanitizeConversationHistoryText(message.text);
+        const text = formatConversationBubble(message, timezone);
         if (!text) continue;
         const role = message.sender === 'bot' ? 'model' : 'user';
-        const utcDay = /^\d{4}-\d{2}-\d{2}/.test(message.createdAt)
-            ? message.createdAt.slice(0, 10)
-            : '';
-        const dayMarker = utcDay && utcDay !== previousUtcDay ? `[dia UTC: ${utcDay}]\n` : '';
-        if (utcDay) previousUtcDay = utcDay;
-        const visibleText = `${dayMarker}${text}`;
         const previous = history.at(-1);
         if (previous?.role === role) {
-            previous.parts[0].text = `${previous.parts[0].text}\n${visibleText}`;
+            previous.parts[0].text = `${previous.parts[0].text}\n${text}`;
         } else {
-            history.push({ role, parts: [{ text: visibleText }] });
+            history.push({ role, parts: [{ text }] });
         }
     }
     return history;

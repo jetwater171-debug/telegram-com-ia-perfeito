@@ -11,6 +11,7 @@ const moduleCache = new Map();
 const aliasToFile = (id) => {
   const aliases = {
     '@/lib/commercialCatalog': 'src/lib/commercialCatalog.ts',
+    '@/lib/funnelEngine': 'src/lib/funnelEngine.ts',
     '@/lib/salesTiming': 'src/lib/salesTiming.ts',
     '@/lib/brain/types': 'src/lib/brain/types.ts',
     '@/lib/brain/hardValidator': 'src/lib/brain/hardValidator.ts',
@@ -247,7 +248,10 @@ for (const [text, sku, value] of [
   assert.equal(contextualChoice.offerPlan?.sku, sku, text);
   assert.equal(contextualChoice.offerPlan?.value, value, text);
   assert.equal(contextualChoice.requiresSkuSelection, false, text);
-  assert.equal(contextualChoice.canGeneratePayment, true, text);
+  // Escolha do plano sem pedido direto de PIX passa pelo adicional opcional.
+  assert.equal(contextualChoice.funnel.stage, 'order_bump', text);
+  assert.equal(contextualChoice.funnel.orderBump.shouldOffer, true, text);
+  assert.equal(contextualChoice.canGeneratePayment, false, text);
 }
 
 // 3. Cada escolha explícita mantém seu SKU e preço até o checkout.

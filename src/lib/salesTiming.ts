@@ -1,17 +1,25 @@
 import {
     COMMERCIAL_CATALOG,
+    MIN_VIP_MONTHLY_NEGOTIATION_PRICE,
+    VIP_NAME_PHOTO_ADDON_PRICE,
     VIP_MONTHLY_PRICE,
     VIP_OFFERS,
+    buildCommercialLineItems,
     detectCommercialSku,
     getCommercialOffer,
     isVipMenuRequest,
+    readCommercialLineItems,
+    type CommercialLineItem,
     type CommercialSku,
 } from '@/lib/commercialCatalog';
+import { resolveFunnelState, resolvePendingAddonDecision } from '@/lib/funnelEngine';
 
 export type SalesProduct = 'video_call' | 'social_meetup' | 'vip' | 'custom_photo' | 'custom_video' | 'private_number' | 'private_chat' | 'erotic_audio' | 'evaluation' | 'gift' | 'custom_request';
 
 // Alias mantido para integrações antigas. Toda nova lógica deve usar o SKU.
 export const VIP_PRICE = VIP_MONTHLY_PRICE;
+export { MIN_VIP_MONTHLY_NEGOTIATION_PRICE } from '@/lib/commercialCatalog';
+export const MIN_CUSTOM_ORDER_PRICE = 15;
 export type SalesSku = CommercialSku | `${Exclude<SalesProduct, 'vip' | 'video_call'>}_${'entry' | 'core' | 'premium' | 'voluntary'}`;
 
 export type AdaptiveOfferPlan = {
@@ -24,6 +32,7 @@ export type AdaptiveOfferPlan = {
     explicitBudget: number | null;
     valueSource: 'explicit_budget' | 'accepted_offer' | 'model_proposed' | 'purchase_history' | 'standard';
     requestBrief: string | null;
+    lineItems?: CommercialLineItem[];
 };
 
 export type SalesOrderStatus = 'offered' | 'accepted' | 'payment_pending' | 'paid' | 'superseded' | 'expired';
@@ -42,6 +51,7 @@ export type ActiveSalesOrder = {
     expiresAt: string;
     paymentId: string | null;
     gateway: string | null;
+    lineItems: CommercialLineItem[];
 };
 
 type SalesMessage = {
@@ -68,10 +78,22 @@ const SALES_PRODUCTS = new Set<SalesProduct>([
     'private_number', 'private_chat', 'erotic_audio', 'evaluation', 'gift', 'custom_request',
 ]);
 const OPEN_ORDER_STATUSES = new Set<SalesOrderStatus>(['offered', 'accepted', 'payment_pending']);
+const CUSTOM_ORDER_PRODUCTS = new Set<SalesProduct>(['custom_photo', 'custom_video', 'custom_request', 'erotic_audio']);
 
 const money = (value: unknown) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : null;
+};
+
+const isVipMonthlyNegotiation = (value: number) => value >= MIN_VIP_MONTHLY_NEGOTIATION_PRICE
+    && value <= VIP_MONTHLY_PRICE;
+
+const buildOfferLineItems = (offer: AdaptiveOfferPlan, includeOrderBump = false) => {
+    const fixedOffer = getCommercialOffer(offer.sku as CommercialSku);
+    if (!fixedOffer || !fixedOffer.sku.startsWith('vip_')) return [];
+    const items = buildCommercialLineItems(fixedOffer, includeOrderBump);
+    items[0] = { ...items[0], amountCents: Math.round(offer.value * 100), value: offer.value };
+    return items;
 };
 
 export const readActiveSalesOrder = (value: unknown, now = new Date()): ActiveSalesOrder | null => {
@@ -88,9 +110,13 @@ export const readActiveSalesOrder = (value: unknown, now = new Date()): ActiveSa
     if (!OPEN_ORDER_STATUSES.has(status)) return null;
     if (!Number.isFinite(expiryMs) || expiryMs <= now.getTime()) return null;
     const fixedOffer = getCommercialOffer(sku as CommercialSku);
+    const lineItems = readCommercialLineItems(row.lineItems || row.line_items, fixedOffer, amountCents);
     if (product === 'vip' || product === 'video_call') {
         if (!fixedOffer || fixedOffer.product !== product) return null;
-        if (fixedOffer.amountCents !== amountCents) return null;
+        const allowedAmount = fixedOffer.sku === 'vip_monthly'
+            ? isVipMonthlyNegotiation(amount)
+            : fixedOffer.amountCents === amountCents;
+        if (!lineItems && !allowedAmount) return null;
     }
     const resolvedSku = fixedOffer?.sku || (sku || `${product}_core`) as SalesSku;
     return {
@@ -107,6 +133,17 @@ export const readActiveSalesOrder = (value: unknown, now = new Date()): ActiveSa
         expiresAt,
         paymentId: String(row.paymentId || row.payment_id || '').trim() || null,
         gateway: String(row.gateway || '').trim() || null,
+        lineItems: lineItems || (fixedOffer ? buildOfferLineItems({
+            product,
+            sku: fixedOffer.sku,
+            tier: 'core',
+            value: amount,
+            description: String(row.description || product),
+            format: '',
+            explicitBudget: null,
+            valueSource: 'standard',
+            requestBrief: null,
+        }) : []),
     };
 };
 
@@ -127,6 +164,7 @@ export const buildSalesOrderSnapshot = ({
         && previous.product === plan.product
         && previous.sku === plan.sku
         && Math.round(previous.amount * 100) === Math.round(plan.value * 100)
+        && JSON.stringify(previous.lineItems) === JSON.stringify(plan.lineItems || buildOfferLineItems(plan))
         && normalize(previous.requestBrief || '') === normalize(plan.requestBrief || '')
         && previous.status !== 'paid';
     const base = canReuse ? previous : null;
@@ -148,6 +186,7 @@ export const buildSalesOrderSnapshot = ({
         expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
         paymentId: base?.paymentId || null,
         gateway: base?.gateway || null,
+        lineItems: base?.lineItems || plan.lineItems || buildOfferLineItems(plan),
     };
 };
 
@@ -273,6 +312,7 @@ export const extractExplicitBudget = (text: string) => {
     // Uma frase casual como "tenho 10k na conta" nao vira autorizacao para cobrar 10 mil.
     const patterns = [
         /\b(?:so tenho|tenho so|meu limite e|meu orcamento e|consigo pagar|posso pagar|pago|faz por|fecha por|da pra fazer por)\s+(?:r\$\s*)?(\d{1,4}(?:[.,]\d{1,2})?)\b/i,
+        /\b(?:quero|levo|fico com)\b.{0,48}?\bpor\s+(?:r\$\s*)?(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:reais|real|contos?)\b/i,
         /\b(?:te mando|quero te mandar|posso te mandar|vou te mandar|te dou|quero te dar)\s+(?:r\$\s*)?(\d{1,4}(?:[.,]\d{1,2})?)\b/i,
         /\b(?:tenho|sobrou)\s+(?:r\$\s*)?(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:reais|real|conto|contos)\s+(?:pra|para)\s+(?:isso|vc|voce|pagar|comprar)\b/i,
         /\b(?:ifood|lanche|janta|mimo)\b.{0,24}\b(?:de|no valor de|mandando)\s+(?:r\$\s*)?(\d{1,4}(?:[.,]\d{1,2})?)\b/i,
@@ -353,7 +393,7 @@ export const buildModelPricedCustomOffer = (
 ): AdaptiveOfferPlan | null => {
     const parsed = Number(proposedValue);
     if (!Number.isFinite(parsed) || parsed <= 0) return null;
-    const value = Math.round(Math.min(5_000, Math.max(5, parsed)) * 100) / 100;
+    const value = Math.round(Math.min(5_000, Math.max(MIN_CUSTOM_ORDER_PRICE, parsed)) * 100) / 100;
     const tier = value >= 99.90 ? 'premium' : value >= 59.90 ? 'core' : 'entry';
     return {
         product: 'custom_request',
@@ -444,20 +484,26 @@ const createOfferPlan = ({
     if (product === 'vip') {
         const fixed = getCommercialOffer(selectedSku?.startsWith('vip_') ? selectedSku : 'vip_monthly')
             || COMMERCIAL_CATALOG.vip_monthly;
+        const negotiatedMonthly = fixed.sku === 'vip_monthly'
+            && explicitBudget !== null
+            && isVipMonthlyNegotiation(explicitBudget);
+        const preservedMonthly = fixed.sku === 'vip_monthly'
+            && acceptedOfferValue !== null && isVipMonthlyNegotiation(acceptedOfferValue);
         return {
             product,
             sku: fixed.sku,
             tier: fixed.sku === 'vip_monthly' ? 'entry' : fixed.sku === 'vip_lifetime' ? 'core' : 'premium',
-            value: fixed.value,
+            value: negotiatedMonthly ? explicitBudget : preservedMonthly ? acceptedOfferValue : fixed.value,
             description: fixed.description,
             format: fixed.format,
             explicitBudget,
-            valueSource: 'standard',
+            valueSource: negotiatedMonthly ? 'explicit_budget' : preservedMonthly ? 'accepted_offer' : 'standard',
             requestBrief: null,
         };
     }
 
-    if (product === 'custom_request' && (explicitBudget || acceptedOfferValue)) {
+    if (product === 'custom_request' && explicitBudget !== null && explicitBudget < MIN_CUSTOM_ORDER_PRICE) return null;
+    if (product === 'custom_request' && ((explicitBudget !== null && explicitBudget >= MIN_CUSTOM_ORDER_PRICE) || acceptedOfferValue)) {
         const customOffer = buildModelPricedCustomOffer(explicitBudget || acceptedOfferValue, customRequestBrief);
         return customOffer ? {
             ...customOffer,
@@ -498,7 +544,7 @@ const createOfferPlan = ({
         product,
         sku: `${product}_${tier}` as SalesSku,
         tier,
-        value: Math.max(5, Math.round((customValue ?? selected[0]) * 100) / 100),
+        value: Math.max(CUSTOM_ORDER_PRODUCTS.has(product) ? MIN_CUSTOM_ORDER_PRICE : 5, Math.round((customValue ?? selected[0]) * 100) / 100),
         description: selected[1],
         format: selected[2],
         explicitBudget,
@@ -585,8 +631,13 @@ export const evaluateSalesTiming = ({
     leadScore?: LeadScoreInput | null;
     deviceType?: string | null;
 }) => {
-    const rawDetectedProduct = detectPaidProduct(userText);
-    const candidateSku = detectCommercialSku(userText, {
+    const storedActiveOrder = readActiveSalesOrder(leadMemory?.metadata?.sales_active_order, now);
+    const pendingAddonDecision = storedActiveOrder?.product === 'vip'
+        && leadMemory?.metadata?.funnel_order_bump_status === 'offered'
+        ? resolvePendingAddonDecision(userText) : null;
+    // Responder ao adicional pendente não troca silenciosamente o pedido-base.
+    const rawDetectedProduct = pendingAddonDecision ? null : detectPaidProduct(userText);
+    const candidateSku = pendingAddonDecision ? null : detectCommercialSku(userText, {
         allowBareVipCatalogAmount: hasRecentVipCatalog(recentMessages, now),
     });
     const detectedSku = rawDetectedProduct && !['vip', 'video_call'].includes(rawDetectedProduct)
@@ -596,7 +647,6 @@ export const evaluateSalesTiming = ({
     const rejectedVipThisTurn = rejectsVipNow(userText);
     const resolvedDetectedProduct = rawDetectedProduct || skuDetectedProduct;
     const detectedProduct = rejectedVipThisTurn && resolvedDetectedProduct === 'vip' ? null : resolvedDetectedProduct;
-    const storedActiveOrder = readActiveSalesOrder(leadMemory?.metadata?.sales_active_order, now);
     const genericVipMenuRequest = detectedProduct === 'vip' && !detectedSku && isVipMenuRequest(userText);
     const compatibleActiveOrder = storedActiveOrder
         && !genericVipMenuRequest
@@ -658,12 +708,19 @@ export const evaluateSalesTiming = ({
         || (proactiveVipOffer ? 'vip' : null);
     const rememberedSku = commercialSkuFromMemory(leadMemory);
     const explicitBudget = extractExplicitBudget(userText);
-    const selectedSku = detectedSku
+    let selectedSku = detectedSku
         || (compatibleActiveOrder && getCommercialOffer(compatibleActiveOrder.sku as CommercialSku)
             ? compatibleActiveOrder.sku as CommercialSku
             : null)
         || (!genericVipMenuRequest && rememberedProduct === activeProduct ? rememberedSku : null)
         || (proactiveVipOffer ? 'vip_monthly' : null);
+    const initiallySelectedSku = selectedSku;
+    const canNegotiateVipMonthly = activeProduct === 'vip'
+        && explicitBudget !== null
+        && isVipMonthlyNegotiation(explicitBudget);
+    const migratedToMonthlyForBudget = canNegotiateVipMonthly
+        && selectedSku !== 'vip_monthly';
+    if (migratedToMonthlyForBudget) selectedSku = 'vip_monthly';
     const rememberedCustomBrief = String(leadMemory?.metadata?.sales_custom_request_brief || '').trim();
     const isBriefedProduct = activeProduct === 'custom_request' || activeProduct === 'erotic_audio';
     const customRequestBrief = isBriefedProduct
@@ -701,7 +758,7 @@ export const evaluateSalesTiming = ({
     const salesContextActive = Boolean(activeProduct || engagedContinuation || directCheckout || askedPrice || acceptedOffer || recentOffer);
     const canPitchPrice = Boolean(activeProduct);
     const selectedFixedOffer = getCommercialOffer(selectedSku);
-    const fixedCatalogBudgetGap = Boolean(explicitBudget !== null && (
+    const fixedCatalogBudgetGap = Boolean(explicitBudget !== null && !canNegotiateVipMonthly && (
         (selectedFixedOffer && explicitBudget < selectedFixedOffer.value)
         || (!selectedFixedOffer && activeProduct === 'vip' && explicitBudget < VIP_MONTHLY_PRICE)
     ));
@@ -710,15 +767,40 @@ export const evaluateSalesTiming = ({
     // Memória de produto e texto antigo ajudam a conversar, mas nunca reabrem
     // sozinhos uma compra já paga.
     const hasAuthoritativeOrderContext = Boolean(detectedProduct || compatibleActiveOrder);
-    const canGeneratePayment = (directCheckout || acceptanceAnswersCurrentOffer)
+    const needsMonthlyMigrationAcceptance = migratedToMonthlyForBudget
+        && initiallySelectedSku !== null;
+    const funnel = resolveFunnelState({
+        userText,
+        metadata: leadMemory?.metadata,
+        userMessageCount: episodeUserMessages.length + (currentObserved ? 0 : 1),
+        totalPaid,
+        activeProduct,
+        selectedSku,
+        paymentPending: compatibleActiveOrder?.status === 'payment_pending',
+        acceptedVip: activeProduct === 'vip'
+            && compatibleActiveOrder?.status !== 'accepted'
+            && Boolean(selectedSku)
+            && (acceptedOffer || directCheckout),
+        directCheckout,
+        negotiableBudget: canNegotiateVipMonthly,
+    });
+    const addonDecisionNow = leadMemory?.metadata?.funnel_order_bump_status === 'offered'
+        && ['accepted', 'declined'].includes(funnel.orderBump.status)
+        && activeProduct === 'vip' && Boolean(compatibleActiveOrder);
+    const canGeneratePayment = (directCheckout || acceptanceAnswersCurrentOffer || addonDecisionNow)
         && hasAuthoritativeOrderContext
         && !requiresSkuSelection
-        && !fixedCatalogBudgetGap;
-    const offerPlan = requiresSkuSelection ? null : createOfferPlan({
+        && !fixedCatalogBudgetGap
+        && !needsMonthlyMigrationAcceptance
+        && !funnel.supportPriority
+        && !funnel.orderBump.shouldOffer;
+    const baseOfferPlan = requiresSkuSelection ? null : createOfferPlan({
         product: activeProduct,
         selectedSku,
         explicitBudget,
-        acceptedOfferValue: canGeneratePayment ? recentOfferDetails?.value ?? null : null,
+        acceptedOfferValue: compatibleActiveOrder?.sku === selectedSku
+            ? compatibleActiveOrder.lineItems.find((item) => item.kind === 'vip')?.value ?? compatibleActiveOrder.amount
+            : canGeneratePayment ? recentOfferDetails?.value ?? null : null,
         totalPaid: Math.max(0, Number(totalPaid || 0)),
         nurtureTurns,
         userText,
@@ -726,6 +808,19 @@ export const evaluateSalesTiming = ({
         deviceType,
         customRequestBrief,
     });
+    const includeAddon = Boolean(compatibleActiveOrder && activeProduct === 'vip'
+        && (compatibleActiveOrder.lineItems.some((item) => item.kind === 'order_bump')
+            || (addonDecisionNow && funnel.orderBump.status === 'accepted')));
+    const offerPlan = baseOfferPlan && includeAddon
+        ? {
+            ...baseOfferPlan,
+            value: Math.round((baseOfferPlan.value + VIP_NAME_PHOTO_ADDON_PRICE) * 100) / 100,
+            description: `${baseOfferPlan.description} + Foto personalizada com nome`,
+            lineItems: buildOfferLineItems(baseOfferPlan, true),
+        }
+        : baseOfferPlan && activeProduct === 'vip'
+            ? { ...baseOfferPlan, lineItems: buildOfferLineItems(baseOfferPlan) }
+            : baseOfferPlan;
     const vipJourneyStage = totalPaid > 0 ? 'converted'
         : vipRejected ? 'rejected'
             : requiresSkuSelection ? 'selection'
@@ -766,10 +861,12 @@ export const evaluateSalesTiming = ({
         recentOfferValue: recentOfferDetails?.value ?? null,
         offerPlan,
         customRequestBrief,
+        funnel,
         metadataPatch: {
             vip_journey_stage: vipJourneyStage,
             vip_journey_turns: vipJourneyTurns,
             vip_sales_status: totalPaid > 0 ? 'converted' : vipRejected ? 'rejected' : 'prospecting',
+            ...funnel.metadataPatch,
             ...(activeProduct && salesContextActive ? {
                 sales_nurture_product: activeProduct,
                 sales_nurture_turns: nurtureTurns,

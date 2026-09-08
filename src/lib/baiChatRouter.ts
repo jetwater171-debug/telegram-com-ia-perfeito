@@ -15,6 +15,7 @@ export const callBaiChatWithFallback = async <T>({
     preferredModel,
     buildBody,
     parseResponse,
+    validateResponse,
     fetcher = fetch,
     timeoutMs = 8_000,
     totalTimeoutMs = 18_000,
@@ -27,6 +28,7 @@ export const callBaiChatWithFallback = async <T>({
     preferredModel?: string | null;
     buildBody: (model: string) => Record<string, unknown>;
     parseResponse: (responseText: string, model: string) => T;
+    validateResponse?: (data: T, model: string) => void;
     fetcher?: FetchLike;
     timeoutMs?: number;
     totalTimeoutMs?: number;
@@ -43,6 +45,7 @@ export const callBaiChatWithFallback = async <T>({
     const tasks = models.map(async (model) => {
         const startedAt = Date.now();
         const controller = new AbortController();
+        let failureReported = false;
         controllers.set(model, controller);
         onAttempt?.(model);
         try {
@@ -68,23 +71,25 @@ export const callBaiChatWithFallback = async <T>({
                 attempts.push(error.message);
                 lastError = error;
                 onFailure?.(model, error, Date.now() - startedAt);
+                failureReported = true;
                 throw error;
             }
 
             try {
                 const data = parseResponse(responseText, model);
-                onSuccess?.(model, data, responseText, Date.now() - startedAt);
-                return { data, model };
+                validateResponse?.(data, model);
+                return { data, model, responseText, durationMs: Date.now() - startedAt };
             } catch (parseError: any) {
                 lastError = new Error(`B.AI ${model} retornou resposta invalida: ${parseError?.message || parseError}`);
                 attempts.push(lastError.message);
                 onFailure?.(model, lastError, Date.now() - startedAt);
+                failureReported = true;
                 throw lastError;
             }
         } catch (error: any) {
             const normalized = error instanceof Error ? error : new Error(String(error));
             const cancelledByWinner = controller.signal.aborted && !totalController.signal.aborted;
-            if (!cancelledByWinner && normalized !== lastError) {
+            if (!cancelledByWinner && !failureReported) {
                 lastError = normalized;
                 if (!attempts.includes(normalized.message)) attempts.push(normalized.message);
                 onFailure?.(model, normalized, Date.now() - startedAt);
@@ -99,7 +104,8 @@ export const callBaiChatWithFallback = async <T>({
             if (model !== winner.model) controller.abort();
         });
         await Promise.allSettled(tasks);
-        return { ...winner, attempts };
+        onSuccess?.(winner.model, winner.data, winner.responseText, winner.durationMs);
+        return { data: winner.data, model: winner.model, attempts };
     } catch {
         await Promise.allSettled(tasks);
         const aggregate = new Error(`Todos os modelos B.AI falharam: ${attempts.join(' | ')}`);

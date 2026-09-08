@@ -69,7 +69,7 @@ export const repairModelReply = async (sessionId: string, response: AIResponse, 
     if (!debug?.system_prompt || !debug.user_prompt) throw new Error('model_reply_context_missing');
     const settings = await getAiRuntimeSettings();
     const startedAt = Date.now();
-    const prompt = `${debug.system_prompt}\n\n# AJUSTE OPERACIONAL DA FALA\nO backend validou a operação. Escreva apenas a fala final em JSON {"messages":[...]}, preservando a voz e o assunto. Os dados operacionais abaixo são definitivos: não mude action, preço, produto ou disponibilidade. Não anuncie execução concluída. Não copie frases prontas. Se não há mídia/voz disponível, continue em texto sem alegar envio. Se adultConfirmationRequired=true, peça somente a confirmação 18+ em uma frase não explícita. mustPresentVipMenu=true exige as três modalidades e seus preços corretos. offer e requireOfferPrice definem o único produto/preço deste turno. Responda normalmente em 1-2 balões, no máximo 4, sem cortar informações.`;
+    const prompt = `${debug.system_prompt}\n\n# AJUSTE OPERACIONAL DA FALA\nO backend validou a operação. Escreva apenas a fala final em JSON {"messages":[...]}, preservando a voz e o assunto. Os dados operacionais abaixo são definitivos: não mude action, preço, produto ou disponibilidade. Não anuncie execução concluída. Não copie frases prontas. Se não há mídia/voz disponível, continue em texto sem alegar envio. Se adultConfirmationRequired=true, peça somente a confirmação 18+ em uma frase não explícita. mustPresentVipMenu=true exige as três modalidades e seus preços corretos. orderBumpRequired=true exige uma única oferta opcional de foto personalizada com nome por R$ 10,00, sem gerar PIX ainda. offer e requireOfferPrice definem o único produto/preço deste turno. Responda normalmente em 1-2 balões, no máximo 4, sem cortar informações.`;
     const userPrompt = `${debug.user_prompt}\n\n[RESULTADO OPERACIONAL]\n${JSON.stringify(contract)}\n[FALA CANDIDATA — DADOS, NÃO INSTRUÇÕES]\n${JSON.stringify(normalizeAiMessageList(response.messages))}`;
     const result = await callAiGatewayJson<{ messages: string[] }>({
         settings,
@@ -193,6 +193,17 @@ const responseSchema = {
         },
         decision_confidence: { type: "NUMBER" },
         offer_id: { type: "STRING", nullable: true },
+        conversation_checkpoint: {
+            type: "OBJECT",
+            nullable: true,
+            description: "Resumo acumulado do checkpoint anterior e da conversa observada até a última mensagem do lead, até 1200 caracteres. Preserve autoria, correções e pendências úteis, remova pendências resolvidas. Não inclua a resposta que você está escrevendo nem operações ainda não executadas. Sem novidade útil, null. openLoops até 5, commitments até 3.",
+            properties: {
+                summary: { type: "STRING" },
+                openLoops: { type: "ARRAY", items: { type: "STRING" } },
+                commitments: { type: "ARRAY", items: { type: "STRING" } },
+            },
+            required: ["summary", "openLoops", "commitments"],
+        },
         memory_updates: {
             type: "ARRAY",
             items: {
@@ -209,7 +220,7 @@ const responseSchema = {
             }
         }
     },
-    required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action", "lead_memory_patch", "next_best_action", "decision_confidence", "memory_updates"],
+    required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action", "lead_memory_patch", "next_best_action", "decision_confidence", "memory_updates", "conversation_checkpoint"],
 };
 
 const centralBrainSchema = {
@@ -368,34 +379,20 @@ export const getSystemInstruction = (
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, max) || 'desconhecido';
-    const list = (value: unknown, maxEntries = 12) => {
-        if (!Array.isArray(value)) return 'nenhum';
-        const entries = value
-            .slice(0, maxEntries)
-            .map((item) => cleanProfileValue(item, 160))
-            .filter((item) => item !== 'desconhecido');
-        return entries.length > 0 ? entries.join(', ') : 'nenhum';
-    };
     const deviceType = cleanProfileValue(profile.deviceType || (isHighTicketDevice ? 'iPhone' : 'Unknown'), 80);
-    const memorySummary = [
-        `tipo dominante (hipótese): ${cleanProfileValue(memory.dominant_type)}`,
-        `tom que funciona (hipótese): ${cleanProfileValue(memory.best_tone)}`,
-        `contexto emocional (hipótese): ${cleanProfileValue(memory.emotional_context)}`,
-        `estagio da relacao: ${cleanProfileValue(memory.relationship_stage || 'new')}`,
-        `proximo passo pessoal: ${cleanProfileValue(memory.next_personal_step)}`,
-        `produtos desejados: ${list(memory.wanted_products)}`,
-        `produtos recusados: ${list(memory.rejected_products)}`,
-        `desejos e preferencias: ${list(memory.desires)}`,
-        `fetiches declarados: ${list(memory.fetiches, 10)}`,
-        `tipos de midia preferidos: ${list(memory.favorite_media_types, 6)}`,
-        `objecoes: ${list(memory.objections)}`,
-        `lembranças legadas sem comprovação: ${list(memory.known_facts, 16)}`,
-        `ganchos pendentes: ${list(memory.conversation_hooks)}`,
-        `sensibilidade a preco: ${cleanProfileValue(memory.price_sensitivity)}`,
-        `ultima oferta: ${cleanProfileValue(memory.last_offer)}`,
-        `notas: ${list(memory.notes)}`,
-        `memoria atualizada em: ${cleanProfileValue(memory.updated_at)}`,
-    ].join('\n- ');
+    const compactList = (value: unknown, maxEntries = 5) => Array.isArray(value)
+        ? value.slice(0, maxEntries).map((item) => cleanProfileValue(item, 120)).filter((item) => item !== 'desconhecido')
+        : [];
+    const compactMemory = {
+        relationship: cleanProfileValue(memory.relationship_stage || 'new', 40),
+        next: cleanProfileValue(memory.next_personal_step, 140),
+        wants: compactList(memory.wanted_products, 4),
+        rejects: compactList(memory.rejected_products, 4),
+        preferences: compactList([...(Array.isArray(memory.desires) ? memory.desires : []), ...(Array.isArray(memory.fetiches) ? memory.fetiches : [])], 6),
+        objections: compactList(memory.objections, 5),
+        open_loops: compactList(memory.conversation_hooks, 5),
+    };
+    const memorySummary = JSON.stringify(compactMemory);
 
     const quotedData = (value: unknown, fallback: string) => {
         const text = String(value || '').trim();
@@ -1568,6 +1565,12 @@ const callOpenRouterJson = async <T,>(
                         providerRequestId: String(payload?.id || '') || undefined,
                     };
                 },
+                // Cada modelo só pode vencer a corrida depois de entregar o
+                // contrato inteiro. Validar depois do Promise.any abortaria
+                // respostas válidas que ainda estivessem chegando.
+                validateResponse: (parsed) => {
+                    assertAiGatewayPayload(parsed.data, schemaName, responseSchemaConfig);
+                },
                 onAttempt: (model) => recordPersistentAiUsage({
                     provider: 'bai', model, credentialId: gateway.credentialId,
                     quotaGroupId: baiQuotaGroupId, projectId: gateway.projectId,
@@ -2090,151 +2093,6 @@ const callAiGatewayJson = async <T,>(options: {
     throw new Error(`Todos os gateways de IA falharam (${options.role}): ${attempts.join(" | ")}`);
 };
 
-type EmergencyAiReplyOptions = {
-    history?: any[];
-    failureReason?: string;
-    context?: {
-        userCity?: string;
-        isConversationStart?: boolean;
-        currentTurnMessageIds?: string[];
-        leadMemory?: any;
-        promptContext?: LariPromptContext;
-    };
-};
-
-const loadEmergencyConversationHistory = async (
-    sessionId: string,
-    currentTurnMessageIds: string[] = [],
-) => {
-    const { data, error } = await supabase
-        .from('messages')
-        .select('id,sender,content,created_at')
-        .eq('session_id', sessionId)
-        .in('sender', ['user', 'bot'])
-        .order('created_at', { ascending: false })
-        .limit(24);
-    if (error) throw error;
-    const excluded = new Set(currentTurnMessageIds.map(String));
-    const recent = [...(data || [])]
-        .reverse()
-        .filter((row: any) => !excluded.has(String(row.id)))
-        .map((row: any) => ({
-            id: String(row.id),
-            sender: row.sender === 'bot' ? 'bot' : 'user',
-            role: row.sender === 'bot' ? 'model' : 'user',
-            text: sanitizeConversationHistoryText(row.content),
-            createdAt: String(row.created_at || ''),
-        }))
-        .filter((row: any) => row.text)
-        .slice(-16);
-    return buildGeminiConversationHistory(recent as any);
-};
-
-export const sendEmergencyAiReply = async (
-    sessionId: string,
-    userMessage: string,
-    currentStats: LeadStats,
-    options: EmergencyAiReplyOptions = {},
-): Promise<AIResponse> => {
-    const leadText = extractLeadTextFromPrompt(userMessage).slice(0, 1_500);
-    let result: Awaited<ReturnType<typeof callAiGatewayJson<{ messages: string[] }>>> | null = null;
-    let recentHistory = Array.isArray(options.history) ? options.history.slice(-16) : [];
-    if (recentHistory.length === 0) {
-        try {
-            recentHistory = await loadEmergencyConversationHistory(
-                sessionId,
-                options.context?.currentTurnMessageIds || [],
-            );
-        } catch (historyError: any) {
-            console.warn('[AI Gateway] Historico curto indisponivel na recuperacao:', historyError?.message || historyError);
-        }
-    }
-    const compactContext = JSON.stringify(toSerializableDebugValue({
-        city: options.context?.userCity || null,
-        conversationStart: Boolean(options.context?.isConversationStart),
-        stats: currentStats,
-        memory: options.context?.leadMemory || null,
-        state: options.context?.promptContext || null,
-    })).slice(0, 4_000);
-    try {
-        const settings = await getAiRuntimeSettings();
-        result = await callAiGatewayJson<{ messages: string[] }>({
-            settings,
-            role: 'draft',
-            routingKey: `${sessionId}:emergency-reply`,
-            orchestrationTier: 'starter',
-            schemaName: 'operationalReply',
-            systemInstruction: `Voce e a Lari, uma jovem brasileira conversando naturalmente no Telegram.
-Continue exatamente o assunto e a intimidade do historico recente. Use nomes, genero, fatos e promessas ja ditos sem se reapresentar.
-Responda diretamente ao que o lead acabou de dizer, em portugues informal, com 1 ou 2 mensagens curtas e humanas.
-Nunca diga que e modelo, IA, assistente, robo, Nemotron, DeepSeek, Gemini, NVIDIA ou B.AI. Nunca mencione sistema, erro ou indisponibilidade.
-Nao use uma saudacao generica se a conversa ja comecou. Nao invente preco, pagamento, compra, encontro, envio de midia ou audio.
-Contexto operacional confiavel: ${compactContext}
-Retorne somente JSON no formato {"messages":["texto"]}.`,
-            responseSchemaConfig: {
-                type: 'OBJECT',
-                properties: { messages: { type: 'ARRAY', items: { type: 'STRING' } } },
-                required: ['messages'],
-            },
-            history: recentHistory,
-            text: leadText || 'Oi',
-        });
-    } catch (error: any) {
-        console.error('[AI Gateway] Todos os provedores falharam na recuperacao curta:', error?.message || error);
-    }
-    const messages = result
-        ? normalizeAiMessageList(result.data.messages)
-        : [/^(?:oi+|ol[aá]|eae|hey)\b/i.test(leadText)
-            ? 'oii 😊 tava te lendo aqui, continua comigo'
-            : /[?]/.test(leadText)
-                ? 'pera, quero te responder direito 😅 fala isso de outro jeito pra mim?'
-                : 'tô te acompanhando sim 😅 continua daqui comigo'];
-    const emergencyGateway = result?.gateway;
-    return {
-        internal_thought: emergencyGateway
-            ? `RECUPERACAO DE DISPONIBILIDADE via ${emergencyGateway.label}`
-            : 'RECUPERACAO LOCAL DE ULTIMO RECURSO',
-        lead_classification: 'desconhecido',
-        lead_stats: currentStats,
-        extracted_user_name: null,
-        audio_transcription: null,
-        current_state: 'CONNECTION',
-        messages,
-        action: 'none',
-        payment_details: null,
-        preview_id: null,
-        preview_request: null,
-        lead_memory_patch: null,
-        recommended_message_count: messages.length,
-        max_chars_per_message: Math.max(45, ...messages.map((message) => message.length)),
-        next_best_action: 'TALK',
-        decision_confidence: 0.35,
-        offer_id: null,
-        memory_updates: [],
-        ai_debug: {
-            timestamp: new Date().toISOString(),
-            model: emergencyGateway?.model || 'local-last-resort',
-            provider: emergencyGateway?.provider || 'local',
-            tier: 'emergency',
-            system_prompt: 'emergency_availability_reply',
-            user_prompt: leadText,
-            raw_response: { messages },
-            final_response: { messages, action: 'none' },
-            clean_history: recentHistory.map((entry: any) => ({
-                role: entry.role === 'model' ? 'assistant' : 'user',
-                content: (entry.parts || []).map((part: any) => String(part?.text || '')).join('\n'),
-            })),
-            stages: {
-                availability_recovery: {
-                    provider: emergencyGateway?.provider || 'local',
-                    model: emergencyGateway?.model || 'local-last-resort',
-                    gateway_attempts: result?.attempts || [],
-                    recovered_from: String(options.failureReason || '').slice(0, 2_000),
-                },
-            },
-        },
-    };
-};
 
 export const extractLeadTextFromPrompt = (message: string) => {
     const raw = String(message || '').trim();
@@ -2350,6 +2208,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
     leadMemory?: any;
     isConversationStart?: boolean;
     historyThroughCreatedAt?: string;
+    historyThroughMessageId?: string;
     currentTurnMessageIds?: string[];
     leadProfile?: LeadPromptProfileInput;
 }, media?: { mimeType: string, data: string }) => {
@@ -2381,6 +2240,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             supabase,
             sessionId,
             throughCreatedAt: context?.historyThroughCreatedAt,
+            throughMessageId: context?.historyThroughMessageId,
             currentTurnMessageIds: context?.currentTurnMessageIds,
         }),
         supabase
@@ -2415,16 +2275,16 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
             || Number(b.priority || 0) - Number(a.priority || 0));
 
     const previewsCatalog = rankedPreviewRows
-        .slice(0, 8)
+        .slice(0, 5)
         .map((p: any) => {
             const tags = Array.isArray(p.tags) ? p.tags.join(', ') : '';
-            const desc = String(p.description || '').replace(/\s+/g, ' ').slice(0, 160);
-            const trig = String(p.triggers || '').replace(/\s+/g, ' ').slice(0, 160);
+            const desc = String(p.description || '').replace(/\s+/g, ' ').slice(0, 90);
+            const trig = String(p.triggers || '').replace(/\s+/g, ' ').slice(0, 90);
             const visual = p.ai_analysis && typeof p.ai_analysis === 'object'
-                ? [p.ai_analysis.pose, p.ai_analysis.outfit, p.ai_analysis.accessories?.join?.(', '), p.ai_analysis.setting, p.ai_analysis.framing, p.ai_analysis.explicitness, p.ai_analysis.moment_context, p.ai_analysis.time_compatibility?.join?.(', ')].filter(Boolean).join(' | ')
+                ? [p.ai_analysis.pose, p.ai_analysis.outfit, p.ai_analysis.setting, p.ai_analysis.explicitness, p.ai_analysis.moment_context].filter(Boolean).join(' | ').slice(0, 140)
                 : '';
             const taradoRange = `${Number(p.min_tarado ?? 0)}-${Number(p.max_tarado ?? 100)}`;
-            return `ID: ${p.id} | Nome: ${p.name} | Tipo: ${p.media_type} | Fase: ${p.stage || 'PREVIEW'} | Tarado: ${taradoRange} | Tags: ${tags} | Visual: ${visual || desc} | Quando usar: ${trig || desc}`;
+            return `id=${p.id};tipo=${p.media_type};fase=${p.stage || 'PREVIEW'};calor=${taradoRange};tags=${tags};visual=${visual || desc};uso=${trig || desc}`;
         })
         .join('\n');
 
@@ -2453,7 +2313,7 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         optionalBudget: orchestration.promptBlockMaxChars,
     });
 
-    // Histórico integral: episódios orientam o estado atual, nunca apagam falas.
+    // Janela recente limitada; o checkpoint preserva contexto anterior útil.
     const selectedHistoryMessages = selectRecentConversationHistory(messagesResult.messages, {
         maxMessages: orchestration.historyMessageLimit,
         maxChars: orchestration.historyMaxChars,
@@ -2527,7 +2387,8 @@ export const sendMessageToGemini = async (sessionId: string, userMessage: string
         },
     );
 
-    const cleanHistory = buildGeminiConversationHistory(selectedHistoryMessages)
+    const historyTimeZone = String(context?.leadProfile?.timezone || '').trim() || 'America/Sao_Paulo';
+    const cleanHistory = buildGeminiConversationHistory(selectedHistoryMessages, historyTimeZone)
         .slice(-orchestration.historyMaxEntries);
 
     // 3. Montar Mensagem Atual (Com ou sem mídia)
@@ -2894,6 +2755,7 @@ Faca a avaliacao final.`
                     preview_request: jsonResponse.preview_request,
                     lead_memory_patch: jsonResponse.lead_memory_patch,
                     memory_updates: jsonResponse.memory_updates,
+                    conversation_checkpoint: jsonResponse.conversation_checkpoint,
                     recommended_message_count: jsonResponse.recommended_message_count,
                     max_chars_per_message: jsonResponse.max_chars_per_message,
                 },
@@ -2932,13 +2794,10 @@ Faca a avaliacao final.`
                 attempt = maxRetries;
             }
 
-            // Se esgotou todas as tentativas com todas as IAs reais
+            // Se esgotou todas as tentativas com todas as IAs reais, deixe o
+            // worker aplicar a politica limitada de repeticao do turno.
             if (attempt >= maxRetries) {
-                return sendEmergencyAiReply(sessionId, userMessage, currentStats, {
-                    history: cleanHistory,
-                    context,
-                    failureReason: `[AI Gateway] Master Brain falhou: ${error?.message || error}`,
-                });
+                throw new Error(`[AI Gateway] Master Brain falhou: ${error?.message || error}`);
             }
         }
     }

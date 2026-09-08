@@ -65,8 +65,13 @@ const eventStoreSource = fs.readFileSync(path.join(root, 'src/lib/brain/eventSto
 assert.match(stateBuilderSource, /\.is\('superseded_by', null\)/);
 assert.match(stateBuilderSource, /\.lte\('valid_from', temporal\.now\)/);
 assert.match(stateBuilderSource, /valid_until\.is\.null,valid_until\.gt/);
-assert.match(stateBuilderSource, /\.limit\(240\)/);
-assert.match(stateBuilderSource, /limit: 8/);
+assert.match(stateBuilderSource, /\.limit\(120\)/);
+assert.match(stateBuilderSource, /limit: 24/);
+assert.match(stateBuilderSource, /canonicalMemories/);
+assert.match(stateBuilderSource, /slice\(0, 6\)/);
 assert.match(eventStoreSource, /superseded_by: nextMemoryId/);
+assert.match(eventStoreSource, /persistConversationCheckpointSafe/);
+assert.match(eventStoreSource, /persistConversationCheckpointSafe/);
+assert.match(eventStoreSource, /scheduleBrainConversationCheckpoint/);
 
 console.log('MEMORY_RETRIEVER_OK ranking=1 validity=1 source=1 upstream_filter=1 supersession_link=1');

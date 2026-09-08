@@ -44,7 +44,7 @@ const metadataFor = (heading: string): Pick<PromptVisualBlock, 'friendlyName' | 
     if (value === '5. memoria' || value.includes('memoria')) return { friendlyName: 'Memória do lead', description: 'O que lembrar e como usar sem inventar informações.', tone: 'violet', kind: 'section' };
     if (value.includes('decisao e saida') || value.includes('formato')) return { friendlyName: 'Formato da resposta', description: 'Decisão final e estrutura técnica esperada pelo backend.', tone: 'indigo', kind: 'section' };
     if (value.includes('catalogo comercial')) return { friendlyName: 'Planos e preços', description: 'Catálogo VIP oficial usado nas ofertas.', tone: 'emerald', kind: 'section' };
-    if (value.includes('pacote automatico')) return { friendlyName: 'Dados automáticos', description: 'Pacote que o backend preenche para cada lead e turno.', tone: 'violet', kind: 'dynamic' };
+    if (value.includes('pacote automatico') || value.includes('dados dinamicos do turno')) return { friendlyName: 'Dados automáticos', description: 'Pacote que o backend preenche para cada lead e turno.', tone: 'violet', kind: 'dynamic' };
     if (value.includes('contexto interno')) return { friendlyName: 'Contexto do lead', description: 'Horário, localização, dispositivo, sinais e dados do lead.', tone: 'violet', kind: 'dynamic' };
     if (value.includes('estado operacional')) return { friendlyName: 'Estado do backend', description: 'Pagamento, entrega, memória recuperada e limites reais.', tone: 'orange', kind: 'dynamic' };
     if (value.includes('orquestracao')) return { friendlyName: 'Modo de inteligência', description: 'Nível, objetivo e quantidade de mensagens consideradas.', tone: 'orange', kind: 'dynamic' };

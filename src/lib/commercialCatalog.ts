@@ -16,10 +16,25 @@ export type CommercialOffer = {
     shortLabel: string;
 };
 
+/**
+ * Itens adicionais nunca existem isoladamente: entram na mesma cobrança do
+ * VIP aceito e deixam a composição do pedido explícita para o backend.
+ */
+export type CommercialLineItem = {
+    kind: 'vip' | 'order_bump';
+    sku: CommercialSku | 'vip_name_photo_addon';
+    label: string;
+    description: string;
+    amountCents: number;
+    value: number;
+};
+
 export const VIP_MONTHLY_PRICE = 29.90;
 export const VIP_LIFETIME_PRICE = 49.90;
 export const VIP_LIFETIME_CALL_PRICE = 79.90;
 export const VIDEO_CALL_STANDALONE_PRICE = 50;
+export const VIP_NAME_PHOTO_ADDON_PRICE = 10;
+export const MIN_VIP_MONTHLY_NEGOTIATION_PRICE = 15;
 
 export const COMMERCIAL_CATALOG: Record<CommercialSku, CommercialOffer> = {
     vip_monthly: {
@@ -170,6 +185,92 @@ export const detectCommercialSku = (
 
 export const getCommercialOffer = (sku: CommercialSku | null | undefined) =>
     sku ? COMMERCIAL_CATALOG[sku] || null : null;
+
+export const isVipSku = (sku: CommercialSku | null | undefined) => Boolean(sku?.startsWith('vip_'));
+
+export const buildCommercialLineItems = (
+    offer: CommercialOffer,
+    includeVipNamePhotoAddon = false,
+): CommercialLineItem[] => {
+    if (!isVipSku(offer.sku)) return [];
+    const items: CommercialLineItem[] = [{
+        kind: 'vip',
+        sku: offer.sku,
+        label: offer.shortLabel,
+        description: offer.description,
+        amountCents: offer.amountCents,
+        value: offer.value,
+    }];
+    if (includeVipNamePhotoAddon && isVipSku(offer.sku)) {
+        items.push({
+            kind: 'order_bump',
+            sku: 'vip_name_photo_addon',
+            label: 'foto personalizada com nome',
+            description: 'Foto personalizada com o nome do comprador',
+            amountCents: VIP_NAME_PHOTO_ADDON_PRICE * 100,
+            value: VIP_NAME_PHOTO_ADDON_PRICE,
+        });
+    }
+    return items;
+};
+
+export const totalCommercialLineItems = (items: readonly CommercialLineItem[]) => Math.round(
+    items.reduce((total, item) => total + Number(item.amountCents || 0), 0),
+);
+
+const readLineItemAmountCents = (item: Record<string, unknown>) => {
+    const rawAmountCents = item.amountCents ?? item.amount_cents;
+    const hasAmountCents = rawAmountCents !== undefined && rawAmountCents !== null && rawAmountCents !== '';
+    const hasValue = item.value !== undefined && item.value !== null && item.value !== '';
+    if (!hasAmountCents && !hasValue) return null;
+    const amountCents = hasAmountCents ? Number(rawAmountCents) : Math.round(Number(item.value) * 100);
+    const valueCents = hasValue ? Math.round(Number(item.value) * 100) : amountCents;
+    if (!Number.isInteger(amountCents) || amountCents <= 0 || !Number.isFinite(valueCents)) return null;
+    return amountCents === valueCents ? amountCents : null;
+};
+
+/**
+ * Valida e normaliza a composição persistida de um VIP. A descrição e os
+ * rótulos vêm do catálogo; do payload aceitamos apenas a escolha dos SKUs e
+ * os valores coerentes, impedindo que metadados adulterados autorizem uma
+ * entrega diferente da que foi cobrada.
+ */
+export const readCommercialLineItems = (
+    value: unknown,
+    offer: CommercialOffer | null | undefined,
+    expectedAmountCents: number,
+): CommercialLineItem[] | null => {
+    if (!offer || !isVipSku(offer.sku) || !Array.isArray(value) || value.length < 1 || value.length > 2) {
+        return null;
+    }
+    const items = value.map((item) => item && typeof item === 'object' && !Array.isArray(item)
+        ? item as Record<string, unknown>
+        : null);
+    if (items.some((item) => !item)) return null;
+
+    const base = items[0]!;
+    const baseAmountCents = readLineItemAmountCents(base);
+    const monthlyMinimumCents = Math.round(MIN_VIP_MONTHLY_NEGOTIATION_PRICE * 100);
+    const baseAllowed = offer.sku === 'vip_monthly'
+        ? baseAmountCents !== null && baseAmountCents >= monthlyMinimumCents && baseAmountCents <= offer.amountCents
+        : baseAmountCents === offer.amountCents;
+    if (base.kind !== 'vip' || base.sku !== offer.sku || !baseAllowed) return null;
+
+    const hasAddon = items.length === 2;
+    if (hasAddon) {
+        const addon = items[1]!;
+        if (addon.kind !== 'order_bump'
+            || addon.sku !== 'vip_name_photo_addon'
+            || readLineItemAmountCents(addon) !== VIP_NAME_PHOTO_ADDON_PRICE * 100) return null;
+    }
+
+    const normalized = buildCommercialLineItems(offer, hasAddon);
+    normalized[0] = { ...normalized[0], amountCents: baseAmountCents!, value: baseAmountCents! / 100 };
+    return totalCommercialLineItems(normalized) === expectedAmountCents ? normalized : null;
+};
+
+export const renderVipOrderBumpMessage = () =>
+    `antes do pix, vc quer incluir uma foto personalizada com seu nome por mais ${formatBrl(VIP_NAME_PHOTO_ADDON_PRICE)}?`;
 
 export const isVipMenuRequest = (input: string) => {
     const text = normalize(input);

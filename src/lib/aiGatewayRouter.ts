@@ -163,6 +163,55 @@ export const estimateAiTokens = (...values: unknown[]) => {
     return Math.max(1, Math.ceil(chars / 3.6));
 };
 
+const assertJsonSchemaValue = (value: unknown, schema: any, path: string) => {
+    if (!schema || typeof schema !== 'object') return;
+    if (value === null) {
+        if (schema.nullable === true) return;
+        throw new Error(`${path} JSON inválido: null não permitido`);
+    }
+
+    const type = String(schema.type || '').toUpperCase();
+    if (type === 'OBJECT') {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            throw new Error(`${path} JSON inválido: esperado objeto`);
+        }
+        const record = value as Record<string, unknown>;
+        const required = Array.isArray(schema.required)
+            ? schema.required.map((key: unknown) => String(key)).filter(Boolean)
+            : [];
+        const missing = required.filter((key: string) => !Object.prototype.hasOwnProperty.call(record, key));
+        if (missing.length > 0) {
+            throw new Error(`${path} JSON incompleto: faltam ${missing.join(', ')}`);
+        }
+        const properties = schema.properties && typeof schema.properties === 'object'
+            ? schema.properties as Record<string, unknown>
+            : {};
+        for (const [key, propertySchema] of Object.entries(properties)) {
+            if (Object.prototype.hasOwnProperty.call(record, key)) {
+                assertJsonSchemaValue(record[key], propertySchema, `${path}.${key}`);
+            }
+        }
+    } else if (type === 'ARRAY') {
+        if (!Array.isArray(value)) throw new Error(`${path} JSON inválido: esperado array`);
+        value.forEach((item, index) => assertJsonSchemaValue(item, schema.items, `${path}[${index}]`));
+    } else if (type === 'STRING') {
+        if (typeof value !== 'string') throw new Error(`${path} JSON inválido: esperado string`);
+    } else if (type === 'NUMBER' || type === 'INTEGER') {
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+            throw new Error(`${path} JSON inválido: esperado número finito`);
+        }
+        if (type === 'INTEGER' && !Number.isInteger(value)) {
+            throw new Error(`${path} JSON inválido: esperado inteiro`);
+        }
+    } else if (type === 'BOOLEAN' && typeof value !== 'boolean') {
+        throw new Error(`${path} JSON inválido: esperado booleano`);
+    }
+
+    if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+        throw new Error(`${path} JSON inválido: valor fora do enum`);
+    }
+};
+
 export const assertAiGatewayPayload = (
     payload: unknown,
     schemaName: string,
@@ -173,23 +222,18 @@ export const assertAiGatewayPayload = (
     }
 
     const record = payload as Record<string, unknown>;
-    const required = Array.isArray(schema?.required)
-        ? schema.required.map((key) => String(key)).filter(Boolean)
-        : [];
-    const missing = required.filter((key) => !Object.prototype.hasOwnProperty.call(record, key));
-    if (missing.length > 0) {
-        throw new Error(`${schemaName} JSON incompleto: faltam ${missing.join(', ')}`);
-    }
+    assertJsonSchemaValue(payload, { ...(schema || {}), type: 'OBJECT' }, schemaName);
 
     // Uma chamada de fala só é sucesso quando há ao menos um balão utilizável.
     // Isso impede que providers que ignoram JSON Schema retornem `{}` e parem o
     // fallback, deixando o lead sem resposta.
     if (schemaName === 'responseSchema' || schemaName === 'operationalReply') {
-        const messages = Array.isArray(record.messages)
-            ? record.messages.map((message) => String(message || '').trim()).filter(Boolean)
-            : [];
-        if (messages.length === 0) {
+        const messages = record.messages;
+        if (!Array.isArray(messages) || messages.length === 0) {
             throw new Error(`${schemaName} JSON incompleto: nenhuma mensagem utilizável`);
+        }
+        if (messages.some((message) => typeof message !== 'string' || !message.trim())) {
+            throw new Error(`${schemaName} JSON inválido: messages deve conter somente strings não vazias`);
         }
         const speech = messages.join(' ');
         if (/(?:como|sou|somos|me chamo|fui treinad[oa]).{0,24}(?:modelo de linguagem|assistente virtual|intelig[eê]ncia artificial|\bIA\b)|\b(?:Nemotron|DeepSeek|Gemini|NVIDIA|B\.AI)\b/i.test(speech)) {
