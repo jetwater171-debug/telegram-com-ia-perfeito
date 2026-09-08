@@ -342,6 +342,7 @@ export default function AdminPreviewsPage() {
                                             <input defaultValue={asset.name} onBlur={(event) => patchAsset(asset.id, { name: event.target.value })} className="w-full bg-transparent text-sm font-bold outline-none" />
                                             <textarea defaultValue={asset.description || ""} onBlur={(event) => patchAsset(asset.id, { description: event.target.value })} className="mt-2 min-h-20 w-full resize-y rounded-xl border border-white/10 bg-black/20 p-2 text-xs leading-5 text-slate-400 outline-none focus:border-cyan-300/30" />
                                             <input defaultValue={(asset.tags || []).join(", ")} onBlur={(event) => patchAsset(asset.id, { tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) })} className="field mt-2 text-xs" />
+                                            {asset.ai_analysis && <AnalysisEvidence analysis={asset.ai_analysis} />}
                                             <div className="mt-3 grid grid-cols-3 gap-2"><select value={asset.stage || "PREVIEW"} onChange={(event) => patchAsset(asset.id, { stage: event.target.value })} className="field col-span-2 text-[11px]">{stages.map((stage) => <option key={stage}>{stage}</option>)}</select><input type="number" value={asset.priority || 0} onChange={(event) => setAssets((current) => current.map((item) => item.id === asset.id ? { ...item, priority: Number(event.target.value) } : item))} onBlur={(event) => patchAsset(asset.id, { priority: Number(event.target.value) })} className="field text-xs" title="prioridade" /></div>
                                             <div className="mt-3 flex items-center justify-between gap-2"><label className="flex items-center gap-2 text-xs text-slate-400"><input type="checkbox" checked={asset.enabled ?? false} onChange={(event) => patchAsset(asset.id, { enabled: event.target.checked })} /> ativa</label><div className="flex gap-2">{asset.media_type === "image" && <button disabled={loading} onClick={() => reanalyze(asset.id)} className="text-xs font-semibold text-cyan-200 hover:text-cyan-100">reanalisar</button>}<button onClick={() => deleteAsset(asset)} className="text-xs font-semibold text-rose-300 hover:text-rose-200">deletar</button></div></div>
                                             {asset.analysis_model && <p className="mt-3 truncate text-[10px] text-slate-600">{asset.analysis_model}</p>}
@@ -355,6 +356,27 @@ export default function AdminPreviewsPage() {
                 </div>
             </div>
         </main>
+    );
+}
+
+function AnalysisEvidence({ analysis }: { analysis: Record<string, unknown> }) {
+    const timeOfDay = String(analysis.time_of_day || "any");
+    const timeLabel = timeOfDay === "day" ? "dia" : timeOfDay === "night" ? "noite" : "qualquer horário";
+    const evidence = String(analysis.temporal_evidence || "").trim();
+    const details = Array.isArray(analysis.visual_details)
+        ? analysis.visual_details.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 5)
+        : [];
+    if (!evidence && !details.length) return null;
+
+    return (
+        <div className="mt-3 rounded-xl border border-cyan-300/10 bg-cyan-300/[0.04] p-3 text-[10px] leading-4 text-slate-400">
+            <div className="flex items-center justify-between gap-2 font-bold uppercase tracking-wider text-cyan-200">
+                <span>leitura visual</span>
+                <span>{timeLabel}</span>
+            </div>
+            {evidence && <p className="mt-2">{evidence}</p>}
+            {details.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-4">{details.map((detail) => <li key={detail}>{detail}</li>)}</ul>}
+        </div>
     );
 }
 
