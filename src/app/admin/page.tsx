@@ -144,40 +144,18 @@ export default function AdminDashboard() {
         if (fetching.current) return;
         fetching.current = true;
         try {
-            const rows: (Session & { last_message: LastMessage[]; latest_step: { step: string }[] })[] = [];
+            const rows: Session[] = [];
             const batchSize = 500;
             for (let offset = 0; ; offset += batchSize) {
-                // Limit inside each relationship: one busy lead cannot displace another's preview.
                 const { data, error } = await supabase.from("sessions")
-                    .select("id,telegram_chat_id,user_name,status,last_message_at,lead_score,user_city,device_type,total_paid,funnel_step,last_message:messages(content,sender,created_at,media_type),latest_step:funnel_events(step)")
+                    .select("id,telegram_chat_id,user_name,status,last_message_at,lead_score,user_city,device_type,total_paid,funnel_step")
                     .order("last_message_at", { ascending: false, nullsFirst: false })
                     .order("id", { ascending: true })
-                    .in("last_message.sender", ["user", "bot", "admin"])
-                    .order("created_at", { referencedTable: "last_message", ascending: false })
-                    .limit(1, { referencedTable: "last_message" })
-                    .order("created_at", { referencedTable: "latest_step", ascending: false })
-                    .limit(1, { referencedTable: "latest_step" })
                     .range(offset, offset + batchSize - 1);
                 if (error) throw error;
                 rows.push(...(data || []));
                 if (!data || data.length < batchSize) break;
             }
-            const stepMap: Record<string, string> = {};
-            const messageMap: Record<string, LastMessage> = {};
-            for (const row of rows) {
-                if (row.latest_step[0]) stepMap[row.id] = row.latest_step[0].step;
-                if (row.last_message[0]) messageMap[row.id] = row.last_message[0];
-            }
-            setLatestFunnelBySession(stepMap);
-            setLastMessageBySession((previous) => {
-                for (const row of rows) {
-                    const live = previous[row.id];
-                    if (row.status !== "blocked" && live && live.created_at > (messageMap[row.id]?.created_at || "")) {
-                        messageMap[row.id] = live;
-                    }
-                }
-                return messageMap;
-            });
             setSessions(sortSessions(rows));
             setLastSync(new Date());
             setLoadError("");
@@ -258,6 +236,32 @@ export default function AdminDashboard() {
         }
         return filtered;
     }, [sessions, filter, search, phaseFilter, latestFunnelBySession, lastMessageBySession]);
+
+    const previewIds = filteredSessions.slice(0, visibleCount).filter(s => s.status !== "blocked").map(s => s.id).join(",");
+    const [previewState, setPreviewState] = useState<Record<string, "loaded" | "error">>({});
+    useEffect(() => {
+        let cancelled = false;
+        const ids = previewIds ? previewIds.split(",") : [];
+        // Keep the list independent of previews and avoid schema-cache joins.
+        const worker = async () => {
+            while (ids.length && !cancelled) {
+                const id = ids.shift()!;
+                const { data, error } = await supabase.from("messages")
+                    .select("content,sender,created_at,media_type")
+                    .eq("session_id", id).in("sender", ["user", "bot", "admin"])
+                    .order("created_at", { ascending: false }).limit(1);
+                if (cancelled) return;
+                setPreviewState(prev => ({ ...prev, [id]: error ? "error" : "loaded" }));
+                if (!error) setLastMessageBySession(prev => {
+                    const message = data?.[0] as LastMessage | undefined;
+                    if (!message || (prev[id]?.created_at || "") > message.created_at) return prev;
+                    return { ...prev, [id]: message };
+                });
+            }
+        };
+        void Promise.all(Array.from({ length: 6 }, worker));
+        return () => { cancelled = true; };
+    }, [previewIds, lastSync]);
 
     const stats = useMemo(() => {
         const paidSessions = sessions.filter((s) => Number(s.total_paid || 0) > 0);
@@ -398,7 +402,7 @@ export default function AdminDashboard() {
                                     <div className="min-w-0">
                                         <p className="truncate text-sm text-slate-200">
                                             <span className="text-slate-500">{labelSender(last?.sender)} </span>
-                                            {session.status === "blocked" ? "BLOQUEOU · Histórico apagado" : cleanPreview(last?.content) || (last ? last.media_type === "audio" ? "Áudio" : last.media_type === "photo" ? "Foto" : last.media_type === "video" ? "Vídeo" : "Mensagem sem texto" : "Sem mensagem ainda")}
+                                            {session.status === "blocked" ? "BLOQUEOU · Histórico apagado" : cleanPreview(last?.content) || (last ? last.media_type === "audio" ? "Áudio" : last.media_type === "photo" ? "Foto" : last.media_type === "video" ? "Vídeo" : "Mensagem sem texto" : previewState[session.id] === "loaded" ? "Sem mensagem ainda" : previewState[session.id] === "error" ? "Prévia indisponível · abra a conversa" : "Carregando mensagem…")}
                                         </p>
                                         <p className="mt-1 text-xs text-slate-500">{formatTimeAgo(last?.created_at || session.last_message_at)}</p>
                                     </div>
