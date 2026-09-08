@@ -53,6 +53,7 @@ export interface AIResponse {
     lead_stats: LeadStats;
     extracted_user_name: string | null;
     audio_transcription?: string | null;
+    voice_reply?: { spoken_text: string; performance_tags?: string | null } | null;
     current_state:
     | "WELCOME"
     | "CONNECTION"

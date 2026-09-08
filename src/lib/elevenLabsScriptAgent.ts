@@ -1,7 +1,6 @@
 import {
     buildElevenV3Performance,
     cleanTextForElevenLabsSpeech,
-    ELEVEN_V3_AUDITED_TAGS,
     ELEVEN_V3_SEXUAL_PERFORMANCE_TAGS,
     isElevenLabsAdultSexualPerformanceContext,
     limitElevenLabsSpeechDuration,
@@ -27,7 +26,6 @@ export type PreparedElevenLabsScript = {
 export type ElevenLabsScriptMode = 'voice_render' | 'requested_audio';
 type FetchLike = typeof fetch;
 
-const ALLOWED_TAGS = new Set<string>(ELEVEN_V3_AUDITED_TAGS);
 const SEXUAL_PERFORMANCE_TAGS = new Set<string>(ELEVEN_V3_SEXUAL_PERFORMANCE_TAGS);
 
 const cleanInlineValue = (value: unknown, max = 140) => String(value || '')
@@ -57,6 +55,19 @@ const preservesOriginalSpeech = (original: string, candidate: string) => {
 const hasExactlyTheSameWords = (spokenText: string, performanceScript: string) =>
     normalizeWords(spokenText).join(' ') === normalizeWords(stripElevenV3Tags(performanceScript)).join(' ');
 
+/** Aproveita o roteiro principal somente quando preserva a fala aprovada. */
+export const prepareInlineVoiceReply = (value: unknown, approvedText: string, maxChars: number, maxWords: number, allowSexualPerformance: boolean): PreparedElevenLabsScript | null => {
+    if (!value || typeof value !== 'object') return null;
+    const candidate = value as { spoken_text?: unknown; performance_tags?: unknown };
+    if (typeof candidate.spoken_text !== 'string') return null;
+    const spokenText = limitElevenLabsSpeechDuration(candidate.spoken_text, { maxChars, maxWords });
+    const approved = limitElevenLabsSpeechDuration(approvedText, { maxChars, maxWords });
+    if (!spokenText || !hasExactlyTheSameWords(approved, spokenText)) return null;
+    const tagged = sanitizePerformanceScript(`${String(candidate.performance_tags || '')} ${spokenText}`, spokenText, allowSexualPerformance);
+    const elevenText = tagged || spokenText;
+    return { spokenText, elevenText, delivery: tagged ? 'llm_authored' : 'neutral', reaction: '', source: 'deterministic' };
+};
+
 const parseJsonObject = (raw: string) => {
     const cleaned = String(raw || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     try { return JSON.parse(cleaned); }
@@ -72,8 +83,12 @@ const sanitizePerformanceScript = (value: unknown, spokenText: string, allowSexu
     let tagCount = 0;
     const raw = String(value || '').replace(/\[[^\]\r\n]{1,80}\]/g, (tag) => {
         const name = tag.slice(1, -1).trim().toLowerCase();
-        if (!ALLOWED_TAGS.has(name)) return ' ';
-        if (!allowSexualPerformance && SEXUAL_PERFORMANCE_TAGS.has(name)) return ' ';
+        if (!/^[\p{L}\p{N} ,.-]{1,60}$/u.test(name)) return ' ';
+        const looksSexual = SEXUAL_PERFORMANCE_TAGS.has(name)
+            || /sensual|safad|gem|moan|gasp|seduct|breathes? (?:softly|heavily)/iu.test(name);
+        // A LLM pode criar uma direção curta livre; as direções de atuação
+        // sexual continuam condicionadas ao contexto adulto correspondente.
+        if (looksSexual && !allowSexualPerformance) return ' ';
         tagCount += 1;
         return tagCount <= 4 ? `[${name}]` : ' ';
     }).replace(/\s+/g, ' ').trim();
@@ -177,7 +192,7 @@ ESCALA DE ATUAÇÃO:
 REGRAS OBRIGATÓRIAS:
 1. spoken_text contém somente palavras realmente ouvidas, em português brasileiro oral. Remova kkk, rs, emojis, links e marcas visuais.
 2. performance_script contém as mesmas palavras de spoken_text, na mesma ordem, acrescentando somente tags entre colchetes.
-3. Tags permitidas: [pause], [seductively], [whispers], [giggles], [laughs], [laughs softly], [sighs], [exhales], [breathes softly], [breathes heavily], [gasps], [moans], [moans softly], [softly], [playfully], [mischievously], [curious], [excited], [sad], [surprised].
+3. Você pode criar direções curtas e naturais em português dentro dos colchetes. Exemplos: [pausa], [sussurrando], [sensual], [safada], [gemendo] e [sensual safada e gemendo]. Também pode usar as tags conhecidas em inglês. Nunca coloque instruções, frases longas ou palavras que devam ser faladas dentro dos colchetes.
 4. Use de 0 a 4 tags. Poucas tags bem posicionadas são melhores que excesso. Use pontuação, frases curtas, travessão e reticências para ritmo; Eleven v3 não usa SSML break.
 5. Em VOICE_RENDER, preserve rigorosamente sentido, intenção, fatos e pessoa da mensagem aprovada. Não invente promessa, pergunta ou informação.
 6. Em REQUESTED_AUDIO, responda diretamente à última mensagem como Lari falando agora. Não diga que entendeu, não explique geração de áudio e não leia uma bolha desalinhada.

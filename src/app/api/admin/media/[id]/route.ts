@@ -10,17 +10,24 @@ const extractTelegramFileId = (content?: string | null) => {
     return match?.[1]?.trim() || '';
 };
 
+const extractStoredTelegramFileId = (mediaUrl?: string | null) => {
+    const match = String(mediaUrl || '').match(/^telegram-file:(.+)$/i);
+    return match?.[1]?.trim() || '';
+};
+
 const inferMediaType = (content?: string | null, mediaType?: string | null) => {
-    if (mediaType === 'image' || mediaType === 'video') return mediaType;
+    if (mediaType === 'image' || mediaType === 'video' || mediaType === 'audio') return mediaType;
     const text = String(content || '');
     if (/\[PHOTO_UPLOAD\]/i.test(text)) return 'image';
     if (/\[VIDEO_UPLOAD\]/i.test(text)) return 'video';
+    if (/\[AUDIO_UPLOAD\]/i.test(text)) return 'audio';
     return '';
 };
 
 const contentTypeFor = (mediaType?: string | null) => {
     if (mediaType === 'video') return 'video/mp4';
     if (mediaType === 'image') return 'image/jpeg';
+    if (mediaType === 'audio') return 'audio/ogg';
     return 'application/octet-stream';
 };
 
@@ -44,7 +51,7 @@ export async function GET(
 
     const { data: message, error } = await supabase
         .from('messages')
-        .select('content, media_type')
+        .select('content, media_type, media_url')
         .eq('id', messageId)
         .single();
 
@@ -53,11 +60,11 @@ export async function GET(
     }
 
     const mediaType = inferMediaType(message.content, message.media_type);
-    if (mediaType !== 'image' && mediaType !== 'video') {
-        return NextResponse.json({ error: 'mensagem sem foto ou video' }, { status: 400 });
+    if (mediaType !== 'image' && mediaType !== 'video' && mediaType !== 'audio') {
+        return NextResponse.json({ error: 'mensagem sem midia' }, { status: 400 });
     }
 
-    const fileId = extractTelegramFileId(message.content);
+    const fileId = extractStoredTelegramFileId(message.media_url) || extractTelegramFileId(message.content);
     if (!fileId) {
         return NextResponse.json({ error: 'file_id do Telegram nao encontrado' }, { status: 400 });
     }

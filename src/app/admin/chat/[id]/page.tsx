@@ -14,6 +14,7 @@ interface Message {
     created_at: string;
     media_url?: string | null;
     media_type?: string | null;
+    payment_data?: Record<string, unknown> | null;
     ai_debug?: AiDebugData | null;
 }
 
@@ -714,6 +715,7 @@ function MessageBubble({
                         </div>
                     </div>
                     <div className="mt-1 whitespace-pre-wrap break-words">{displayText}</div>
+                    {message.payment_data && <div className="mt-2"><PaymentMessageCard data={message.payment_data} /></div>}
                 </div>
             </div>
         );
@@ -730,7 +732,10 @@ function MessageBubble({
                     </span>
                     <span className="text-[10px] text-slate-500">{formatTime(message.created_at)}</span>
                 </div>
-                {mediaSrc && (
+                {mediaSrc && getMessageMediaType(message) === "audio" && (
+                    <audio src={mediaSrc} controls preload="metadata" className="mb-2 w-full min-w-64" />
+                )}
+                {mediaSrc && getMessageMediaType(message) !== "audio" && (
                     <button
                         type="button"
                         onClick={() => onOpenMedia({ src: mediaSrc, type: getMessageMediaType(message), label: displayText || "Midia do lead" })}
@@ -744,6 +749,9 @@ function MessageBubble({
                             <img src={mediaSrc} alt="" className="max-h-72 w-full object-contain" />
                         )}
                     </button>
+                )}
+                {message.payment_data && (
+                    <PaymentMessageCard data={message.payment_data} />
                 )}
                 {displayText && <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{displayText}</p>}
 
@@ -787,13 +795,14 @@ function findAssociatedDebug(messages: Message[], currentMsg: Message): AiDebugD
 }
 
 function getMessageMediaSrc(message: Message) {
+    if (String(message.media_url || '').startsWith('telegram-file:')) return `/api/admin/media/${encodeURIComponent(message.id)}`;
     if (message.media_url) return message.media_url;
     if (!getMessageMediaType(message)) return "";
     return `/api/admin/media/${encodeURIComponent(message.id)}`;
 }
 
 function getMessageMediaType(message: Message) {
-    if (message.media_type === "image" || message.media_type === "video") return message.media_type;
+    if (message.media_type === "image" || message.media_type === "video" || message.media_type === "audio") return message.media_type;
     if (message.media_url) {
         if (/\.(mp4|mov|webm|m4v)(\?|$)/i.test(message.media_url)) return "video";
         return "image";
@@ -804,6 +813,32 @@ function getMessageMediaType(message: Message) {
         return /video/i.test(message.content || "") ? "video" : "image";
     }
     return "";
+}
+
+function PaymentMessageCard({ data }: { data: Record<string, unknown> }) {
+    const value = Number(data.value ?? (Number(data.amount_cents || 0) / 100));
+    const description = String(data.description || data.product || "Pagamento PIX");
+    const status = data.paid === true ? "pago" : String(data.status || "pendente");
+    const pixCode = String(data.pixCopiaCola || "");
+    return (
+        <div className="mb-2 rounded-md border border-emerald-300/20 bg-emerald-300/[0.07] p-3 text-xs">
+            <div className="flex items-center justify-between gap-4">
+                <span className="font-semibold text-emerald-200">PIX · {description}</span>
+                <span className="rounded bg-black/20 px-2 py-1 uppercase text-emerald-100">{status}</span>
+            </div>
+            {Number.isFinite(value) && value > 0 && <p className="mt-2 text-sm font-semibold text-white">{money.format(value)}</p>}
+            {data.gatewayLabel || data.gateway ? <p className="mt-1 text-slate-400">Gateway: {String(data.gatewayLabel || data.gateway)}</p> : null}
+            {pixCode && (
+                <div className="mt-2 rounded border border-white/10 bg-black/20 p-2">
+                    <p className="mb-1 text-slate-400">PIX copia e cola</p>
+                    <code className="block max-w-lg break-all text-slate-200">{pixCode}</code>
+                    <button type="button" onClick={() => navigator.clipboard.writeText(pixCode)} className="mt-2 rounded bg-emerald-300/15 px-2 py-1 font-semibold text-emerald-100 hover:bg-emerald-300/25">
+                        copiar código
+                    </button>
+                </div>
+            )}
+        </div>
+    );
 }
 
 function SegmentButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {

@@ -3,7 +3,7 @@ import { supabaseServer as supabase } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
-const MESSAGE_COLUMNS = "id,sender,content,created_at,media_url,media_type";
+const MESSAGE_COLUMNS = "id,sender,content,created_at,media_url,media_type,payment_data";
 const clampLimit = (value: string | null) => Math.max(40, Math.min(200, Number(value) || 160));
 
 const loadLeadOrigin = async (session: any) => {

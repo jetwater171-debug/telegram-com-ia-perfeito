@@ -128,6 +128,15 @@ const responseSchema = {
             required: ["tarado", "carente", "sentimental", "financeiro"], // OBRIGATÓRIO: Sempre mande o estado completo.
         },
         extracted_user_name: { type: "STRING", nullable: true },
+        voice_reply: {
+            type: "OBJECT", nullable: true,
+            description: "Ao escolher send_voice_reply, escreva aqui a versão falada de messages[0], preservando exatamente informação, preço e intenção. Pode escolher áudio ocasionalmente em conversa comum, quando disponível, mesmo sem pedido. spoken_text deve ser natural para ser ouvido, sem kkk, rsrs, abreviações ou tags. performance_tags contém somente direções curtas entre colchetes para Eleven v3, criadas conforme o clima, por exemplo [sussurrando], [sensual], [safada], [gemendo] ou [sensual safada e gemendo]; use 0 a 4 e não repita. Fora de áudio, null.",
+            properties: {
+                spoken_text: { type: "STRING" },
+                performance_tags: { type: "STRING", nullable: true },
+            },
+            required: ["spoken_text"],
+        },
         audio_transcription: { type: "STRING", nullable: true, description: "Se o usuário enviou um áudio, transcreva EXATAMENTE o que ele disse aqui. Se não for áudio, mande null." },
         current_state: {
             type: "STRING",
@@ -220,7 +229,7 @@ const responseSchema = {
             }
         }
     },
-    required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action", "lead_memory_patch", "next_best_action", "decision_confidence", "memory_updates", "conversation_checkpoint"],
+    required: ["internal_thought", "lead_classification", "lead_stats", "voice_reply", "current_state", "messages", "action", "lead_memory_patch", "next_best_action", "decision_confidence", "memory_updates", "conversation_checkpoint"],
 };
 
 const centralBrainSchema = {

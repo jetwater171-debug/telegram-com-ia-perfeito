@@ -40,6 +40,23 @@ const agent = compile('../src/lib/elevenLabsScriptAgent.ts', (id) => {
 });
 
 const validOpus = Buffer.concat([Buffer.from('OggS'), Buffer.alloc(64), Buffer.from('OpusHead'), Buffer.alloc(1_600)]);
+const inline = agent.prepareInlineVoiceReply({ spoken_text: 'Você está bem? kkkkk rsrs', performance_tags: '[whispers]' }, 'vc está bem?', 200, 40, false);
+assert.equal(inline.elevenText, '[whispers] Você está bem?');
+const expressiveInline = agent.prepareInlineVoiceReply({ spoken_text: 'Você me deixa doida', performance_tags: '[sensual safada e gemendo]' }, 'vc me deixa doida', 200, 40, true);
+assert.equal(expressiveInline.elevenText, '[sensual safada e gemendo] Você me deixa doida.');
+const guardedInline = agent.prepareInlineVoiceReply({ spoken_text: 'Você me deixa doida', performance_tags: '[sensual] [gemendo]' }, 'vc me deixa doida', 200, 40, false);
+assert.doesNotMatch(guardedInline.elevenText, /sensual|gemendo/i);
+assert.equal(agent.prepareInlineVoiceReply({ spoken_text: 'seu acesso está liberado' }, 'vou conferir seu acesso', 200, 40, false), null);
+assert.equal(agent.prepareInlineVoiceReply(null, 'oi', 200, 40, false), null);
+const firstPreview = compile('../src/lib/firstPreview.ts');
+const bedAssets = [
+    { id: 'day', name: 'deitada na cama de dia', media_type: 'image' },
+    { id: 'night', name: 'deitada na cama de noite', media_type: 'image' },
+];
+assert.equal(firstPreview.selectFirstBedPhoto(bedAssets, 'America/Sao_Paulo', new Date('2026-09-08T12:00:00Z')).id, 'day');
+assert.equal(firstPreview.selectFirstBedPhoto(bedAssets, 'America/Sao_Paulo', new Date('2026-09-08T23:00:00Z')).id, 'night');
+assert.equal(firstPreview.selectFirstBedPhoto([bedAssets[0]], 'America/Sao_Paulo', new Date('2026-09-08T23:00:00Z')), null);
+assert.equal(firstPreview.selectFirstBedPhoto(bedAssets, 'invalid', new Date('2026-09-08T12:00:00Z')).id, 'day');
 assert.equal(eleven.cleanTextForElevenLabsSpeech('vc é linda kkkkk rsrs'), 'Você é linda.');
 assert.match(eleven.buildElevenV3Performance({ messageText: 'vc me deixa doida', userText: 'fala safada comigo', adultVerified: true }), /^\[seductively\]/);
 assert.doesNotMatch(eleven.buildElevenV3Performance({ messageText: 'vc me deixa doida', userText: 'fala safada comigo', adultVerified: false }), /seductively|moans|gasps|breathes/iu);

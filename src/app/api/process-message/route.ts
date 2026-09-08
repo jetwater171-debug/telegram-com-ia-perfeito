@@ -29,6 +29,7 @@ import {
     ELEVENLABS_REQUESTED_AUDIO_MAX_CHARS,
     ELEVENLABS_REQUESTED_AUDIO_MAX_WORDS,
     generateElevenLabsAudio,
+    isElevenLabsAdultSexualPerformanceContext,
     isElevenLabsConversionMoment,
     isElevenLabsDeliveryPromise,
     isPaidPersonalizedEroticAudioRequest,
@@ -38,7 +39,8 @@ import {
     shouldUseElevenLabsAudio,
     userAskedForElevenLabsAudio,
 } from '@/lib/elevenLabs';
-import { prepareElevenLabsScript } from '@/lib/elevenLabsScriptAgent';
+import { prepareElevenLabsScript, prepareInlineVoiceReply } from '@/lib/elevenLabsScriptAgent';
+import { selectFirstBedPhoto } from '@/lib/firstPreview';
 import {
     formatVipCatalog,
     formatBrl,
@@ -1892,6 +1894,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
     let mediaSuppressedForPolicy = modelAttemptedMedia && !shouldDeliverMedia;
     let mediaSuppressedForRepetition = false;
     let sentMediaUrlsForSession: string[] = [];
+    let firstBedPreviewId: string | null = null;
     let sentMediaKeysForSession = new Set<string>();
 
     // O arquivo só sai quando a política contextual autoriza pedido, reentrega
@@ -1975,7 +1978,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
         const [sentMediaResult, catalogResult] = await Promise.all([
             supabase
                 .from('messages')
-                .select('media_url')
+                .select('media_url,media_type')
                 .eq('session_id', session.id)
                 .eq('sender', 'bot')
                 .not('media_url', 'is', null)
@@ -1992,6 +1995,10 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
             sentMediaUrlsForSession = (sentMediaResult.data || [])
                 .map((row: any) => String(row.media_url || '').trim())
                 .filter(Boolean);
+            const hasSentPhotoForSession = (sentMediaResult.data || []).some((row: any) => {
+                const type = String(row.media_type || '').toLowerCase();
+                return type === 'image' || type === 'photo';
+            });
             sentMediaKeysForSession = new Set(sentMediaUrlsForSession.map(normalizeMediaUrlKey).filter(Boolean));
             const catalog = (catalogResult.data || []).filter((asset: any) => asset.media_url
                 && (brainRuntime.reality.adultVerified || !isPreviewAssetExplicitForUnverifiedLead(asset)));
@@ -2050,7 +2057,13 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                 asset: entry.moment.assetSensuality,
                 reasons: entry.moment.reasons,
             }))));
-            const chosenPreview = rankedPreviews[0]?.asset || candidatePool[0];
+            const needsFirstBedPhoto = !hasSentPhotoForSession
+                && Number(session.total_paid || 0) === 0
+                && !salesTiming.customRequestBrief;
+            const chosenPreview = needsFirstBedPhoto
+                ? selectFirstBedPhoto(catalog, String(leadMemory.metadata?.redirect_timezone || ''))
+                : rankedPreviews[0]?.asset || candidatePool[0];
+            if (needsFirstBedPhoto && chosenPreview) firstBedPreviewId = String(chosenPreview.id);
 
             if (chosenPreview) {
                 aiResponse.action = 'send_custom_preview';
@@ -2545,7 +2558,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
         canPitchPrice: salesTiming.canPitchPrice,
         leadHeat: currentLeadHeat,
     });
-    const aiSelectedVoice = aiRequestedVoiceAction && conversionVoiceMoment;
+    const aiSelectedVoice = aiRequestedVoiceAction && !recentAudio && !paidEroticAudioBlocked;
     const shouldForceVoice = (userWantsAudio || aiSelectedVoice) && voiceReady;
     const automaticConversionVoice = !userWantsAudio
         && !aiRequestedVoiceAction
@@ -2610,7 +2623,22 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                 reaction: '',
                 source: 'deterministic' as const,
             });
-            return prepareElevenLabsScript({
+            const inlineVoice = !paidEroticAudioEntitled
+                ? prepareInlineVoiceReply(
+                    aiResponse.voice_reply,
+                    audioSpokenText,
+                    audioMaxChars,
+                    audioMaxWords,
+                    isElevenLabsAdultSexualPerformanceContext({
+                        adultVerified: brainRuntime.reality.adultVerified,
+                        userText: userOnlyText,
+                        messageText: audioSpokenText,
+                        emotionalContext,
+                        conversationContext: [lastBotContent, ...recentUserTexts.slice(-3), ...recentBotTexts.slice(-3)].filter(Boolean).join('\n').slice(-900),
+                    }),
+                )
+                : null;
+            return (inlineVoice ? Promise.resolve(inlineVoice) : prepareElevenLabsScript({
                 settings: elevenLabsScriptAgentSettings,
                 messageText: audioSpokenText,
                 userText: userOnlyText,
@@ -2655,7 +2683,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                         },
                     },
                 }),
-            }).catch((error: any) => {
+            })).catch((error: any) => {
                 console.warn('[ELEVENLABS] Diretora B.AI indisponível; usando roteiro local:', error?.message || error);
                 if (paidEroticAudioEntitled) throw error;
                 return deterministicFallback();
@@ -2749,7 +2777,8 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                 }
                 voiceDeliveryAttempted = true;
                 externalDeliveryAttempted = true;
-                await sendTelegramVoice(botToken, chatId, preparedAudio.audio);
+                const sentVoice = await sendTelegramVoice(botToken, chatId, preparedAudio.audio);
+                const telegramVoiceFileId = String(sentVoice?.voice?.file_id || '').trim();
                 voiceDeliveryConfirmed = true;
                 externalDeliveryConfirmed = true;
                 await insertGeneratedMessage({
@@ -2759,6 +2788,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                     // a versão visual do chat com "kkk", "rs" ou abreviações.
                     content: preparedAudio.script.spokenText,
                     media_type: 'audio',
+                    media_url: telegramVoiceFileId ? `telegram-file:${telegramVoiceFileId}` : null,
                 });
                 await appendLeadEventSafe({
                     sessionId: String(session.id),
@@ -2967,6 +2997,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
 
             const excluded = new Set(excludeUrls.map((url) => normalizeMediaUrlKey(url)).filter(Boolean));
             const ageEligible = (data || []).filter((item: any) => item?.media_url
+                && (!firstBedPreviewId || String(item.id) === firstBedPreviewId)
                 && (brainRuntime.reality.adultVerified || !isPreviewAssetExplicitForUnverifiedLead(item)));
             const valid = ageEligible.filter((item: any) => matchesMediaType(item.media_type, mediaType));
             
@@ -3018,7 +3049,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                     .maybeSingle();
                 if (previewRow?.media_url
                     && (brainRuntime.reality.adultVerified || !isPreviewAssetExplicitForUnverifiedLead(previewRow))
-                    && isPreviewSemanticallyRelevant(previewRow, requestedPreviewSpec.tags)
+                    && (String(previewRow.id) === firstBedPreviewId || isPreviewSemanticallyRelevant(previewRow, requestedPreviewSpec.tags))
                     && !sentMediaKeysForSession.has(normalizeMediaUrlKey(previewRow.media_url))) {
                     mediaUrl = previewRow.media_url;
                     mediaType = previewRow.media_type === 'video' ? 'video' : 'image';
