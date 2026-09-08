@@ -78,9 +78,11 @@ export async function GET() {
             assets: assetsResult.data || [],
             requests,
             settings: {
+                provider: visionSettings.provider,
                 primaryModel: visionSettings.primaryModel,
                 fallbackModel: visionSettings.fallbackModel,
                 openRouterConfigured: Boolean(visionSettings.apiKey),
+                providerConfigured: Boolean(visionSettings.apiKey),
             },
         });
     } catch (error: any) {
@@ -230,9 +232,13 @@ export async function PATCH(req: NextRequest) {
         const action = String(body?.action || '');
 
         if (action === 'settings') {
+            const provider = ['llm7', 'openrouter', 'gemini'].includes(String(body.provider || '').trim().toLowerCase())
+                ? String(body.provider).trim().toLowerCase()
+                : 'openrouter';
             const primaryModel = String(body.primaryModel || DEFAULT_PREVIEW_VISION_MODEL).trim();
             const fallbackModel = String(body.fallbackModel || DEFAULT_PREVIEW_VISION_FALLBACK_MODEL).trim();
             const { error } = await supabase.from('bot_settings').upsert([
+                { key: 'preview_vision_provider', value: provider },
                 { key: 'preview_vision_model', value: primaryModel },
                 { key: 'preview_vision_fallback_model', value: fallbackModel },
             ]);

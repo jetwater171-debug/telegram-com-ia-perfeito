@@ -1,16 +1,17 @@
 import { GoogleGenAI } from '@google/genai';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
+import { loadAiCredentials } from '@/lib/aiCredentials';
 
 export const DEFAULT_PREVIEW_VISION_MODEL = 'google/gemini-3.8-flash';
 export const DEFAULT_PREVIEW_VISION_FALLBACK_MODEL = 'google/gemini-3.7-flash';
-const APPROVED_PREVIEW_VISION_MODELS = [
-    DEFAULT_PREVIEW_VISION_MODEL,
-    DEFAULT_PREVIEW_VISION_FALLBACK_MODEL,
-    'google/gemini-3.6-flash',
-] as const;
+export type PreviewVisionProvider = 'llm7' | 'openrouter' | 'gemini';
+const normalizePreviewVisionProvider = (value: unknown): PreviewVisionProvider => {
+    const provider = String(value || '').trim().toLowerCase();
+    return provider === 'llm7' || provider === 'gemini' ? provider : 'openrouter';
+};
 const normalizePreviewVisionModel = (value: unknown, fallback: string) => {
     const model = String(value || '').trim();
-    return (APPROVED_PREVIEW_VISION_MODELS as readonly string[]).includes(model) ? model : fallback;
+    return model || fallback;
 };
 
 export type PreviewVisionAnalysis = {
@@ -76,20 +77,34 @@ const getSettings = async () => {
             'openrouter_base_url',
             'openrouter_referer',
             'openrouter_title',
+            'preview_vision_provider',
             'preview_vision_model',
             'preview_vision_fallback_model',
             'gemini_api_key',
         ]);
     const map = Object.fromEntries((data || []).map((row: any) => [row.key, row.value || ''])) as Record<string, string>;
+    const provider = normalizePreviewVisionProvider(map.preview_vision_provider || process.env.PREVIEW_VISION_PROVIDER);
+    const llm7Credential = provider === 'llm7'
+        ? (await loadAiCredentials()).find((credential) => credential.provider === 'llm7')
+        : null;
+    const llm7ApiKey = llm7Credential?.apiKey || map.llm7_api_key || process.env.LLM7_API_KEY || '';
+    const llm7BaseUrl = llm7Credential?.baseUrl || process.env.LLM7_BASE_URL || 'https://api.llm7.io/v1';
+    const configuredPrimaryModel = map.preview_vision_model || process.env.PREVIEW_VISION_MODEL
+        || (provider === 'llm7' ? llm7Credential?.model : '')
+        || DEFAULT_PREVIEW_VISION_MODEL;
+    const configuredFallbackModel = map.preview_vision_fallback_model || process.env.PREVIEW_VISION_FALLBACK_MODEL
+        || (provider === 'llm7' ? llm7Credential?.model : '')
+        || DEFAULT_PREVIEW_VISION_FALLBACK_MODEL;
     return {
+        provider,
         openRouterKey: map.openrouter_api_key || process.env.OPENROUTER_API_KEY || '',
         geminiKey: map.gemini_api_key || process.env.GEMINI_API_KEY || '',
-        baseUrl: map.openrouter_base_url || 'https://openrouter.ai/api/v1',
+        baseUrl: provider === 'llm7' ? llm7BaseUrl : map.openrouter_base_url || 'https://openrouter.ai/api/v1',
         referer: map.openrouter_referer || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000',
         title: map.openrouter_title || 'Lari Telegram Bot',
-        primaryModel: normalizePreviewVisionModel(map.preview_vision_model || process.env.PREVIEW_VISION_MODEL, DEFAULT_PREVIEW_VISION_MODEL),
-        fallbackModel: normalizePreviewVisionModel(map.preview_vision_fallback_model || process.env.PREVIEW_VISION_FALLBACK_MODEL, DEFAULT_PREVIEW_VISION_FALLBACK_MODEL),
-        apiKey: map.openrouter_api_key || process.env.OPENROUTER_API_KEY || '',
+        primaryModel: normalizePreviewVisionModel(configuredPrimaryModel, DEFAULT_PREVIEW_VISION_MODEL),
+        fallbackModel: normalizePreviewVisionModel(configuredFallbackModel, DEFAULT_PREVIEW_VISION_FALLBACK_MODEL),
+        apiKey: provider === 'llm7' ? llm7ApiKey : map.openrouter_api_key || process.env.OPENROUTER_API_KEY || '',
     };
 };
 
@@ -296,13 +311,13 @@ Retorne SOMENTE um JSON válido com a estrutura:
   "confidence": 0.95
 }`;
 
-    // 1. Tenta OpenRouter com modelos multimodais atuais se a chave estiver configurada.
-    if (settings.openRouterKey) {
+    // 1. Tenta o provedor visual configurado. LLM7 e OpenRouter expõem a mesma
+    // interface compatível com OpenAI e recebem a imagem como data URL.
+    if (settings.apiKey && (settings.provider === 'llm7' || settings.provider === 'openrouter')) {
         const candidateModels = Array.from(new Set([
             settings.primaryModel,
             settings.fallbackModel,
-            DEFAULT_PREVIEW_VISION_MODEL,
-            DEFAULT_PREVIEW_VISION_FALLBACK_MODEL,
+            ...(settings.provider === 'openrouter' ? [DEFAULT_PREVIEW_VISION_MODEL, DEFAULT_PREVIEW_VISION_FALLBACK_MODEL] : []),
         ].filter(Boolean)));
 
         for (const model of candidateModels) {
@@ -330,8 +345,10 @@ Retorne SOMENTE um JSON válido com a estrutura:
                         }],
                         temperature: 0.1,
                         max_tokens: 1600,
-                        response_format: { type: 'json_object' },
-                        provider: { allow_fallbacks: false },
+                        ...(settings.provider === 'openrouter' ? {
+                            response_format: { type: 'json_object' },
+                            provider: { allow_fallbacks: false },
+                        } : {}),
                     }),
                 });
 

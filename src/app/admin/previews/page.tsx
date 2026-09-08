@@ -64,9 +64,11 @@ export default function AdminPreviewsPage() {
     const [loadingPage, setLoadingPage] = useState(true);
     const [message, setMessage] = useState("");
     const [modelSettings, setModelSettings] = useState({
+        provider: "llm7",
         primaryModel: "google/gemini-3.8-flash",
         fallbackModel: "google/gemini-3.7-flash",
         openRouterConfigured: false,
+        providerConfigured: false,
     });
     const [manual, setManual] = useState({ name: "", description: "", tags: "" });
 
@@ -208,6 +210,7 @@ export default function AdminPreviewsPage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 action: "settings",
+                provider: modelSettings.provider,
                 primaryModel: modelSettings.primaryModel,
                 fallbackModel: modelSettings.fallbackModel,
             }),
@@ -272,8 +275,14 @@ export default function AdminPreviewsPage() {
                         </section>
 
                         <section className="admin-card p-5">
-                            <div className="flex items-center justify-between"><h2 className="font-bold">Modelos de visão</h2><span className={`h-2.5 w-2.5 rounded-full ${modelSettings.openRouterConfigured ? "bg-emerald-300" : "bg-rose-300"}`} /></div>
+                            <div className="flex items-center justify-between"><h2 className="font-bold">Modelos de visão</h2><span className={`h-2.5 w-2.5 rounded-full ${modelSettings.providerConfigured || modelSettings.openRouterConfigured ? "bg-emerald-300" : "bg-rose-300"}`} /></div>
                             <p className="mt-1 text-xs leading-5 text-slate-500">O segundo modelo entra se o principal falhar ou recusar a análise.</p>
+                            <label className="mt-4 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">Provedor</label>
+                            <select value={modelSettings.provider} onChange={(event) => setModelSettings({ ...modelSettings, provider: event.target.value })} className="field mt-2">
+                                <option value="llm7">LLM7</option>
+                                <option value="openrouter">OpenRouter</option>
+                                <option value="gemini">Google Gemini</option>
+                            </select>
                             <label className="mt-4 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">Principal</label>
                             <input value={modelSettings.primaryModel} onChange={(event) => setModelSettings({ ...modelSettings, primaryModel: event.target.value })} className="field mt-2" />
                             <label className="mt-4 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">Fallback visual</label>
