@@ -55,3 +55,6 @@ assert.deepEqual(inspect(['quer uma foto personalizada com seu nome por R$ 10,00
 assert.ok(inspect(['quer um adicional surpresa?'], { orderBumpRequired: true }).includes('order_bump_price'));
 assert.ok(inspect(['quer adicionar R$ 10,00?'], { orderBumpRequired: true }).includes('order_bump_description'));
 console.log('MODEL_REPLY_CONTRACT_OK cases=17');
+assert.ok(inspect(['já vou te passar o pix de 22,38'], { paymentUnavailable: true }).includes('unavailable_payment_promise'));
+assert.deepEqual(inspect(['o adicional custa R$ 10,00'], { offer: { value: 22.38 }, additionalAllowedPrices: [10] }), []);
+assert.ok(inspect(['o adicional custa R$ 11,00'], { offer: { value: 22.38 }, additionalAllowedPrices: [10] }).includes('offer_price_mismatch'));

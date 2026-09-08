@@ -264,6 +264,7 @@ const isPriceQuestion = (text: string) => /\b(quanto custa|qual (?:e |é )?o?\s*
 
 const isOfferAcceptance = (text: string) => {
     const value = normalize(text).replace(/[.!?]+$/g, '').trim();
+    if (/^entao\s+(?:vai|manda|pode mandar|fecha|fechou)$/.test(value)) return true;
     return /^(sim|quero|eu quero|pode ser|fechado|bora|vamos|aceito|combinado|ta bom|tá bom|beleza|manda|manda aí|manda ai|manda o link|manda o pix|passa o pix|gera|faz|pode mandar|quero sim|claro|com certeza|vitalicio|vitalício|mensal|quero o vip|quero o mensal|quero o vitalicio|topo|partiu|fechou)$/i.test(value)
         || /\b(fecha|fechado|fechou|aceito|pode ser esse|quero esse|quero essa|vamos fazer|manda o link|manda o pix|manda a chave|passa o pix|passa a chave|gera o pix|vou pagar|quero pagar|pode gerar|pode mandar o pix|passa a chave pix)\b/i.test(value)
         || /\bquero\s+(?:o|a)?\s*(?:de\s+)?(?:r\$\s*)?\d{1,4}(?:[.,]\d{1,2})?\b/i.test(value)
@@ -635,9 +636,13 @@ export const evaluateSalesTiming = ({
     const pendingAddonDecision = storedActiveOrder?.product === 'vip'
         && leadMemory?.metadata?.funnel_order_bump_status === 'offered'
         ? resolvePendingAddonDecision(userText) : null;
+    const addonQuestion = storedActiveOrder?.product === 'vip'
+        && /\?|^(?:e a|e o|como|quanto|inclui|tem)/.test(normalize(userText))
+        && /\b(?:foto personalizada|foto com (?:meu|o) nome|adicional|extra)\b/.test(normalize(userText))
+        && !pendingAddonDecision;
     // Responder ao adicional pendente não troca silenciosamente o pedido-base.
-    const rawDetectedProduct = pendingAddonDecision ? null : detectPaidProduct(userText);
-    const candidateSku = pendingAddonDecision ? null : detectCommercialSku(userText, {
+    const rawDetectedProduct = pendingAddonDecision || addonQuestion ? null : detectPaidProduct(userText);
+    const candidateSku = pendingAddonDecision || addonQuestion ? null : detectCommercialSku(userText, {
         allowBareVipCatalogAmount: hasRecentVipCatalog(recentMessages, now),
     });
     const detectedSku = rawDetectedProduct && !['vip', 'video_call'].includes(rawDetectedProduct)
@@ -788,6 +793,7 @@ export const evaluateSalesTiming = ({
         && ['accepted', 'declined'].includes(funnel.orderBump.status)
         && activeProduct === 'vip' && Boolean(compatibleActiveOrder);
     const canGeneratePayment = (directCheckout || acceptanceAnswersCurrentOffer || addonDecisionNow)
+        && !addonQuestion
         && hasAuthoritativeOrderContext
         && !requiresSkuSelection
         && !fixedCatalogBudgetGap
@@ -853,6 +859,7 @@ export const evaluateSalesTiming = ({
         askedPrice,
         recentOffer,
         acceptedOffer,
+        addonQuestion,
         canPitchPrice,
         canGeneratePayment,
         fixedVipBudgetGap,

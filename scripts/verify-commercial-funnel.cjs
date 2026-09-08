@@ -117,3 +117,17 @@ assert.equal(sales.buildModelPricedCustomOffer(2, 'pedido').value, 15);
 assert.equal(sales.buildModelPricedCustomOffer(14.99, 'pedido').value, 15);
 
 console.log('COMMERCIAL_FUNNEL_OK stages=16 vip_floor=15 custom_floor=15 bump=10 support_priority=1');
+const exactPlan = sales.evaluateSalesTiming({ userText: 'quero mensal por 22,38 reais', now }).offerPlan;
+const exactOrder = sales.buildSalesOrderSnapshot({ orderId: 'exact-2238', plan: exactPlan, status: 'offered', now });
+const exactMemory = { metadata: { sales_active_order: exactOrder, funnel_order_bump_status: 'declined' } };
+for (const userText of ['entao vai', 'então vai!', 'então pode mandar']) {
+  const result = sales.evaluateSalesTiming({ userText, leadMemory: exactMemory, now });
+  assert.equal(result.canGeneratePayment, true, userText);
+  assert.equal(result.offerPlan.value, 22.38);
+}
+assert.equal(sales.evaluateSalesTiming({ userText: 'entao vai', now }).canGeneratePayment, false);
+const question = sales.evaluateSalesTiming({ userText: 'e a foto personalizada com meu nome?', leadMemory: exactMemory, now });
+assert.equal(question.activeOrder.orderId, exactOrder.orderId);
+assert.equal(question.offerPlan.value, 22.38);
+assert.equal(question.canGeneratePayment, false);
+assert.equal(question.addonQuestion, true);

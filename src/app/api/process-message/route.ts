@@ -43,6 +43,7 @@ import { prepareElevenLabsScript, prepareInlineVoiceReply } from '@/lib/elevenLa
 import { selectFirstBedPhoto } from '@/lib/firstPreview';
 import {
     formatVipCatalog,
+    VIP_NAME_PHOTO_ADDON_PRICE,
     formatBrl,
     detectCommercialSku,
     getCommercialFulfillmentBrief,
@@ -1567,6 +1568,13 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
             product: salesTiming.activeProduct,
             nurtureTurns: salesTiming.nurtureTurns,
             recentOffer: salesTiming.recentOffer,
+            acceptedOffer: salesTiming.acceptedOffer,
+            selectedSku: salesTiming.selectedSku,
+            activeOrder: salesTiming.activeOrder?.orderId || null,
+            requiresSkuSelection: salesTiming.requiresSkuSelection,
+            fixedCatalogBudgetGap: salesTiming.fixedCatalogBudgetGap,
+            orderBump: salesTiming.funnel.orderBump,
+            supportPriority: salesTiming.funnel.supportPriority,
         });
         aiResponse.action = 'none';
         aiResponse.payment_details = null;
@@ -2102,7 +2110,9 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
         mustPresentVipMenu: salesTiming.mustPresentVipMenu,
         orderBumpRequired: salesTiming.funnel.orderBump.shouldOffer,
         offer: offerPlan ? { value: offerPlan.value, description: offerPlan.description } : null,
+        additionalAllowedPrices: salesTiming.addonQuestion ? [VIP_NAME_PHOTO_ADDON_PRICE] : undefined,
         requireOfferPrice: Boolean(offerPlan
+            && !salesTiming.addonQuestion
             && !salesTiming.funnel.orderBump.shouldOffer
             && (salesTiming.mustStateOfferNow || responseHasPrice)),
         mediaUnavailable: mediaSuppressedForRepetition || mediaSuppressedForPolicy,
@@ -2111,6 +2121,7 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
         // compra. Recibos e confirmações só nascem do resultado autoritativo.
         currentPaymentConfirmed: false,
         pixGenerated: false,
+        paymentUnavailable: !salesTiming.canGeneratePayment || adultPaymentVerificationRequired,
         fulfillmentReleased: false,
         operationChanged: actionFamily(modelAuthoredAction) !== actionFamily(String(aiResponse.action || 'none')),
         corrections: [...new Set(replyCorrections)],

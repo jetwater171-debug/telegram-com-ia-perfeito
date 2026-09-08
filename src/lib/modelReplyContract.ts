@@ -11,12 +11,14 @@ export type ModelReplyContract = {
     orderBumpRequired?: boolean;
     offer?: { value: number; description: string } | null;
     requireOfferPrice?: boolean;
+    additionalAllowedPrices?: number[];
     mediaUnavailable?: boolean;
     voiceUnavailable?: boolean;
     /** Backend confirmed the payment belonging to the current order/turn. */
     currentPaymentConfirmed?: boolean;
     /** Backend created or recovered a PIX code that is available to send now. */
     pixGenerated?: boolean;
+    paymentUnavailable?: boolean;
     /** Backend released the current order's access or fulfillment. */
     fulfillmentReleased?: boolean;
     operationChanged?: boolean;
@@ -78,7 +80,8 @@ export const inspectModelReply = (value: unknown, contract: ModelReplyContract):
         if (!/foto/i.test(text) || !/(?:nome|personaliz)/i.test(text)) issues.push('order_bump_description');
     } else if (contract.offer && (prices.length || contract.requireOfferPrice)) {
         const expected = Math.round(contract.offer.value * 100);
-        if (prices.some((price) => price !== expected) || (contract.requireOfferPrice && !prices.includes(expected))) issues.push('offer_price_mismatch');
+        const allowed = new Set([expected, ...(contract.additionalAllowedPrices || []).map((price) => Math.round(price * 100))]);
+        if (prices.some((price) => !allowed.has(price)) || (contract.requireOfferPrice && !prices.includes(expected))) issues.push('offer_price_mismatch');
     }
     if ((contract.mediaUnavailable || contract.voiceUnavailable)
         && /\b(?:te mandei|te enviei|acabei de (?:enviar|mandar)|vou (?:te )?(?:mandar|enviar|gravar)|aqui (?:esta|está|vai) (?:a|o|minha|meu))\b/i.test(text)) issues.push('unavailable_delivery_promise');
@@ -86,6 +89,9 @@ export const inspectModelReply = (value: unknown, contract: ModelReplyContract):
         issues.push('unverified_current_payment_confirmation');
     }
     if (!contract.pixGenerated && hasPixGenerationClaim(messages)) issues.push('unverified_pix_generation');
+    if (contract.paymentUnavailable && /\b(?:vou|vamos|ja vou)\b.{0,35}\b(?:passar|mandar|enviar|gerar|criar)\b.{0,25}\b(?:pix|cobranca|cobrança|codigo|código)\b/iu.test(text)) {
+        issues.push('unavailable_payment_promise');
+    }
     if (!contract.fulfillmentReleased && hasFulfillmentReleaseClaim(messages)) {
         issues.push('unverified_fulfillment_release');
     }
