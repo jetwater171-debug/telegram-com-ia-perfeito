@@ -3330,7 +3330,6 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                         }
                         await persistSalesOrderState(pendingOrder);
                         externalDeliveryAttempted = true;
-                        await sendTelegramMessageStrict(botToken, chatId, `${description} por ${formatBrl(value)}. ta aqui o pix de novo`);
                         externalDeliveryConfirmed = true;
                         await sendTelegramCopyableCodeStrict(botToken, chatId, lastPixCode);
                         await appendLeadEventSafe({
@@ -3501,7 +3500,6 @@ VOZ: escolha send_voice_reply quando solicitado ou quando combinar com o momento
                             commercial: { currentOrder: pendingOrder },
                         });
                         externalDeliveryAttempted = true;
-                        await sendTelegramMessageStrict(botToken, chatId, `${description} por ${formatBrl(value)}. ta aqui o pix`);
                         externalDeliveryConfirmed = true;
                         if (payment.gateway === 'pushinpay') {
                             await sendTelegramMessageStrict(botToken, chatId, "aviso rapidinho: a PushinPay so processa o pagamento, a entrega e suporte continuam comigo.");
