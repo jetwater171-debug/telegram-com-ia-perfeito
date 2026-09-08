@@ -1440,7 +1440,7 @@ const recordPersistentAiUsage = (event: Parameters<typeof persistAiGatewayUsage>
 };
 
 const callOpenRouterJson = async <T,>(
-    settings: AiRuntimeSettings,
+    settings: Pick<AiRuntimeSettings, 'openRouterApiKey' | 'openRouterBaseUrl' | 'openRouterReferer' | 'openRouterTitle'>,
     gateway: AiGatewayConfig,
     role: AiRole,
     systemInstruction: string,
@@ -1457,6 +1457,7 @@ const callOpenRouterJson = async <T,>(
     usageInputTokens?: number;
     usageOutputTokens?: number;
     usageReasoningTokens?: number;
+    usageCachedInputTokens?: number;
     providerRequestId?: string;
     providerAttempts?: string[];
     accountingHandled?: boolean;
@@ -1519,6 +1520,24 @@ const callOpenRouterJson = async <T,>(
             body.chat_template_kwargs = { enable_thinking: role === 'strategy' || role === 'evaluator' };
             body.reasoning_budget = role === 'evaluator' ? 8_192 : role === 'strategy' ? 2_048 : -1;
         }
+    }
+    if (gateway.provider === 'roteia') {
+        // O validador exige enums e objetos aninhados, não apenas JSON válido.
+        // Este contrato estável vem antes do contexto variável para aproveitar
+        // o cache automático de prefixos do provedor.
+        const schema = toOpenRouterJsonSchema(responseSchemaConfig);
+        body.messages = toOpenRouterMessages(
+            `CONTRATO DE SAIDA JSON:\n${JSON.stringify(schema)}\n\n${systemInstruction}`,
+            history, userContent, mediaPart,
+        );
+        body.response_format = {
+            type: 'json_schema',
+            json_schema: {
+                name: schemaName.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64) || 'response',
+                strict: false,
+                schema,
+            },
+        };
     }
     if (gateway.provider === 'openrouter') {
         body.provider = { allow_fallbacks: false, require_parameters: true };
@@ -1642,7 +1661,28 @@ const callOpenRouterJson = async <T,>(
         usageInputTokens: Number(payload?.usage?.prompt_tokens || payload?.usage?.input_tokens || 0) || undefined,
         usageOutputTokens: Number(payload?.usage?.completion_tokens || payload?.usage?.output_tokens || 0) || undefined,
         usageReasoningTokens: Number(payload?.usage?.completion_tokens_details?.reasoning_tokens || payload?.usage?.output_tokens_details?.reasoning_tokens || 0) || undefined,
+        usageCachedInputTokens: Number(payload?.usage?.prompt_cache_hit_tokens ?? payload?.usage?.prompt_tokens_details?.cached_tokens ?? payload?.usage?.input_tokens_details?.cached_tokens ?? 0),
         providerRequestId: String(response.headers.get('x-request-id') || response.headers.get('request-id') || payload?.id || '') || undefined,
+    };
+};
+
+// Diagnóstico sem envio ao Telegram: usa o mesmo contrato e adaptador da conversa.
+export const testRoteiaConversationContract = async (credential: AiCredential) => {
+    const startedAt = Date.now();
+    const result = await callOpenRouterJson<AIResponse>(
+        { openRouterApiKey: '', openRouterBaseUrl: '', openRouterReferer: '', openRouterTitle: '' },
+        { provider: 'roteia', apiKey: credential.apiKey, baseUrl: 'https://api.roteia.ai/v1', model: credential.model || 'deepseek/deepseek-v4-flash', label: 'roteia:diagnostic' },
+        'draft',
+        'Teste técnico de integração. Responda ao cumprimento em uma frase curta. Use action none, classificação desconhecido e estado WELCOME. Não execute operações externas. Preencha o contrato completo e deixe memórias novas vazias.',
+        [], 'Olá', 'responseSchema', responseSchema, undefined, 20_000,
+    );
+    assertAiGatewayPayload(result.data, 'responseSchema', responseSchema);
+    if (!result.data.messages?.some((message) => String(message).trim())) throw new Error('Roteia retornou JSON sem mensagem');
+    return {
+        ok: true, provider: 'roteia', credentialId: credential.id,
+        latencyMs: Date.now() - startedAt, model: result.resolvedModel,
+        contractValidated: true, cachedInputTokens: result.usageCachedInputTokens ?? 0,
+        inputTokens: result.usageInputTokens,
     };
 };
 
@@ -1962,7 +2002,7 @@ const callAiGatewayJson = async <T,>(options: {
                         inputCostPerMillion: gateway.inputCostPerMillion,
                         outputCostPerMillion: gateway.outputCostPerMillion,
                         providerRequestId: result.providerRequestId,
-                        metadata: { queueWaitMs: lease.queueWaitMs },
+                        metadata: { queueWaitMs: lease.queueWaitMs, cachedInputTokens: result.usageCachedInputTokens },
                     });
                 }
                 return { data: result.data, gateway: resolvedGateway, attempts };

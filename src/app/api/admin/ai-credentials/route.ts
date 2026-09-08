@@ -62,8 +62,12 @@ const safeProviderError = (value: unknown) => String(value || "teste falhou")
     .slice(0, 300);
 
 const testCredential = async (credential: Awaited<ReturnType<typeof loadAiCredentials>>[number]) => {
+    if (credential.provider === "roteia") {
+        const { testRoteiaConversationContract } = await import("@/lib/gemini");
+        return testRoteiaConversationContract(credential);
+    }
     const controller = new AbortController();
-    const defaultTimeoutMs = credential.provider === "roteia" ? 20_000 : 8_000;
+    const defaultTimeoutMs = 8_000;
     const timeout = setTimeout(() => controller.abort(), Math.min(20_000, credential.limits.timeoutMs || defaultTimeoutMs));
     const startedAt = Date.now();
     try {
@@ -72,15 +76,15 @@ const testCredential = async (credential: Awaited<ReturnType<typeof loadAiCreden
         if (credential.provider === "gemini") {
             url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(credential.apiKey)}`;
             init = { signal: controller.signal };
-        } else if (credential.provider === "nvidia" || credential.provider === "roteia") {
-            url = `${credential.provider === "roteia" ? "https://api.roteia.ai/v1" : credential.baseUrl || "https://integrate.api.nvidia.com/v1"}/chat/completions`;
+        } else if (credential.provider === "nvidia") {
+            url = `${credential.baseUrl || "https://integrate.api.nvidia.com/v1"}/chat/completions`;
             init = {
                 method: "POST",
                 headers: { Authorization: `Bearer ${credential.apiKey}`, "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    model: credential.model || (credential.provider === "roteia" ? "deepseek/deepseek-v4-flash" : DEFAULT_NVIDIA_MODEL),
+                    model: credential.model || DEFAULT_NVIDIA_MODEL,
                     messages: [{ role: "user", content: "Responda apenas OK" }],
-                    max_tokens: credential.provider === "roteia" ? 128 : 2,
+                    max_tokens: 2,
                     temperature: 0,
                 }),
                 signal: controller.signal,
@@ -92,10 +96,6 @@ const testCredential = async (credential: Awaited<ReturnType<typeof loadAiCreden
         const response = await fetch(url, init);
         const responseText = await response.text();
         if (!response.ok) throw new Error(`http_${response.status}: ${responseText}`);
-        if (credential.provider === "roteia") {
-            const payload = JSON.parse(responseText);
-            if (!String(payload?.choices?.[0]?.message?.content || "").trim()) throw new Error("Modelo retornou uma resposta vazia");
-        }
         let modelCount: number | null = null;
         try {
             const payload = JSON.parse(responseText || "{}");

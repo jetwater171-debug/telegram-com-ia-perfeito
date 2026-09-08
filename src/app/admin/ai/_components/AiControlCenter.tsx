@@ -93,7 +93,16 @@ export default function AiControlCenter() {
     };
     const testCredential = async (credential: Credential) => {
         setTestingId(credential.id); setNotice(`Testando ${credential.label}...`);
-        try { const response = await fetch("/api/admin/ai-credentials", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: credential.id }) }); const data = await response.json(); if (!response.ok) throw new Error(data?.error || "A chave não respondeu."); setNotice(`${credential.label} respondeu em ${fmt(data.latencyMs)} ms${data.modelCount == null ? "." : ` · ${fmt(data.modelCount)} modelos disponíveis.`}`); } catch (error: any) { setNotice(`${credential.label}: ${error?.message || "teste falhou"}`); } finally { setTestingId(""); }
+        try {
+            const response = await fetch("/api/admin/ai-credentials", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: credential.id }) });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data?.error || "A chave não respondeu.");
+            const details = data.contractValidated
+                ? ` · Formato da conversa validado · ${fmt(data.cachedInputTokens)} tokens de entrada em cache.`
+                : data.modelCount == null ? "." : ` · ${fmt(data.modelCount)} modelos disponíveis.`;
+            setNotice(`${credential.label} respondeu em ${fmt(data.latencyMs)} ms${details}`);
+        } catch (error: any) { setNotice(`${credential.label}: ${error?.message || "teste falhou"}`); }
+        finally { setTestingId(""); }
     };
     const selected = PROVIDERS.find((provider) => provider.id === draft.provider)!;
     const uniqueCapacity = Array.from(new Map(capacity.map((row) => [`${row.quotaGroupId}|${row.model}`, row])).values());
