@@ -48,7 +48,7 @@ const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL
 
 export default function AdminDashboard() {
     const [sessions, setSessions] = useState<Session[]>([]);
-    const [filter, setFilter] = useState<"all" | "active" | "paused" | "hot" | "paid">("all");
+    const [filter, setFilter] = useState<"all" | "active" | "paused" | "hot" | "paid" | "blocked">("all");
     const [search, setSearch] = useState("");
     const [phaseFilter, setPhaseFilter] = useState("all");
     const [latestFunnelBySession, setLatestFunnelBySession] = useState<Record<string, string>>({});
@@ -128,7 +128,7 @@ export default function AdminDashboard() {
 
         const { data } = await supabase
             .from("sessions")
-            .select("*")
+            .select("id,telegram_chat_id,user_name,status,last_message_at,lead_score,user_city,device_type,total_paid,funnel_step")
             .order("last_message_at", { ascending: false });
 
         if (!data) {
@@ -233,6 +233,7 @@ export default function AdminDashboard() {
     const filteredSessions = useMemo(() => {
         let filtered = sessions;
         if (filter === "active") filtered = filtered.filter((s) => s.status === "active");
+        if (filter === "blocked") filtered = filtered.filter((s) => s.status === "blocked");
         if (filter === "paused") filtered = filtered.filter((s) => s.status === "paused");
         if (filter === "hot") filtered = filtered.filter((s) => getSafeStats(s).tarado >= 70);
         if (filter === "paid") filtered = filtered.filter((s) => Number(s.total_paid || 0) > 0);
@@ -271,36 +272,32 @@ export default function AdminDashboard() {
                     <div><p className="admin-eyebrow">Caixa de entrada</p><h1 className="admin-page-title">Conversas</h1><p className="admin-page-subtitle">Priorize quem está aguardando, acompanhe a trajetória e intervenha somente quando necessário.</p></div>
                     <p className="text-xs text-slate-500">{lastSync ? `Sincronizado ${formatTimeAgo(lastSync.toISOString())}` : 'Sincronizando dados...'}</p>
                 </header>
-                <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
-                <aside className="space-y-4 lg:sticky lg:top-[88px] lg:h-[calc(100vh-108px)]">
-                    <div className="admin-card p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Operação</p>
-                        <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="space-y-6">
+                <aside className="space-y-5">
+                    <div className="admin-overview"><div className="admin-overview-metrics">
                             <Metric label="Conversas" value={stats.total} />
                             <Metric label="Ativas" value={stats.active} accent="text-emerald-200" />
                             <Metric label="Aguardando" value={stats.waiting} accent="text-amber-200" />
-                            <Metric label="Quentes" value={stats.hot} accent="text-rose-200" />
+                            <Metric label="Quentes" value={stats.hot} accent="text-rose-200" /><Metric label="Bloquearam" value={sessions.filter(s => s.status === "blocked").length} />
                         </div>
-                        <div className="mt-3 rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3">
+                        <div className="admin-revenue">
                             <p className="text-xs text-emerald-200">Receita</p>
                             <p className="mt-1 text-xl font-semibold text-emerald-50">{money.format(stats.revenue)}</p>
                             <p className="text-xs text-emerald-200/70">{stats.paid} leads pagos</p>
                         </div>
                     </div>
 
-                    <div className="admin-card p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Filtros</p>
-                        <div className="mt-4 grid grid-cols-2 gap-2">
+                    <div className="admin-filterbar"><div className="admin-filter-tabs" aria-label="Filtrar conversas">
                             {[
                                 ["all", "Todos"],
                                 ["active", "Ativos"],
                                 ["paused", "Pausados"],
                                 ["hot", "Quentes"],
-                                ["paid", "Pagos"],
+                                ["paid", "Pagos"], ["blocked", "BLOQUEOU"],
                             ].map(([key, label]) => (
                                 <button
                                     key={key}
-                                    onClick={() => setFilter(key as any)}
+                                    onClick={() => setFilter(key as any)} aria-pressed={filter === key}
                                     className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${filter === key
                                         ? "border-cyan-300/40 bg-cyan-300/15 text-cyan-100"
                                         : "border-white/10 bg-black/20 text-slate-400 hover:text-slate-100"}`}
@@ -311,13 +308,13 @@ export default function AdminDashboard() {
                         </div>
                         <input
                             type="text"
-                            placeholder="Buscar nome, cidade, ID ou mensagem"
+                            aria-label="Buscar conversas" placeholder="Buscar nome ou ID..."
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             className="mt-4 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50"
                         />
                         <select
-                            value={phaseFilter}
+                            aria-label="Filtrar por fase" value={phaseFilter}
                             onChange={(e) => setPhaseFilter(e.target.value)}
                             className="mt-3 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-slate-100 outline-none transition focus:border-cyan-300/50"
                         >
@@ -333,7 +330,7 @@ export default function AdminDashboard() {
                     <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                         <div>
                             <p className="text-sm text-slate-400">Mostrando {filteredSessions.length} de {sessions.length} conversas</p>
-                            <h2 className="text-2xl font-semibold tracking-tight">Conversas recentes</h2>
+                            <h2 className="text-lg font-medium tracking-tight">Conversas recentes</h2>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                             {scoreMessage && <span className="text-xs text-cyan-200">{scoreMessage}</span>}
@@ -356,8 +353,8 @@ export default function AdminDashboard() {
                         </div>
                     </div>
 
-                    <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.035]">
-                        <div className="hidden grid-cols-[minmax(220px,1fr)_minmax(240px,1.25fr)_120px_220px_110px] border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 lg:grid">
+                    <div className="admin-card overflow-hidden">
+                        <div className="admin-lead-columns admin-lead-heading border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
                             <span>Lead</span>
                             <span>Ultima mensagem</span>
                             <span>Funil</span>
@@ -379,12 +376,12 @@ export default function AdminDashboard() {
                                 <Link
                                     key={session.id}
                                     href={`/admin/chat/${session.telegram_chat_id}`}
-                                    className="grid gap-3 border-b border-white/10 px-4 py-4 transition last:border-b-0 hover:bg-white/[0.055] lg:grid-cols-[minmax(220px,1fr)_minmax(240px,1.25fr)_120px_220px_110px] lg:items-center"
+                                    className="admin-lead-columns gap-4 border-b border-white/10 px-4 py-5 transition last:border-b-0 hover:bg-white/[0.025]"
                                 >
                                     <div className="min-w-0">
                                         <div className="flex items-center gap-2">
                                             <span className={`h-2.5 w-2.5 rounded-full ${session.status === "active" ? "bg-emerald-300" : "bg-rose-300"}`} />
-                                            <h3 className="truncate font-semibold text-slate-100">{session.user_name || "Desconhecido"}</h3>
+                                            <h3 className="truncate font-semibold text-slate-100">{session.status === "blocked" ? "Lead removido" : session.user_name || "Desconhecido"}</h3>
                                             {waiting && <span className="rounded-md bg-amber-300/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-100">RESPONDER</span>}
                                         </div>
                                         <p className="mt-1 truncate text-xs text-slate-500">
@@ -396,22 +393,24 @@ export default function AdminDashboard() {
                                     <div className="min-w-0">
                                         <p className="truncate text-sm text-slate-200">
                                             <span className="text-slate-500">{labelSender(last?.sender)} </span>
-                                            {cleanPreview(last?.content) || "Sem mensagem ainda"}
+                                            {session.status === "blocked" ? "BLOQUEOU · Histórico apagado" : cleanPreview(last?.content) || "Sem mensagem ainda"}
                                         </p>
                                         <p className="mt-1 text-xs text-slate-500">{formatTimeAgo(last?.created_at || session.last_message_at)}</p>
                                     </div>
 
                                     <div className="text-xs">
                                         <span className="rounded-md border border-white/10 bg-black/20 px-2 py-1 text-slate-300">
-                                            {funnelStep ? funnelStep.replace(/_/g, " ") : "INICIO"}
+                                            {session.status === 'blocked' ? '—' : funnelStep ? funnelStep.replace(/_/g, " ") : "INÍCIO"}
                                         </span>
                                     </div>
 
                                     <div className="grid grid-cols-3 gap-x-2 gap-y-2">
+                                        {session.status === 'blocked' ? <span className="col-span-3 text-xs text-slate-500">Dados removidos</span> : <>
                                         <MiniScoreBar label="🔥 Abertura" value={safeStats.tarado} color="bg-rose-400" />
                                         <MiniScoreBar label="💬 Conexão" value={safeStats.carente} color="bg-cyan-400" />
                                         <MiniScoreBar label="💰 Intenção" value={safeStats.financeiro} color="bg-emerald-400" />
                                         {scoreMeta && <p className="col-span-3 text-[10px] text-slate-600">Confiança {scoreMeta.confidence}% · {scoreMeta.message_count} mensagens</p>}
+                                        </>}
                                     </div>
 
                                     <div className="text-left lg:text-right">
@@ -498,6 +497,7 @@ function formatTimeAgo(dateString?: string) {
 }
 
 function translateStatus(status: string) {
+    if (status === "blocked") return "BLOQUEOU";
     if (status === "active") return "Ativo";
     if (status === "paused") return "Pausado";
     if (status === "closed") return "Fechado";

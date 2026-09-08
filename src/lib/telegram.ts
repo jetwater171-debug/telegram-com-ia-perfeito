@@ -1,4 +1,22 @@
 import { Telegraf } from 'telegraf';
+import { handleTelegramBlockedError, isTelegramBlockedError } from '@/lib/telegramMembership';
+
+const telegramBot = (token: string) => {
+    const bot = new Telegraf(token);
+    const callApi = bot.telegram.callApi.bind(bot.telegram);
+    bot.telegram.callApi = (async (...args: Parameters<typeof callApi>) => {
+        const startedAt = new Date().toISOString();
+        try { return await callApi(...args); }
+        catch (error) {
+            const payload = args[1] as { chat_id?: string | number };
+            if (payload?.chat_id !== undefined) {
+                await handleTelegramBlockedError(token, String(payload.chat_id), error, startedAt);
+            }
+            throw error;
+        }
+    }) as typeof bot.telegram.callApi;
+    return bot;
+};
 
 const REMOTE_MEDIA_TIMEOUT_MS = 15_000;
 const MAX_TELEGRAM_MEDIA_BYTES = 49 * 1024 * 1024;
@@ -41,10 +59,11 @@ const downloadRemoteMedia = async (url: string, fallbackFilename: string) => {
 export const sendTelegramMessage = async (token: string, chatId: string, text: string) => {
     if (!token) return;
     try {
-        const bot = new Telegraf(token);
+        const bot = telegramBot(token);
         await bot.telegram.sendMessage(chatId, text);
     } catch (e) {
         console.error("Failed to send text to Telegram:", e);
+        throw e;
     }
 };
 
@@ -56,11 +75,12 @@ export const sendTelegramPhoto = async (
     protection: TelegramMediaProtection = {},
 ) => {
     if (!token) throw new Error('Telegram sem token');
-    const bot = new Telegraf(token);
+    const bot = telegramBot(token);
     const options = mediaProtectionOptions(caption, protection);
     try {
         await bot.telegram.sendPhoto(chatId, photoUrl, options);
     } catch (firstError: any) {
+        if (isTelegramBlockedError(firstError)) throw firstError;
         if (isHttpUrl(photoUrl)) {
             try {
                 const upload = await downloadRemoteMedia(photoUrl, 'preview.jpg');
@@ -81,7 +101,7 @@ export const sendTelegramPhoto = async (
 // confirmar o request.
 export const sendTelegramMessageStrict = async (token: string, chatId: string, text: string) => {
     if (!token) throw new Error('Telegram sem token');
-    const bot = new Telegraf(token);
+    const bot = telegramBot(token);
     await bot.telegram.sendMessage(chatId, text);
 };
 
@@ -93,11 +113,12 @@ export const sendTelegramVideo = async (
     protection: TelegramMediaProtection = {},
 ) => {
     if (!token) throw new Error('Telegram sem token');
-    const bot = new Telegraf(token);
+    const bot = telegramBot(token);
     const options = mediaProtectionOptions(caption, protection);
     try {
         await bot.telegram.sendVideo(chatId, videoUrl, options);
     } catch (firstError: any) {
+        if (isTelegramBlockedError(firstError)) throw firstError;
         if (isHttpUrl(videoUrl)) {
             try {
                 const upload = await downloadRemoteMedia(videoUrl, 'preview.mp4');
@@ -116,7 +137,7 @@ export const sendTelegramVideo = async (
 export const sendTelegramAction = async (token: string, chatId: string, action: 'typing' | 'upload_photo' | 'upload_video' | 'find_location' | 'record_video' | 'record_voice' | 'upload_document' | 'choose_sticker' | 'upload_voice') => {
     if (!token) return;
     try {
-        const bot = new Telegraf(token);
+        const bot = telegramBot(token);
         await bot.telegram.sendChatAction(chatId, action);
     } catch (e) {
         console.error("Failed to send action to Telegram:", e);
@@ -130,7 +151,7 @@ export const sendTelegramCopyableCodeStrict = async (token: string, chatId: stri
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
     if (!escaped) throw new Error('Código copiável vazio');
-    const bot = new Telegraf(token);
+    const bot = telegramBot(token);
     await bot.telegram.sendMessage(chatId, `<code>${escaped}</code>`, { parse_mode: 'HTML' });
 };
 
@@ -144,7 +165,7 @@ export const sendTelegramCopyableCode = async (token: string, chatId: string, co
 
 export const sendTelegramVoice = async (token: string, chatId: string, audio: Buffer, caption?: string) => {
     if (!token) throw new Error('Telegram sem token');
-    const bot = new Telegraf(token);
+    const bot = telegramBot(token);
     return bot.telegram.sendVoice(chatId, { source: audio, filename: 'lari.ogg' }, caption ? { caption } : undefined);
 };
 
@@ -170,7 +191,7 @@ export const getTelegramFileDownloadUrl = (token: string, filePath: string) => {
 export const approveChatJoinRequest = async (token: string, chatId: number | string, userId: number | string) => {
     if (!token) return false;
     try {
-        const bot = new Telegraf(token);
+        const bot = telegramBot(token);
         await bot.telegram.approveChatJoinRequest(chatId, Number(userId));
         return true;
     } catch (e) {
@@ -182,7 +203,7 @@ export const approveChatJoinRequest = async (token: string, chatId: number | str
 export const declineChatJoinRequest = async (token: string, chatId: number | string, userId: number | string) => {
     if (!token) return false;
     try {
-        const bot = new Telegraf(token);
+        const bot = telegramBot(token);
         await bot.telegram.declineChatJoinRequest(chatId, Number(userId));
         return true;
     } catch (e) {

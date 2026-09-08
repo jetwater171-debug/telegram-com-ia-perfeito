@@ -293,7 +293,7 @@ export default function AdminChatPage() {
 
     const sendManualMessage = async () => {
         const text = input.trim();
-        if (!text || !session || !telegramChatId) return;
+        if (!text || !session || !telegramChatId || session.status === 'blocked') return;
 
         if (session.status !== "paused") {
             await supabase.from("sessions").update({ status: "paused" }).eq("id", session.id);
@@ -301,12 +301,14 @@ export default function AdminChatPage() {
         }
 
         try {
-            setInput("");
-            await fetch("/api/admin/send", {
+            const response = await fetch("/api/admin/send", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ chatId: telegramChatId, text }),
             });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Não foi possível enviar a mensagem.');
+            setInput("");
         } catch (error) {
             setActionMsg(`Erro ao enviar: ${String(error)}`);
         }
@@ -351,7 +353,7 @@ export default function AdminChatPage() {
     };
 
     const toggleBot = async () => {
-        if (!session) return;
+        if (!session || session.status === "blocked") return;
         const newStatus = session.status === "paused" ? "active" : "paused";
         await supabase.from("sessions").update({ status: newStatus }).eq("id", session.id);
         setSession({ ...session, status: newStatus });
@@ -417,7 +419,7 @@ export default function AdminChatPage() {
                             <div className="min-w-0">
                                 <h1 className="truncate text-base font-semibold">{session?.user_name || "Carregando..."}</h1>
                                 <p className="truncate text-xs text-slate-400">
-                                    {leadTyping ? "lead acabou de mandar mensagem" : session?.status === "active" ? "IA ativa" : "IA pausada"} / {lastSync ? `sync ${formatTimeAgo(lastSync.toISOString())}` : "sync pendente"}
+                                    {session?.status === "blocked" ? "BLOQUEOU · Histórico apagado" : leadTyping ? "lead acabou de mandar mensagem" : session?.status === "active" ? "IA ativa" : "IA pausada"} / {lastSync ? `sync ${formatTimeAgo(lastSync.toISOString())}` : "sync pendente"}
                                 </p>
                             </div>
                         </div>
@@ -440,7 +442,7 @@ export default function AdminChatPage() {
                             </button>
                             <button
                                 onClick={callSingleLead}
-                                disabled={reengaging}
+                                disabled={reengaging || session?.status === "blocked"}
                                 className="rounded-lg border border-pink-400/30 bg-pink-400/15 px-3 py-2 text-xs font-semibold text-pink-100 transition hover:border-pink-400/60 disabled:opacity-50"
                             >
                                 {reengaging ? "chamando..." : "chamar lead"}
@@ -448,12 +450,12 @@ export default function AdminChatPage() {
                             <button
                                 onClick={forceSale}
                                 className="rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-100 transition hover:border-amber-300/60"
-                                disabled={forceLoading}
+                                disabled={forceLoading || session?.status === "blocked"}
                             >
                                 {forceLoading ? "forcando..." : "forcar venda"}
                             </button>
                             <button
-                                onClick={toggleBot}
+                                onClick={toggleBot} disabled={session?.status === "blocked"}
                                 className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-100 transition hover:border-cyan-300/40"
                             >
                                 {session?.status === "paused" ? "Ativar IA" : "Pausar IA"}
@@ -531,7 +533,7 @@ export default function AdminChatPage() {
                         })}
 
                         {!loading && !loadError && visibleMessages.length === 0 && (
-                            <div className="p-10 text-center text-slate-500">Nenhuma mensagem visivel nesta conversa.</div>
+                            <div className="p-10 text-center text-slate-500">{session?.status === "blocked" ? "Este lead bloqueou a Lari. O histórico e os dados vinculados foram apagados automaticamente." : "Nenhuma mensagem visível nesta conversa."}</div>
                         )}
 
                         {leadTyping && (
@@ -556,12 +558,12 @@ export default function AdminChatPage() {
                                 }
                             }}
                             className="max-h-36 min-h-[48px] w-full resize-none rounded-lg border border-white/10 bg-black/35 px-3 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50"
-                            placeholder="Enviar mensagem manual..."
+                            disabled={session?.status === "blocked"} aria-label="Mensagem manual" placeholder={session?.status === "blocked" ? "Este lead bloqueou o bot" : "Enviar mensagem manual..."}
                             rows={2}
                         />
                         <button
                             onClick={sendManualMessage}
-                            disabled={!input.trim()}
+                            disabled={!input.trim() || session?.status === "blocked"}
                             className={`rounded-lg border px-4 py-3 text-sm font-semibold transition ${input.trim()
                                 ? "border-cyan-300/40 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/20"
                                 : "border-white/10 text-slate-600"}`}
@@ -586,7 +588,7 @@ export default function AdminChatPage() {
                             </div>
                         </div>
                         <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                            <Info label="Status" value={session?.status === "active" ? "Ativo" : "Pausado"} tone={session?.status === "active" ? "text-emerald-200" : "text-rose-200"} />
+                            <Info label="Status" value={session?.status === "blocked" ? "BLOQUEOU" : session?.status === "active" ? "Ativo" : "Pausado"} tone={session?.status === "active" ? "text-emerald-200" : "text-rose-200"} />
                             <Info label="Funil" value={effectiveFunnelStep ? effectiveFunnelStep.replace(/_/g, " ") : "INICIO"} />
                             <Info label="Cidade" value={session?.user_city || "N/A"} />
                             <Info label="Device" value={session?.device_type || "N/A"} />

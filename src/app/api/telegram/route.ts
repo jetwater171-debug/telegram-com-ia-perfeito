@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createHash } from 'node:crypto';
+import { applyTelegramMembership, validTelegramWebhookSecret } from '@/lib/telegramMembership';
 import { supabaseServer as supabase } from '@/lib/supabaseServer';
 import { approveChatJoinRequest } from '@/lib/telegram';
 import { appendLeadEventSafe, markAdultVerificationSafe } from '@/lib/brain/eventStore';
@@ -116,6 +117,28 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
     const body = await req.json();
+
+    if (body.my_chat_member) {
+        const event = body.my_chat_member;
+        if (event.chat?.type !== 'private') return NextResponse.json({ ok: true });
+        const { data: setting } = await supabase.from('bot_settings').select('value').eq('key', 'telegram_bot_token').single();
+        if (!setting?.value) return NextResponse.json({ error: 'telegram_token_unavailable' }, { status: 503 });
+        if (!validTelegramWebhookSecret(req.headers.get('x-telegram-bot-api-secret-token'), setting.value)) {
+            return NextResponse.json({ error: 'invalid_webhook_secret' }, { status: 401 });
+        }
+        const status = event.new_chat_member?.status;
+        if (status !== 'kicked' && status !== 'member') return NextResponse.json({ ok: true });
+        if (!Number.isSafeInteger(event.date) || !Number.isSafeInteger(body.update_id)) {
+            return NextResponse.json({ error: 'invalid_membership_event' }, { status: 400 });
+        }
+        try {
+            await applyTelegramMembership(String(event.chat.id), status === 'kicked', new Date(event.date * 1000).toISOString(), body.update_id);
+            return NextResponse.json({ ok: true });
+        } catch {
+            // Do not acknowledge a partial/failed cleanup: Telegram must retry.
+            return NextResponse.json({ error: 'membership_cleanup_failed' }, { status: 503 });
+        }
+    }
 
     // 0. Process Chat Join Request (Aprovacao automatica de leads no canal / grupo)
     if (body.chat_join_request) {
@@ -272,6 +295,26 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ error: 'DB Error' }, { status: 500 });
             }
             session = newSession;
+        }
+
+        if (session.status === 'blocked') {
+            // Telegram may deliver /start ahead of my_chat_member. A verified
+            // newer inbound message is also evidence that the user unblocked.
+            if (!validTelegramWebhookSecret(req.headers.get('x-telegram-bot-api-secret-token'), botToken)
+                || !Number.isSafeInteger(message.date) || !Number.isSafeInteger(body.update_id)) {
+                return NextResponse.json({ ok: true, status: 'blocked' });
+            }
+            const changed = await applyTelegramMembership(chatId, false, new Date(message.date * 1000).toISOString(), body.update_id);
+            if (!changed) return NextResponse.json({ ok: true, status: 'blocked' });
+            const { data: freshSession, error: freshError } = await supabase.from('sessions').select('*').eq('telegram_chat_id', chatId).single();
+            if (freshError || !freshSession) return NextResponse.json({ error: 'resume_failed' }, { status: 503 });
+            session = freshSession;
+        }
+        if (session.status === 'closed' && session.telegram_membership_at) {
+            if (message.date * 1000 < new Date(session.telegram_membership_at).getTime()) return NextResponse.json({ ok: true });
+            const { error: resumeError } = await supabase.from('sessions').update({ status: 'active', user_name: senderName }).eq('id', session.id).eq('status', 'closed');
+            if (resumeError) return NextResponse.json({ error: 'resume_failed' }, { status: 503 });
+            session.status = 'active';
         }
 
         // Preserva o perfil que o próprio Telegram entrega. Esses campos ajudam

@@ -22,6 +22,7 @@ const routes = [
     { href: "/admin/scripts", label: "Instruções", icon: "script" },
     { href: "/admin/variants", label: "Testes", icon: "flask" },
     { href: "/admin/ai", label: "Inteligência", icon: "brain" },
+    { href: "/admin/ai/capacity", label: "Capacidade", icon: "chart" },
     { href: "/admin/payments", label: "Pagamentos", icon: "pix" },
     { href: "/admin/settings", label: "Ajustes", icon: "settings" },
 ];
@@ -43,99 +44,73 @@ const Icon = ({ name }: { name: string }) => {
 
 export default function AdminTopbar() {
     const pathname = usePathname();
-    const hidden = pathname === "/admin/login" || pathname.startsWith("/admin/chat/");
     const router = useRouter();
     const [health, setHealth] = useState<Health | null>(null);
     const [healthOpen, setHealthOpen] = useState(false);
-    const mountedRef = useRef(true);
-
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [searchOpen, setSearchOpen] = useState(false);
+    const [query, setQuery] = useState('');
+    const searchRef = useRef<HTMLInputElement>(null);
+    const triggerRef = useRef<HTMLButtonElement>(null);
+    const hidden = pathname === '/admin/login';
     const loadHealth = useCallback(async () => {
-        try {
-            const data = await adminFetchJson<Health>("/api/admin/health");
-            if (mountedRef.current) setHealth(data);
-        } catch {
-            if (mountedRef.current) setHealth((current) => current ? { ...current, ok: false, status: "degraded" } : null);
-        }
+        try { setHealth(await adminFetchJson<Health>('/api/admin/health')); }
+        catch { setHealth(null); }
     }, []);
-
     useEffect(() => {
         if (hidden) return;
-        mountedRef.current = true;
         const kickoff = window.setTimeout(() => void loadHealth(), 0);
-        const timer = window.setInterval(loadHealth, 30_000);
-        return () => { mountedRef.current = false; window.clearTimeout(kickoff); window.clearInterval(timer); };
+        const timer = window.setInterval(loadHealth, 60_000);
+        return () => { window.clearTimeout(kickoff); window.clearInterval(timer); };
     }, [hidden, loadHealth]);
-
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); setSearchOpen(v => !v); }
+            if (e.key === 'Escape') { setSearchOpen(false); setMenuOpen(false); setHealthOpen(false); triggerRef.current?.focus(); }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, []);
+    useEffect(() => { if (searchOpen) searchRef.current?.focus(); }, [searchOpen]);
     if (hidden) return null;
-
-    const logout = async () => {
-        await fetch("/api/admin/logout", { method: "POST" });
-        router.push("/admin/login");
-        router.refresh();
-    };
-    const statusLabel = !health ? "Verificando" : health.status === "healthy" ? "Tudo operacional" : health.status === "attention" ? "Atenção" : "Instabilidade";
-    const statusColor = !health ? "bg-slate-400" : health.status === "healthy" ? "bg-emerald-300" : health.status === "attention" ? "bg-amber-300" : "bg-rose-300";
-
-    return (
-        <header className="admin-topbar">
-            <div className="relative mx-auto flex w-full max-w-[1580px] flex-col gap-3 px-4 py-3 2xl:flex-row 2xl:items-center 2xl:px-6">
-                <div className="flex items-center justify-between gap-3">
-                    <Link href="/admin" className="group flex shrink-0 items-center gap-3 2xl:mr-4">
-                        <span className="relative flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-cyan-200 via-emerald-300 to-teal-500 text-sm font-black text-slate-950 shadow-[0_12px_35px_-12px_rgba(45,212,191,.75)]">
-                            LM<span className="absolute inset-x-2 bottom-1 h-px bg-white/50" />
-                        </span>
-                        <span>
-                            <span className="block text-sm font-semibold tracking-tight text-white">Central da Lari</span>
-                            <span className="block text-[11px] text-slate-500">operação & inteligência</span>
-                        </span>
-                    </Link>
-                    <button type="button" onClick={() => setHealthOpen((open) => !open)} className="admin-health-pill 2xl:hidden">
-                        <span className={`h-2 w-2 rounded-full ${statusColor}`} /> {statusLabel}
-                    </button>
-                </div>
-
-                <nav className="admin-nav-scroll" aria-label="Navegação administrativa">
-                    {routes.map((route) => {
-                        const active = route.href === "/admin" ? pathname === route.href : pathname.startsWith(route.href);
-                        return (
-                            <Link key={route.href} href={route.href} className={`admin-nav-item ${active ? "admin-nav-item-active" : ""}`}>
-                                <Icon name={route.icon} />
-                                <span>{route.label}</span>
-                            </Link>
-                        );
+    const activeRoute = routes.find(r => r.href === pathname) || routes[0];
+    const healthLabel = !health ? 'Sem confirmação' : health.status === 'healthy' ? 'Tudo operacional' : health.status === 'attention' ? 'Precisa de atenção' : 'Instabilidade';
+    const navigate = () => { setMenuOpen(false); setSearchOpen(false); setQuery(''); };
+    const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const results = routes.filter(r => normalize(r.label).includes(normalize(query)));
+    return <>
+        <a href="#admin-content" className="admin-skip-link">Pular para o conteúdo</a>
+        {menuOpen && <button className="admin-mobile-scrim" aria-label="Fechar navegação" onClick={() => setMenuOpen(false)} />}
+        <aside className={`admin-sidebar ${menuOpen ? 'is-open' : ''}`} id="admin-navigation">
+            <Link href="/admin" className="admin-brand" onClick={navigate}>
+                <span className="admin-monogram">L<span>•</span></span>
+                <span><strong>Lari<span className="admin-brand-dot">.</span></strong><small>BUSINESS SUITE</small></span>
+            </Link>
+            <div className="admin-workspace-switch"><span className="admin-avatar">LM</span><span><b>Central da Lari</b><small>Seu espaço de trabalho</small></span><span className="text-slate-500">⌄</span></div>
+            <nav aria-label="Navegação principal">
+                {[{ label: 'OPERAÇÃO', items: routes.slice(0, 4) }, { label: 'INTELIGÊNCIA', items: routes.slice(4, 8) }, { label: 'GESTÃO', items: routes.slice(8) }].map(group => <div className="admin-nav-group" key={group.label}>
+                    <p>{group.label}</p>
+                    {group.items.map(route => {
+                        const active = pathname === route.href || (route.href === '/admin' && pathname.startsWith('/admin/chat/'));
+                        return <Link key={route.href} href={route.href} onClick={navigate} aria-current={active ? 'page' : undefined} className={`admin-nav-item ${active ? 'admin-nav-item-active' : ''}`}><Icon name={route.icon} /><span>{route.label}</span>{active && <span className="admin-active-dot" />}</Link>;
                     })}
-                </nav>
-
-                <div className="relative hidden shrink-0 items-center gap-2 2xl:flex">
-                    <button type="button" onClick={() => setHealthOpen((open) => !open)} className="admin-health-pill">
-                        <span className={`h-2 w-2 rounded-full ${statusColor}`} />
-                        <span>{statusLabel}</span>
-                    </button>
-                    <button onClick={logout} className="rounded-xl border border-white/10 px-3 py-2 text-xs font-semibold text-slate-500 transition hover:border-rose-300/30 hover:bg-rose-300/5 hover:text-rose-200">Sair</button>
+                </div>)}
+            </nav>
+            <div className="admin-sidebar-footer"><div className="admin-avatar">A</div><span><b>Administrador</b><small>Controle da operação</small></span><button aria-label="Sair do painel" title="Sair do painel" onClick={async () => { await fetch('/api/admin/logout', { method: 'POST' }); router.push('/admin/login'); router.refresh(); }}>↗</button></div>
+        </aside>
+        <header className="admin-topbar">
+            <div className="admin-topbar-inner">
+                <button className="admin-menu-toggle" aria-label="Abrir navegação" aria-expanded={menuOpen} aria-controls="admin-navigation" onClick={() => setMenuOpen(v => !v)}>☰</button>
+                <div className="admin-breadcrumb"><span>Workspace</span><span>/</span><b>{pathname.startsWith('/admin/chat/') ? 'Conversa' : activeRoute.label}</b></div>
+                <div className="admin-topbar-actions">
+                    <button ref={triggerRef} className="admin-search-trigger" onClick={() => setSearchOpen(true)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><span>Ir para...</span><kbd>Ctrl K</kbd></button>
+                    <button className="admin-health-pill" aria-expanded={healthOpen} onClick={() => setHealthOpen(v => !v)}><span className={`admin-status-dot ${health?.status === 'healthy' ? 'is-healthy' : health ? 'is-warning' : ''}`} /><span>{healthLabel}</span></button>
                 </div>
-
-                {healthOpen && (
-                    <div className="admin-health-popover">
-                        <div className="flex items-start justify-between gap-4">
-                            <div><p className="text-xs font-semibold uppercase tracking-[.16em] text-cyan-200">Saúde operacional</p><p className="mt-1 text-sm text-slate-400">checagem real do backend</p></div>
-                            <button onClick={() => void loadHealth()} className="rounded-lg border border-white/10 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-white/5">Atualizar</button>
-                        </div>
-                        <div className="mt-4 grid grid-cols-2 gap-2">
-                            {health && Object.entries(health.checks).map(([key, value]) => <HealthCheck key={key} label={key} ok={value} />)}
-                        </div>
-                        <div className="mt-3 rounded-xl border border-white/8 bg-black/20 p-3 text-xs text-slate-400">
-                            <p className="font-semibold text-slate-200">{health?.brain?.provider || "—"} · {health?.brain?.model || "checando modelo"}</p>
-                            <p className="mt-1">Última ação: {health?.brain?.lastAction || "—"} · {health?.latencyMs ?? "—"}ms</p>
-                            <p className="mt-1">{health?.counters?.events || 0} eventos · {health?.counters?.activeSessions || 0} conversas ativas</p>
-                        </div>
-                    </div>
-                )}
             </div>
+            {healthOpen && <div className="admin-health-popover"><div className="flex items-center justify-between"><b className="text-sm">Status dos serviços</b><button className="text-xs text-cyan-200" onClick={() => void loadHealth()}>Atualizar</button></div><p className="mt-2 text-xs text-slate-400">{healthLabel}</p><div className="mt-4 grid grid-cols-2 gap-3">{health && Object.entries(health.checks).map(([key, ok]) => <div key={key} className="flex items-center gap-2 text-xs"><span className={`admin-status-dot ${ok ? 'is-healthy' : 'is-warning'}`} />{{ database: 'Banco de dados', eventStore: 'Memória', deepseek: 'Modelo de IA', telegram: 'Telegram' }[key] || key}</div>)}</div></div>}
         </header>
-    );
-}
-
-function HealthCheck({ label, ok }: { label: string; ok: boolean }) {
-    const names: Record<string, string> = { database: "Banco", eventStore: "Memória V2", deepseek: "DeepSeek", telegram: "Telegram" };
-    return <div className="flex items-center gap-2 rounded-lg border border-white/8 bg-white/[.035] px-3 py-2 text-xs text-slate-300"><span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-emerald-300" : "bg-rose-300"}`} />{names[label] || label}</div>;
+        {searchOpen && <div className="admin-command-backdrop" onClick={() => { setSearchOpen(false); triggerRef.current?.focus(); }}><div role="dialog" aria-modal="true" aria-label="Ir para uma página" className="admin-command" onClick={e => e.stopPropagation()} onKeyDown={e => {
+            if (e.key === 'Tab') { const elements = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('input,button,a')); const first=elements[0], last=elements.at(-1); if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); } }
+        }}><div className="admin-command-input"><input ref={searchRef} aria-label="Buscar página" placeholder="O que você quer gerenciar?" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if(e.key === 'Enter' && results[0]) { router.push(results[0].href); navigate(); } }} /><button aria-label="Fechar busca" onClick={() => { setSearchOpen(false); triggerRef.current?.focus(); }}>Esc</button></div><div className="admin-command-results">{results.map(r => <Link key={r.href} href={r.href} onClick={navigate}><Icon name={r.icon} />{r.label}<span>↗</span></Link>)}{!results.length && <p>Nenhuma página encontrada.</p>}</div><footer>Escolha uma página para continuar</footer></div></div>}
+    </>;
 }

@@ -22,6 +22,7 @@ export async function POST(req: NextRequest) {
     const { data: session } = await supabase.from('sessions').select('id, status').eq('telegram_chat_id', chatId).single();
 
     if (!session) return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+    if (session.status === 'blocked') return NextResponse.json({ error: 'Este lead bloqueou o bot.' }, { status: 409 });
 
     // 2. Send to Telegram
     await sendTelegramMessage(botToken, chatId, text);

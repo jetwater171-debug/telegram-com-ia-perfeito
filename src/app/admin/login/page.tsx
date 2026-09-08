@@ -74,11 +74,11 @@ function LoginForm() {
 function LoginShell({ children }: { children?: React.ReactNode }) {
     return (
         <main className="flex min-h-screen items-center justify-center bg-[#080b10] px-4 text-slate-100">
-            <div className="w-full max-w-sm rounded-lg border border-white/10 bg-white/[0.04] p-6 shadow-2xl">
-                <div className="mb-6">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200/70">Admin</p>
-                    <h1 className="mt-2 text-2xl font-semibold">Painel protegido</h1>
-                    <p className="mt-2 text-sm text-slate-400">Digite a senha para acessar as conversas e configuracoes.</p>
+            <div className="admin-login-card">
+                <div className="admin-brand"><span className="admin-monogram">L<span>•</span></span><span><strong>Lari.</strong><small>BUSINESS SUITE</small></span></div><div className="mb-6">
+                    <p className="admin-eyebrow">Seu espaço de trabalho</p>
+                    <h1 className="admin-page-title">Bem-vindo de volta.</h1>
+                    <p className="admin-page-subtitle">Tudo que você precisa para cuidar da operação, em um só lugar.</p>
                 </div>
                 {children}
             </div>

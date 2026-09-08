@@ -21,6 +21,7 @@
     "verify:payment-reconciliation": "node scripts/verify-payment-reconciliation-contract.cjs",
     "verify:ai-tools": "node scripts/verify-ai-tools-contract.cjs",
     "verify:telegram-worker-retry": "node scripts/verify-telegram-worker-retry.cjs",
+    "verify:telegram-blocked": "node scripts/verify-telegram-blocked-leads.cjs",
     "verify:elevenlabs-voice": "node scripts/verify-elevenlabs-voice.cjs",
     "verify:elevenlabs-budget": "node scripts/verify-elevenlabs-budget.cjs",
     "verify:bai-router": "node scripts/verify-bai-chat-router.cjs && node scripts/verify-bai-media-routing.cjs && node scripts/verify-ai-gateway-router.cjs",
@@ -41,6 +42,7 @@
     "telegraf": "^4.16.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

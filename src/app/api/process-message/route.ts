@@ -648,6 +648,8 @@ export async function POST(req: NextRequest) {
     const session = sessionResult.data;
     if (!session) return NextResponse.json({ error: 'Sessão não encontrada' });
 
+    if (session.status === 'blocked') return NextResponse.json({ status: 'blocked' });
+
     if (!force && session.status && session.status !== 'active') {
         return NextResponse.json({ status: 'paused' });
     }

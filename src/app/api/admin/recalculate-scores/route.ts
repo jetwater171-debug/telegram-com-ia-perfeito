@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
     try {
         const body = await req.json().catch(() => ({}));
         const sessionId = String(body?.sessionId || "").trim();
-        let query = supabase.from("sessions").select("id,total_paid,funnel_step");
+        let query = supabase.from("sessions").select("id,total_paid,funnel_step").neq("status", "blocked");
         if (sessionId) query = query.eq("id", sessionId);
 
         const { data: sessions, error } = await query;

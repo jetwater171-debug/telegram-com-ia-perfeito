@@ -219,11 +219,11 @@ export default function AdminPreviewsPage() {
     return (
         <main className="min-h-screen bg-[#080c13] px-4 py-8 text-slate-100 lg:px-8">
             <div className="mx-auto max-w-[1500px] space-y-7">
-                <section className="overflow-hidden rounded-3xl border border-cyan-300/15 bg-gradient-to-br from-cyan-300/[0.08] via-white/[0.03] to-fuchsia-400/[0.05] p-6 lg:p-8">
+                <section className="admin-page-header">
                     <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
                         <div>
-                            <div className="mb-3 inline-flex rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-200">Catálogo inteligente</div>
-                            <h1 className="text-3xl font-black tracking-tight lg:text-4xl">Prévias da Larissa</h1>
+                            <div className="admin-eyebrow">Catálogo inteligente</div>
+                            <h1 className="admin-page-title">Biblioteca de prévias</h1>
                             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">Envie várias imagens. A IA descreve pose, roupa, cenário, enquadramento, acessórios e situações em que cada prévia combina.</p>
                         </div>
                         <div className="grid grid-cols-3 gap-2 text-center">
@@ -236,9 +236,9 @@ export default function AdminPreviewsPage() {
 
                 {message && <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-100">{message}</div>}
 
-                <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
+                <div className="grid gap-6 2xl:grid-cols-[380px_minmax(0,1fr)]">
                     <div className="space-y-6">
-                        <section className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+                        <section className="admin-card p-5">
                             <div className="flex items-center justify-between">
                                 <div><h2 className="font-bold">Enviar novo lote</h2><p className="mt-1 text-xs text-slate-500">Até 20 arquivos por vez</p></div>
                                 <span className="rounded-full bg-emerald-300/10 px-3 py-1 text-xs font-semibold text-emerald-200">análise automática</span>
@@ -271,7 +271,7 @@ export default function AdminPreviewsPage() {
                             <button disabled={loading || files.length === 0} onClick={upload} className="mt-4 w-full rounded-2xl bg-cyan-300 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40">{loading ? "Analisando e salvando..." : `Analisar e salvar ${files.length || ""}`}</button>
                         </section>
 
-                        <section className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+                        <section className="admin-card p-5">
                             <div className="flex items-center justify-between"><h2 className="font-bold">Modelos de visão</h2><span className={`h-2.5 w-2.5 rounded-full ${modelSettings.openRouterConfigured ? "bg-emerald-300" : "bg-rose-300"}`} /></div>
                             <p className="mt-1 text-xs leading-5 text-slate-500">O segundo modelo entra se o principal falhar ou recusar a análise.</p>
                             <label className="mt-4 block text-[11px] font-semibold uppercase tracking-wider text-slate-500">Principal</label>
@@ -319,7 +319,7 @@ export default function AdminPreviewsPage() {
                             </div>
                         </section>
 
-                        <section className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 lg:p-6">
+                        <section className="admin-card p-5 lg:p-6">
                             <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center"><div><h2 className="text-lg font-bold">Biblioteca visual</h2><p className="mt-1 text-xs text-slate-500">O cérebro lê estes metadados para escolher a prévia.</p></div><div className="flex flex-wrap gap-2"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="buscar pose, roupa, cenário..." className="field w-full sm:w-72" /><label className="flex items-center gap-2 rounded-xl border border-white/10 px-3 text-xs text-slate-400"><input type="checkbox" checked={showDisabled} onChange={(event) => setShowDisabled(event.target.checked)} /> inativas</label></div></div>
 
                             <div className="mt-5 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
