@@ -3,7 +3,7 @@
 
 create table if not exists public.ai_provider_credentials (
     id text primary key,
-    provider text not null check (provider in ('bai','gemini','groq','nvidia','cloudflare','mistral','openrouter','cerebras','custom')),
+    provider text not null check (provider in ('bai','gemini','groq','nvidia','cloudflare','mistral','openrouter','cerebras','custom','roteia')),
     label text not null,
     project_id text,
     account_id text,

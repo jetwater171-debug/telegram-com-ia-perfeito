@@ -800,7 +800,7 @@ const boundedRetryDelayMs = (error: unknown, attempt = 0) => {
 };
 
 type AiRole = "strategy" | "draft" | "review" | "evaluator";
-type AiProvider = "bai" | "openrouter" | "gemini" | "groq" | "nvidia" | "mistral" | "cerebras" | "cloudflare" | "custom";
+type AiProvider = "roteia" | "bai" | "openrouter" | "gemini" | "groq" | "nvidia" | "mistral" | "cerebras" | "cloudflare" | "custom";
 
 type AiGatewayConfig = {
     provider: AiProvider;
@@ -882,6 +882,8 @@ const AI_SETTING_KEYS = [
     "groq_model",
     "groq_starter_model",
     "nvidia_api_key",
+    "roteia_api_key",
+    "roteia_model",
     "nvidia_model",
     "mistral_api_key",
     "mistral_model",
@@ -905,7 +907,7 @@ const ROLE_ENV_KEYS: Record<AiRole, string> = {
     evaluator: "AI_EVALUATOR_MODEL_ORDER",
 };
 
-const AUTO_GATEWAY_PROVIDERS: AiProvider[] = ['bai', 'gemini', 'nvidia'];
+const AUTO_GATEWAY_PROVIDERS: AiProvider[] = ['bai', 'gemini', 'nvidia', 'roteia'];
 const DEFAULT_PROVIDER_ORDER = "nvidia,gemini,bai";
 const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
     strategy: DEFAULT_OPENROUTER_MODEL,
@@ -979,7 +981,7 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
                 // A preferência salva na credencial muda a ordem, mas nunca
                 // prende a chave em um único modelo: todos os fallbacks do
                 // catálogo continuam disponíveis.
-                const rawModel = String(models[role] || credential.model || '').trim();
+                const rawModel = String((provider === 'roteia' ? credential.model || models[role] : models[role] || credential.model) || '').trim();
                 const model = provider === 'gemini'
                     ? normalizeGeminiModelName(rawModel, DEFAULT_GEMINI_MODEL)
                     : provider === 'groq'
@@ -1043,6 +1045,14 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
         weight: Math.max(20, 60 - index * 6),
         modelPriority: index,
     }));
+
+    const roteiaModel = configured('roteia_model', 'ROTEIA_MODEL', 'deepseek/deepseek-v4-flash');
+    addProvider({
+        provider: 'roteia', apiKey: configured('roteia_api_key', 'ROTEIA_API_KEY'),
+        baseUrl: 'https://api.roteia.ai/v1',
+        models: { strategy: roteiaModel, draft: roteiaModel, review: roteiaModel, evaluator: roteiaModel },
+        tiers: ['starter', 'buyer', 'premium', 'elite'], weight: 40,
+    });
 
     OPENROUTER_MODEL_FALLBACK_ORDER.forEach((openRouterModel, index) => addProvider({
         provider: 'openrouter',
@@ -1211,7 +1221,7 @@ const parseAiModelEntry = (entry: string, role: AiRole, settings: AiRuntimeSetti
         const model = getRoleProviderModel(role, provider, settings);
         return { provider, model, label: `${provider}:${model}` };
     }
-    if (["bai", "groq", "nvidia", "mistral", "cerebras", "cloudflare", "custom"].includes(providerOnly)) return null;
+    if (["roteia", "bai", "groq", "nvidia", "mistral", "cerebras", "cloudflare", "custom"].includes(providerOnly)) return null;
 
     const providerMatch = trimmed.match(/^(openrouter|gemini):(.+)$/i);
     if (!providerMatch) {
@@ -1480,7 +1490,7 @@ const callOpenRouterJson = async <T,>(
                 : 1_400,
     };
     const deepSeekV4 = /deepseek-v4/i.test(String(gateway.model || ''));
-    if (deepSeekV4 && gateway.provider !== 'nvidia') {
+    if (deepSeekV4 && gateway.provider !== 'nvidia' && gateway.provider !== 'roteia') {
         const criticalTurn = /\b(pix|pagar|pagamento|pre[cç]o|valor|caro|desconto|comprar|comprovante|contradi|reclam|n[aã]o quero|generate_pix_payment|check_payment_status|send_(?:custom_)?preview|send_voice_reply|payment_details|preview_id)\b/i.test(userContent);
         if (role === 'evaluator') {
             body.reasoning_effort = 'max';

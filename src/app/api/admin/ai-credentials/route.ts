@@ -13,7 +13,7 @@ import {
 import { DEFAULT_NVIDIA_MODEL } from "@/lib/aiModels";
 
 export const dynamic = "force-dynamic";
-const ACTIVE_ROUTER_PROVIDERS = new Set<AiCredentialProvider>(["bai", "gemini", "nvidia"]);
+const ACTIVE_ROUTER_PROVIDERS = new Set<AiCredentialProvider>(["bai", "gemini", "nvidia", "roteia"]);
 
 const cleanText = (value: unknown, max = 500) => String(value || "").trim().slice(0, max);
 const nullablePositive = (value: unknown) => {
@@ -29,7 +29,7 @@ const nullableDecimal = (value: unknown) => {
 
 const loadLegacySettings = async () => {
     const { data } = await supabase.from("bot_settings").select("key,value").in("key", [
-        "bai_api_key", "gemini_api_key", "groq_api_key", "nvidia_api_key",
+        "roteia_api_key", "bai_api_key", "gemini_api_key", "groq_api_key", "nvidia_api_key",
         "cloudflare_ai_api_token", "mistral_api_key", "openrouter_api_key",
         "cerebras_api_key", "ai_custom_gateway_api_key",
     ]);
@@ -71,15 +71,15 @@ const testCredential = async (credential: Awaited<ReturnType<typeof loadAiCreden
         if (credential.provider === "gemini") {
             url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(credential.apiKey)}`;
             init = { signal: controller.signal };
-        } else if (credential.provider === "nvidia") {
-            url = `${credential.baseUrl || "https://integrate.api.nvidia.com/v1"}/chat/completions`;
+        } else if (credential.provider === "nvidia" || credential.provider === "roteia") {
+            url = `${credential.provider === "roteia" ? "https://api.roteia.ai/v1" : credential.baseUrl || "https://integrate.api.nvidia.com/v1"}/chat/completions`;
             init = {
                 method: "POST",
                 headers: { Authorization: `Bearer ${credential.apiKey}`, "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    model: credential.model || DEFAULT_NVIDIA_MODEL,
+                    model: credential.model || (credential.provider === "roteia" ? "deepseek/deepseek-v4-flash" : DEFAULT_NVIDIA_MODEL),
                     messages: [{ role: "user", content: "Responda apenas OK" }],
-                    max_tokens: 2,
+                    max_tokens: credential.provider === "roteia" ? 128 : 2,
                     temperature: 0,
                 }),
                 signal: controller.signal,
@@ -91,6 +91,10 @@ const testCredential = async (credential: Awaited<ReturnType<typeof loadAiCreden
         const response = await fetch(url, init);
         const responseText = await response.text();
         if (!response.ok) throw new Error(`http_${response.status}: ${responseText}`);
+        if (credential.provider === "roteia") {
+            const payload = JSON.parse(responseText);
+            if (!String(payload?.choices?.[0]?.message?.content || "").trim()) throw new Error("Modelo retornou uma resposta vazia");
+        }
         let modelCount: number | null = null;
         try {
             const payload = JSON.parse(responseText || "{}");
@@ -249,4 +253,25 @@ export async function DELETE(req: NextRequest) {
     } catch (error: any) {
         return NextResponse.json({ error: error?.message || "erro" }, { status: 500 });
     }
+}
+
+export async function PUT(req: NextRequest) {
+    try {
+        const body = await req.json();
+        const id = cleanText(body.id, 120);
+        const model = cleanText(body.model, 300);
+        if (!model) return NextResponse.json({ error: "Informe o ID do modelo" }, { status: 400 });
+        const credential = (await loadAiCredentials(await loadLegacySettings())).find((item) => item.id === id && item.provider === "roteia" && item.source === "database");
+        if (!credential) return NextResponse.json({ error: "Credencial não encontrada" }, { status: 404 });
+        const { data, error } = await supabase.from("ai_provider_credentials").update({ model, updated_at: new Date().toISOString() }).eq("id", id).select("id");
+        if (error && !credentialTableMissing(error)) throw error;
+        if (error || !data?.length) {
+            const rows = await loadFallbackCredentialRows();
+            const row = rows.find((item: any) => item.id === id);
+            if (!row) throw new Error("Credencial não encontrada");
+            row.model = model;
+            await saveFallbackCredentialRows(rows);
+        }
+        return NextResponse.json({ ok: true });
+    } catch (error: any) { return NextResponse.json({ error: error?.message || "Falha ao salvar modelo" }, { status: 400 }); }
 }

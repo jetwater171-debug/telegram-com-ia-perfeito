@@ -23,9 +23,9 @@ import {
 import { aiGatewayRouter } from "@/lib/aiGatewayRouter";
 import { loadAiGatewayUsageRolling } from "@/lib/aiGatewayTelemetry";
 
-const PROVIDERS = ["bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"] as const;
+const PROVIDERS = ["roteia", "bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"] as const;
 type ProviderKey = typeof PROVIDERS[number];
-const ACTIVE_PROVIDERS: ProviderKey[] = ["bai", "gemini", "nvidia", "openrouter", "groq", "cerebras", "custom"];
+const ACTIVE_PROVIDERS: ProviderKey[] = ["bai", "gemini", "nvidia", "openrouter", "groq", "cerebras", "custom", "roteia"];
 
 const CONFIG_KEYS = [
     "bai_api_key", "bai_model",
@@ -268,6 +268,13 @@ export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
         const providerOrder = normalizeProviderOrder(body.aiModelOrder || body.aiDraftModelOrder);
+        if (body.action === "reorder") {
+            const rows = ["ai_model_order", "ai_strategy_model_order", "ai_draft_model_order", "ai_review_model_order", "ai_evaluator_model_order"]
+                .map((key) => ({ key, value: providerOrder }));
+            const { error } = await supabase.from("bot_settings").upsert(rows);
+            if (error) throw error;
+            return NextResponse.json({ ok: true, aiModelOrder: providerOrder });
+        }
         const rows: { key: string; value: string }[] = [
             // Campo legado mantido sincronizado com a cabeca da fila. A ordem
             // completa vive no codigo para um valor antigo nao furar o router.
@@ -364,6 +371,7 @@ export async function PUT(req: NextRequest) {
             response = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", { headers: { Authorization: `Bearer ${key}` } });
         } else {
             const config = {
+                roteia: { key: readSecret(body.apiKey) || readSecret(process.env.ROTEIA_API_KEY), base: "https://api.roteia.ai/v1" },
                 bai: { key: readSecret(body.apiKey) || readSecret(map.bai_api_key) || readSecret(process.env.BAI_API_KEY), base: String(process.env.BAI_BASE_URL || "https://api.b.ai/v1").replace(/\/$/, "") },
                 groq: { key: readSecret(body.apiKey) || readSecret(map.groq_api_key) || readSecret(process.env.GROQ_API_KEY), base: "https://api.groq.com/openai/v1" },
                 nvidia: { key: readSecret(body.apiKey) || readSecret(map.nvidia_api_key) || readSecret(process.env.NVIDIA_API_KEY), base: "https://integrate.api.nvidia.com/v1" },
