@@ -2,6 +2,8 @@ const fs = require('node:fs');
 const ts = require('typescript');
 const assert = require('node:assert/strict');
 const source = fs.readFileSync('src/lib/gemini.ts', 'utf8');
+const routerSource = fs.readFileSync('src/lib/aiGatewayRouter.ts', 'utf8');
+const credentialsApi = fs.readFileSync('src/app/api/admin/ai-credentials/route.ts', 'utf8');
 const models = ts.transpileModule(fs.readFileSync('src/lib/aiModels.ts','utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText;
 const m={exports:{}};new Function('exports',models)(m.exports);
 const section=source.slice(source.indexOf('const buildDirectOpenAiGateways'),source.indexOf('const getAiRuntimeSettings'));
@@ -17,6 +19,9 @@ const api=fs.readFileSync('src/app/api/admin/ai-settings/route.ts','utf8');
 const normalization=api.slice(api.indexOf('const normalizeProviderOrder'),api.indexOf('const loadGatewayDashboard'));
 const normalize=new Function('ACTIVE_PROVIDERS',ts.transpileModule(normalization,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText+';return normalizeProviderOrder;')(['bai','gemini','nvidia','roteia']);
 assert.equal(normalize('roteia,nvidia,gemini,bai'),'roteia,nvidia,gemini,bai');
-console.log('ROTEIA_OK selected_model=1 four_roles=1 no_key_skipped=1 priority_preserved=1');
+assert.match(routerSource, /normalizedProvider === 'roteia'[\s\S]*?timeoutMs: 20_000/);
+assert.match(routerSource, /provider === 'roteia'[\s\S]*?20_000/);
+assert.match(credentialsApi, /credential\.provider === "roteia" \? 20_000 : 8_000/);
+console.log('ROTEIA_OK selected_model=1 four_roles=1 no_key_skipped=1 priority_preserved=1 timeout=20s');
 
 

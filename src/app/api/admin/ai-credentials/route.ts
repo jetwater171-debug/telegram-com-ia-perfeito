@@ -63,7 +63,8 @@ const safeProviderError = (value: unknown) => String(value || "teste falhou")
 
 const testCredential = async (credential: Awaited<ReturnType<typeof loadAiCredentials>>[number]) => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), Math.min(15_000, credential.limits.timeoutMs || 8_000));
+    const defaultTimeoutMs = credential.provider === "roteia" ? 20_000 : 8_000;
+    const timeout = setTimeout(() => controller.abort(), Math.min(20_000, credential.limits.timeoutMs || defaultTimeoutMs));
     const startedAt = Date.now();
     try {
         let url: string;

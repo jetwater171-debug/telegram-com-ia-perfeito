@@ -116,6 +116,10 @@ const providerDefaults = (provider: string, model: string): GatewayRatePolicy =>
         return unknownQuota({ maxConcurrency: 4, timeoutMs: 16_000, maxQueueMs: 2_400 });
     }
 
+    if (normalizedProvider === 'roteia') {
+        return unknownQuota({ maxConcurrency: 4, timeoutMs: 20_000, maxQueueMs: 2_500 });
+    }
+
     if (normalizedProvider === 'openrouter') {
         return unknownQuota({ maxConcurrency: 3, timeoutMs: 18_000, maxQueueMs: 2_200 });
     }
@@ -293,6 +297,8 @@ export const resolveGatewayLatencyBudget = ({
         ? 10_000
         : provider === 'nvidia'
             ? 16_000
+            : provider === 'roteia'
+                ? 20_000
             : 18_000;
     const attemptMs = auxiliary
         ? Math.min(5_000, providerAttemptMs)
