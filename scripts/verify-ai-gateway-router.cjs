@@ -117,8 +117,11 @@ const candidate = (key, weight = 10, overrides = {}, priority) => ({
     ]);
     assert.ok(preferredModelPriorities[1] < preferredModelPriorities[0]);
     assert.ok(preferredModelPriorities[0] < preferredModelPriorities[2]);
-    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'gemini' }), { totalMs: 28_000, attemptMs: 18_000 });
-    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'nvidia' }), { totalMs: 28_000, attemptMs: 16_000 });
+    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'gemini' }), { totalMs: 38_000, attemptMs: 18_000 });
+    assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider: 'nvidia' }), { totalMs: 38_000, attemptMs: 16_000 });
+    for (const provider of ['roteia', 'llm7']) {
+        assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'responseSchema', provider }), { totalMs: 38_000, attemptMs: 30_000 });
+    }
     assert.deepEqual(resolveGatewayLatencyBudget({ role: 'review', schemaName: 'reviewSchema', provider: 'gemini' }), { totalMs: 6_000, attemptMs: 5_000 });
     assert.deepEqual(resolveGatewayLatencyBudget({ role: 'draft', schemaName: 'operationalReply', provider: 'nvidia' }), { totalMs: 16_000, attemptMs: 5_000 });
 

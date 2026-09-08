@@ -19,10 +19,14 @@ const api=fs.readFileSync('src/app/api/admin/ai-settings/route.ts','utf8');
 const normalization=api.slice(api.indexOf('const normalizeProviderOrder'),api.indexOf('const loadGatewayDashboard'));
 const normalize=new Function('ACTIVE_PROVIDERS',ts.transpileModule(normalization,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText+';return normalizeProviderOrder;')(['bai','gemini','nvidia','roteia']);
 assert.equal(normalize('roteia,nvidia,gemini,bai'),'roteia,nvidia,gemini,bai');
-assert.match(routerSource, /normalizedProvider === 'roteia'[\s\S]*?timeoutMs: 20_000/);
-assert.match(routerSource, /provider === 'roteia'[\s\S]*?20_000/);
+assert.match(routerSource, /normalizedProvider === 'roteia'[\s\S]*?timeoutMs: 30_000/);
+assert.match(routerSource, /provider === 'roteia'[\s\S]*?30_000/);
+const llmRoutes = build({},[{provider:'llm7',id:'llm-test',apiKey:'test-only',model:'fast',quotaGroupId:'llm-test',priority:100,weight:1,limits:{}}]);
+assert.equal(llmRoutes.length,4);
+assert.ok(llmRoutes.every(r=>r.provider==='llm7' && r.model==='fast' && r.baseUrl==='https://api.llm7.io/v1'));
+assert.equal(build({},[]).filter(r=>r.provider==='llm7').length,0);
 assert.match(credentialsApi, /return testRoteiaConversationContract\(credential\)/);
-console.log('ROTEIA_OK selected_model=1 four_roles=1 no_key_skipped=1 priority_preserved=1 timeout=20s');
+console.log('ROTEIA_LLM7_OK selected_model=1 four_roles=1 no_key_skipped=1 priority_preserved=1 timeout=30s');
 
 // Execute o adaptador real com transporte simulado: o enum enviado deve ser
 // exatamente o mesmo que o validador usa, e o prefixo não depende do lead.
@@ -52,7 +56,11 @@ const invoke = new Function(...dependencyNames, compile(schemaCode + messageCode
     const stablePrefix = captured.messages[0].content.split('Tempo:')[0];
     await invoke({},gateway,'draft','BASE FIXA\nTempo: 10:01',[],'Oi','responseSchema',schema,undefined,20000);
     assert.equal(captured.messages[0].content.split('Tempo:')[0],stablePrefix);
-    console.log('ROTEIA_CONTRACT_OK enum_sent=1 structured_output=1 stable_prefix=1 cache_accounting=1');
+    await invoke({}, {...gateway, provider:'llm7',baseUrl:'https://api.llm7.io/v1',model:'default'}, 'draft','BASE',[],'Olá','responseSchema',schema,undefined,30000);
+    assert.equal(captured.url,'https://api.llm7.io/v1/chat/completions');
+    assert.equal(captured.response_format,undefined);
+    assert.ok(captured.messages[0].content.includes(JSON.stringify(schema.properties.lead_classification.enum)));
+    console.log('ROTEIA_LLM7_CONTRACT_OK enum_sent=1 stable_prefix=1 cache_accounting=1 no_paid_flag=1');
 })().catch(error => { console.error(error); process.exitCode=1; });
 
 

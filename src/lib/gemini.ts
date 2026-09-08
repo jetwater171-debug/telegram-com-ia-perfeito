@@ -800,7 +800,7 @@ const boundedRetryDelayMs = (error: unknown, attempt = 0) => {
 };
 
 type AiRole = "strategy" | "draft" | "review" | "evaluator";
-type AiProvider = "roteia" | "bai" | "openrouter" | "gemini" | "groq" | "nvidia" | "mistral" | "cerebras" | "cloudflare" | "custom";
+type AiProvider = "llm7" | "roteia" | "bai" | "openrouter" | "gemini" | "groq" | "nvidia" | "mistral" | "cerebras" | "cloudflare" | "custom";
 
 type AiGatewayConfig = {
     provider: AiProvider;
@@ -882,6 +882,7 @@ const AI_SETTING_KEYS = [
     "groq_model",
     "groq_starter_model",
     "nvidia_api_key",
+    "llm7_api_key", "llm7_model",
     "roteia_api_key",
     "roteia_model",
     "nvidia_model",
@@ -907,7 +908,7 @@ const ROLE_ENV_KEYS: Record<AiRole, string> = {
     evaluator: "AI_EVALUATOR_MODEL_ORDER",
 };
 
-const AUTO_GATEWAY_PROVIDERS: AiProvider[] = ['bai', 'gemini', 'nvidia', 'roteia'];
+const AUTO_GATEWAY_PROVIDERS: AiProvider[] = ['bai', 'gemini', 'nvidia', 'roteia', 'llm7'];
 const DEFAULT_PROVIDER_ORDER = "nvidia,gemini,bai";
 const DEFAULT_OPENROUTER_MODELS: Record<AiRole, string> = {
     strategy: DEFAULT_OPENROUTER_MODEL,
@@ -981,7 +982,7 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
                 // A preferência salva na credencial muda a ordem, mas nunca
                 // prende a chave em um único modelo: todos os fallbacks do
                 // catálogo continuam disponíveis.
-                const rawModel = String((provider === 'roteia' ? credential.model || models[role] : models[role] || credential.model) || '').trim();
+                const rawModel = String(((provider === 'roteia' || provider === 'llm7') ? credential.model || models[role] : models[role] || credential.model) || '').trim();
                 const model = provider === 'gemini'
                     ? normalizeGeminiModelName(rawModel, DEFAULT_GEMINI_MODEL)
                     : provider === 'groq'
@@ -1045,6 +1046,14 @@ const buildDirectOpenAiGateways = (settings: Record<string, string>, credentials
         weight: Math.max(20, 60 - index * 6),
         modelPriority: index,
     }));
+
+    const llm7Model = configured('llm7_model', 'LLM7_MODEL', 'default');
+    addProvider({
+        provider: 'llm7', apiKey: configured('llm7_api_key', 'LLM7_API_KEY'),
+        baseUrl: 'https://api.llm7.io/v1',
+        models: { strategy: llm7Model, draft: llm7Model, review: llm7Model, evaluator: llm7Model },
+        tiers: ['starter', 'buyer', 'premium', 'elite'], weight: 40,
+    });
 
     const roteiaModel = configured('roteia_model', 'ROTEIA_MODEL', 'deepseek/deepseek-v4-flash');
     addProvider({
@@ -1221,7 +1230,7 @@ const parseAiModelEntry = (entry: string, role: AiRole, settings: AiRuntimeSetti
         const model = getRoleProviderModel(role, provider, settings);
         return { provider, model, label: `${provider}:${model}` };
     }
-    if (["roteia", "bai", "groq", "nvidia", "mistral", "cerebras", "cloudflare", "custom"].includes(providerOnly)) return null;
+    if (["llm7", "roteia", "bai", "groq", "nvidia", "mistral", "cerebras", "cloudflare", "custom"].includes(providerOnly)) return null;
 
     const providerMatch = trimmed.match(/^(openrouter|gemini):(.+)$/i);
     if (!providerMatch) {
@@ -1491,7 +1500,7 @@ const callOpenRouterJson = async <T,>(
                 : 1_400,
     };
     const deepSeekV4 = /deepseek-v4/i.test(String(gateway.model || ''));
-    if (deepSeekV4 && gateway.provider !== 'nvidia' && gateway.provider !== 'roteia') {
+    if (deepSeekV4 && gateway.provider !== 'nvidia' && gateway.provider !== 'roteia' && gateway.provider !== 'llm7') {
         const criticalTurn = /\b(pix|pagar|pagamento|pre[cç]o|valor|caro|desconto|comprar|comprovante|contradi|reclam|n[aã]o quero|generate_pix_payment|check_payment_status|send_(?:custom_)?preview|send_voice_reply|payment_details|preview_id)\b/i.test(userContent);
         if (role === 'evaluator') {
             body.reasoning_effort = 'max';
@@ -1520,6 +1529,13 @@ const callOpenRouterJson = async <T,>(
             body.chat_template_kwargs = { enable_thinking: role === 'strategy' || role === 'evaluator' };
             body.reasoning_budget = role === 'evaluator' ? 8_192 : role === 'strategy' ? 2_048 : -1;
         }
+    }
+    if (gateway.provider === 'llm7') {
+        // LLM7 JSON mode requires a paid plan. Validate the same contract locally.
+        body.messages = toOpenRouterMessages(
+            `Responda somente com um objeto JSON válido, sem markdown. CONTRATO JSON:\n${JSON.stringify(toOpenRouterJsonSchema(responseSchemaConfig))}\n\n${systemInstruction}`,
+            history, userContent, mediaPart,
+        );
     }
     if (gateway.provider === 'roteia') {
         // O validador exige enums e objetos aninhados, não apenas JSON válido.
@@ -1671,15 +1687,15 @@ export const testRoteiaConversationContract = async (credential: AiCredential) =
     const startedAt = Date.now();
     const result = await callOpenRouterJson<AIResponse>(
         { openRouterApiKey: '', openRouterBaseUrl: '', openRouterReferer: '', openRouterTitle: '' },
-        { provider: 'roteia', apiKey: credential.apiKey, baseUrl: 'https://api.roteia.ai/v1', model: credential.model || 'deepseek/deepseek-v4-flash', label: 'roteia:diagnostic' },
+        { provider: credential.provider as AiProvider, apiKey: credential.apiKey, baseUrl: credential.provider === 'llm7' ? 'https://api.llm7.io/v1' : 'https://api.roteia.ai/v1', model: credential.model || (credential.provider === 'llm7' ? 'default' : 'deepseek/deepseek-v4-flash'), label: `${credential.provider}:diagnostic` },
         'draft',
         'Teste técnico de integração. Responda ao cumprimento em uma frase curta. Use action none, classificação desconhecido e estado WELCOME. Não execute operações externas. Preencha o contrato completo e deixe memórias novas vazias.',
         [], 'Olá', 'responseSchema', responseSchema, undefined, 30_000,
     );
     assertAiGatewayPayload(result.data, 'responseSchema', responseSchema);
-    if (!result.data.messages?.some((message) => String(message).trim())) throw new Error('Roteia retornou JSON sem mensagem');
+    if (!result.data.messages?.some((message) => String(message).trim())) throw new Error(`${credential.provider} retornou JSON sem mensagem`);
     return {
-        ok: true, provider: 'roteia', credentialId: credential.id,
+        ok: true, provider: credential.provider, credentialId: credential.id,
         latencyMs: Date.now() - startedAt, model: result.resolvedModel,
         contractValidated: true, cachedInputTokens: result.usageCachedInputTokens ?? 0,
         inputTokens: result.usageInputTokens,

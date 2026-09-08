@@ -13,7 +13,7 @@ import {
 import { DEFAULT_NVIDIA_MODEL } from "@/lib/aiModels";
 
 export const dynamic = "force-dynamic";
-const ACTIVE_ROUTER_PROVIDERS = new Set<AiCredentialProvider>(["bai", "gemini", "nvidia", "roteia"]);
+const ACTIVE_ROUTER_PROVIDERS = new Set<AiCredentialProvider>(["bai", "gemini", "nvidia", "roteia", "llm7"]);
 
 const cleanText = (value: unknown, max = 500) => String(value || "").trim().slice(0, max);
 const nullablePositive = (value: unknown) => {
@@ -29,7 +29,7 @@ const nullableDecimal = (value: unknown) => {
 
 const loadLegacySettings = async () => {
     const { data } = await supabase.from("bot_settings").select("key,value").in("key", [
-        "roteia_api_key", "bai_api_key", "gemini_api_key", "groq_api_key", "nvidia_api_key",
+        "llm7_api_key", "roteia_api_key", "bai_api_key", "gemini_api_key", "groq_api_key", "nvidia_api_key",
         "cloudflare_ai_api_token", "mistral_api_key", "openrouter_api_key",
         "cerebras_api_key", "ai_custom_gateway_api_key",
     ]);
@@ -62,7 +62,7 @@ const safeProviderError = (value: unknown) => String(value || "teste falhou")
     .slice(0, 300);
 
 const testCredential = async (credential: Awaited<ReturnType<typeof loadAiCredentials>>[number]) => {
-    if (credential.provider === "roteia") {
+    if ((credential.provider === "roteia" || credential.provider === "llm7")) {
         const { testRoteiaConversationContract } = await import("@/lib/gemini");
         return testRoteiaConversationContract(credential);
     }
@@ -262,7 +262,7 @@ export async function PUT(req: NextRequest) {
         const id = cleanText(body.id, 120);
         const model = cleanText(body.model, 300);
         if (!model) return NextResponse.json({ error: "Informe o ID do modelo" }, { status: 400 });
-        const credential = (await loadAiCredentials(await loadLegacySettings())).find((item) => item.id === id && item.provider === "roteia" && item.source === "database");
+        const credential = (await loadAiCredentials(await loadLegacySettings())).find((item) => item.id === id && (item.provider === "roteia" || item.provider === "llm7") && item.source === "database");
         if (!credential) return NextResponse.json({ error: "Credencial não encontrada" }, { status: 404 });
         const { data, error } = await supabase.from("ai_provider_credentials").update({ model, updated_at: new Date().toISOString() }).eq("id", id).select("id");
         if (error && !credentialTableMissing(error)) throw error;

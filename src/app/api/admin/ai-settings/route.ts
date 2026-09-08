@@ -23,11 +23,12 @@ import {
 import { aiGatewayRouter } from "@/lib/aiGatewayRouter";
 import { loadAiGatewayUsageRolling } from "@/lib/aiGatewayTelemetry";
 
-const PROVIDERS = ["roteia", "bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"] as const;
+const PROVIDERS = ["llm7", "roteia", "bai", "gemini", "groq", "nvidia", "cloudflare", "mistral", "openrouter", "cerebras", "custom"] as const;
 type ProviderKey = typeof PROVIDERS[number];
-const ACTIVE_PROVIDERS: ProviderKey[] = ["bai", "gemini", "nvidia", "openrouter", "groq", "cerebras", "custom", "roteia"];
+const ACTIVE_PROVIDERS: ProviderKey[] = ["bai", "gemini", "nvidia", "openrouter", "groq", "cerebras", "custom", "roteia", "llm7"];
 
 const CONFIG_KEYS = [
+    "llm7_api_key", "llm7_model",
     "bai_api_key", "bai_model",
     "openrouter_api_key", "gemini_api_key", "groq_api_key", "nvidia_api_key", "mistral_api_key", "cerebras_api_key",
     "cloudflare_ai_api_token", "cloudflare_account_id", "ai_custom_gateway_api_key", "ai_custom_gateway_base_url",
@@ -371,6 +372,7 @@ export async function PUT(req: NextRequest) {
             response = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", { headers: { Authorization: `Bearer ${key}` } });
         } else {
             const config = {
+                llm7: { key: readSecret(body.apiKey) || readSecret(process.env.LLM7_API_KEY), base: "https://api.llm7.io/v1" },
                 roteia: { key: readSecret(body.apiKey) || readSecret(process.env.ROTEIA_API_KEY), base: "https://api.roteia.ai/v1" },
                 bai: { key: readSecret(body.apiKey) || readSecret(map.bai_api_key) || readSecret(process.env.BAI_API_KEY), base: String(process.env.BAI_BASE_URL || "https://api.b.ai/v1").replace(/\/$/, "") },
                 groq: { key: readSecret(body.apiKey) || readSecret(map.groq_api_key) || readSecret(process.env.GROQ_API_KEY), base: "https://api.groq.com/openai/v1" },
