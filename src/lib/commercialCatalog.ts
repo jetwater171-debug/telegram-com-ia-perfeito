@@ -29,7 +29,7 @@ export type CommercialLineItem = {
     value: number;
 };
 
-export const VIP_MONTHLY_PRICE = 29.90;
+export const VIP_MONTHLY_PRICE = 19.90;
 export const VIP_LIFETIME_PRICE = 49.90;
 export const VIP_LIFETIME_CALL_PRICE = 79.90;
 export const VIDEO_CALL_STANDALONE_PRICE = 50;
@@ -40,7 +40,7 @@ export const COMMERCIAL_CATALOG: Record<CommercialSku, CommercialOffer> = {
     vip_monthly: {
         sku: 'vip_monthly',
         product: 'vip',
-        amountCents: 2990,
+        amountCents: 1990,
         value: VIP_MONTHLY_PRICE,
         description: 'VIP Mensal Lari',
         format: 'um mes de acesso ao VIP da Lari',
