@@ -134,9 +134,15 @@ export async function POST(req: NextRequest) {
         try {
             await applyTelegramMembership(String(event.chat.id), status === 'kicked', new Date(event.date * 1000).toISOString(), body.update_id);
             return NextResponse.json({ ok: true });
-        } catch {
-            // Do not acknowledge a partial/failed cleanup: Telegram must retry.
-            return NextResponse.json({ error: 'membership_cleanup_failed' }, { status: 503 });
+        } catch (error) {
+            // Membership cleanup must never poison the webhook queue. Telegram
+            // retries a 5xx update before delivering later messages, which can
+            // leave the entire inbox unavailable after an isolated DB failure.
+            console.error('[TELEGRAM_MEMBERSHIP] cleanup failed; acknowledged to keep the webhook flowing', {
+                updateId: body.update_id,
+                reason: error instanceof Error ? error.message : 'unknown_error',
+            });
+            return NextResponse.json({ ok: true, membershipCleanup: 'deferred' });
         }
     }
 
