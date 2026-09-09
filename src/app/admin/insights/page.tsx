@@ -12,7 +12,8 @@ type InsightData = {
 };
 
 const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-const nice = (value: string) => value.replace(/_/g, ' ').toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
+const phaseLabels: Record<string, string> = { WELCOME: 'Boas-vindas', CONNECTION: 'Conexão', TRIGGER_PHASE: 'Interesse', HOT_TALK: 'Engajamento', PREVIEW: 'Prévia', SALES_PITCH: 'Oferta', NEGOTIATION: 'Negociação', CLOSING: 'Fechamento', PAYMENT_CHECK: 'Aguardando pagamento', PAYMENT_CONFIRMED: 'Pagamento confirmado' };
+const nice = (value: string) => phaseLabels[value] || value.replace(/_/g, ' ').toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
 
 export default function AdminInsightsPage() {
     const [data, setData] = useState<InsightData | null>(null);
@@ -48,14 +49,14 @@ export default function AdminInsightsPage() {
                     <button onClick={() => void load()} disabled={loading} className="rounded-xl border border-white/10 bg-white/[.04] px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-cyan-300/30 hover:text-white disabled:opacity-50">{loading ? 'Atualizando...' : 'Atualizar agora'}</button>
                 </header>
 
-                {error && <div className="mb-5 rounded-xl border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm text-rose-100">{error}</div>}
+                {error && <div role="alert" className="mb-5 rounded-xl border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm text-rose-100">{error}</div>}
 
                 <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                     <Metric label="Leads" value={data?.overview.totalSessions ?? '—'} note={`${data?.overview.activeSessions || 0} ativos`} />
                     <Metric label="Compradores" value={data?.overview.paidSessions ?? '—'} note="pagamento confirmado" accent="emerald" />
                     <Metric label="Receita" value={data ? money.format(data.overview.revenue) : '—'} note="total conciliado" accent="emerald" />
                     <Metric label="Decisões IA" value={data?.brain.decisions ?? '—'} note={`${data?.brain.correctionRate || 0}% corrigidas pelo validator`} accent="cyan" />
-                    <Metric label="Outcomes" value={data?.outcomes.total ?? '—'} note={`reward ${Number(data?.outcomes.reward || 0).toFixed(1)}`} accent="violet" />
+                    <Metric label="Eventos de resultado" value={data?.outcomes.total ?? '—'} note={`pontuação ${Number(data?.outcomes.reward || 0).toFixed(1)}`} accent="violet" />
                 </section>
 
                 <section className="mt-5 grid gap-5 xl:grid-cols-[1.55fr_.85fr]">
@@ -70,7 +71,9 @@ export default function AdminInsightsPage() {
                                     <div><p className="text-xs text-slate-500">pagaram</p><p className="text-sm font-semibold text-emerald-200">{row.paidRate}%</p></div>
                                 </div>
                             ))}
-                            {!data && <div className="p-10 text-center text-sm text-slate-500">Carregando trajetória...</div>}
+                            {!data && !error && <div role="status" className="p-10 text-center text-sm text-slate-500">Carregando trajetória...</div>}
+                            {!data && error && <div className="admin-empty-state"><h3>Não foi possível carregar o funil</h3><p>Atualize a página ou tente novamente em alguns instantes.</p></div>}
+                            {data && !data.funnel.length && <div className="admin-empty-state"><h3>O próximo passo aparece aqui</h3><p>As etapas e conversões serão exibidas quando houver atividade registrada.</p></div>}
                         </div>
                     </div>
 

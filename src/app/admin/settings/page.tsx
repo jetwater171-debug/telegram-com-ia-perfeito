@@ -98,11 +98,12 @@ export default function AdminSettingsPage() {
                     </div>
 
                     <div className="mt-5 flex flex-col gap-3">
-                        <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                        <label htmlFor="admin-bot-token" className="text-xs uppercase tracking-[0.2em] text-slate-400">
                             Token do Bot
                         </label>
                         <div className="flex flex-col gap-3 sm:flex-row">
                             <input
+                                id="admin-bot-token"
                                 value={token}
                                 onChange={(e) => setToken(e.target.value)}
                                 type={showToken ? "text" : "password"}
@@ -112,6 +113,8 @@ export default function AdminSettingsPage() {
                             />
                             <button
                                 type="button"
+                                aria-pressed={showToken}
+                                aria-controls="admin-bot-token"
                                 onClick={() => setShowToken((prev) => !prev)}
                                 className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200 transition hover:bg-white/10"
                             >
@@ -157,6 +160,7 @@ export default function AdminSettingsPage() {
 
                     {msg && (
                         <div
+                            role="status"
                             className={`mt-5 rounded-xl border px-4 py-3 text-sm ${
                                 msg.toLowerCase().includes("erro") || msg.toLowerCase().includes("falha")
                                     ? "border-red-500/30 bg-red-500/10 text-red-200"
