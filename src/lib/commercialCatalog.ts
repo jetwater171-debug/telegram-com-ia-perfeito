@@ -9,7 +9,7 @@ export type CommercialSku =
 export type CommercialOffer = {
     sku: CommercialSku;
     product: CommercialProduct;
-    amountCents: 2990 | 4990 | 7990 | 5000;
+    amountCents: 1990 | 2990 | 4990 | 7990 | 5000;
     value: number;
     description: string;
     format: string;
