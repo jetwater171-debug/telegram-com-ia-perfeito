@@ -44,13 +44,13 @@ assert.equal(funnelEngine.resolveFunnelState({ userText: 'quero ver mais', metad
 
 const monthlyItems = catalog.buildCommercialLineItems(catalog.COMMERCIAL_CATALOG.vip_monthly, true);
 assert.equal(monthlyItems.length, 2);
-assert.equal(catalog.totalCommercialLineItems(monthlyItems), 3990);
+assert.equal(catalog.totalCommercialLineItems(monthlyItems), 2990);
 assert.match(catalog.renderVipOrderBumpMessage(), /R\$ 10,00/);
 
 const negotiated = sales.evaluateSalesTiming({ userText: 'quero o mensal, tenho 20 reais pra pagar', now });
 assert.equal(negotiated.selectedSku, 'vip_monthly');
-assert.equal(negotiated.offerPlan.value, 20);
-assert.equal(negotiated.funnel.stage, 'negotiation');
+assert.equal(negotiated.offerPlan.value, 19.90);
+assert.equal(negotiated.funnel.stage, 'offer');
 assert.equal(negotiated.fixedCatalogBudgetGap, false);
 
 const belowVipFloor = sales.evaluateSalesTiming({ userText: 'quero o mensal, só tenho 14', now });
@@ -59,7 +59,7 @@ assert.equal(belowVipFloor.canGeneratePayment, false);
 
 const migrateHighTier = sales.evaluateSalesTiming({ userText: 'quero o vitalício, tenho 20 reais pra pagar', now });
 assert.equal(migrateHighTier.selectedSku, 'vip_monthly');
-assert.equal(migrateHighTier.offerPlan.value, 20);
+assert.equal(migrateHighTier.offerPlan.value, 19.90);
 assert.equal(migrateHighTier.canGeneratePayment, false);
 
 const acceptedVip = sales.evaluateSalesTiming({ userText: 'quero o mensal', now });
@@ -74,18 +74,18 @@ const bumpAccepted = sales.evaluateSalesTiming({
   leadMemory: { metadata: { sales_active_order: offeredOrder, funnel_order_bump_status: 'offered' } },
 });
 assert.equal(bumpAccepted.funnel.orderBump.status, 'accepted');
-assert.equal(bumpAccepted.offerPlan.value, 39.90);
+assert.equal(bumpAccepted.offerPlan.value, 29.90);
 assert.equal(bumpAccepted.offerPlan.lineItems.length, 2);
 assert.equal(bumpAccepted.canGeneratePayment, true);
 const combinedOrder = sales.buildSalesOrderSnapshot({ orderId: 'vip:monthly:bump', plan: bumpAccepted.offerPlan, status: 'accepted', now });
-assert.equal(sales.readActiveSalesOrder(combinedOrder, new Date(now.getTime() + 60_000)).amount, 39.90);
+assert.equal(sales.readActiveSalesOrder(combinedOrder, new Date(now.getTime() + 60_000)).amount, 29.90);
 
 const bumpDeclined = sales.evaluateSalesTiming({
   userText: 'não', now: new Date(now.getTime() + 60_000),
   leadMemory: { metadata: { sales_active_order: offeredOrder, funnel_order_bump_status: 'offered' } },
 });
 assert.equal(bumpDeclined.funnel.orderBump.status, 'declined');
-assert.equal(bumpDeclined.offerPlan.value, 29.90);
+assert.equal(bumpDeclined.offerPlan.value, 19.90);
 assert.equal(bumpDeclined.canGeneratePayment, true);
 
 for (const userText of ['pode incluir', 'quero a foto']) {
@@ -93,7 +93,7 @@ for (const userText of ['pode incluir', 'quero a foto']) {
     leadMemory: { metadata: { sales_active_order: offeredOrder, funnel_order_bump_status: 'offered' } },
   });
   assert.equal(accepted.offerPlan.product, 'vip');
-  assert.equal(accepted.offerPlan.value, 39.90);
+  assert.equal(accepted.offerPlan.value, 29.90);
   assert.equal(accepted.canGeneratePayment, true);
 }
 assert.equal(funnelEngine.resolvePendingAddonDecision('inclui uma chamada'), null);
@@ -105,8 +105,8 @@ const discountedOrder = sales.buildSalesOrderSnapshot({ orderId: 'discounted', p
 const discountedAccepted = sales.evaluateSalesTiming({ userText: 'sim', now,
   leadMemory: { metadata: { sales_active_order: discountedOrder, funnel_order_bump_status: 'offered' } },
 });
-assert.equal(discountedAccepted.offerPlan.value, 30);
-assert.equal(discountedAccepted.offerPlan.lineItems[0].value, 20);
+assert.equal(discountedAccepted.offerPlan.value, 29.90);
+assert.equal(discountedAccepted.offerPlan.lineItems[0].value, 19.90);
 assert.equal(sales.evaluateSalesTiming({ userText: 'quero o vitalício por 20 reais, manda o pix', now }).canGeneratePayment, false);
 
 const photoRequestBeforePreview = sales.evaluateSalesTiming({
@@ -140,11 +140,11 @@ const exactMemory = { metadata: { sales_active_order: exactOrder, funnel_order_b
 for (const userText of ['entao vai', 'então vai!', 'então pode mandar']) {
   const result = sales.evaluateSalesTiming({ userText, leadMemory: exactMemory, now });
   assert.equal(result.canGeneratePayment, true, userText);
-  assert.equal(result.offerPlan.value, 22.38);
+  assert.equal(result.offerPlan.value, 19.90);
 }
 assert.equal(sales.evaluateSalesTiming({ userText: 'entao vai', now }).canGeneratePayment, false);
 const question = sales.evaluateSalesTiming({ userText: 'e a foto personalizada com meu nome?', leadMemory: exactMemory, now });
 assert.equal(question.activeOrder.orderId, exactOrder.orderId);
-assert.equal(question.offerPlan.value, 22.38);
+assert.equal(question.offerPlan.value, 19.90);
 assert.equal(question.canGeneratePayment, false);
 assert.equal(question.addonQuestion, true);

@@ -66,6 +66,14 @@ export const decideFreePreviewDelivery = ({
   const requestedDeliveryAllowed = requestedByLead
     && adultVerified
     && (recoveryRequest || budgetAvailable);
+  // A escolha da action pertence ao Master Brain. O backend valida os limites
+  // e a disponibilidade, mas não deve anular uma decisão de mídia válida só
+  // porque seu classificador textual não reconheceu o pedido ou a iniciativa.
+  const modelSelectedDeliveryAllowed = modelAttemptedMedia
+    && adultVerified
+    && budgetAvailable
+    && !blocksInitiative
+    && String(currentStage || '').toUpperCase() !== 'WELCOME';
   const contextualInitiativeAllowed = modelAttemptedMedia
     && !requestedByLead
     && adultVerified
@@ -83,8 +91,9 @@ export const decideFreePreviewDelivery = ({
     budgetAvailable,
     fourthPreviewEligible,
     requestedDeliveryAllowed,
+    modelSelectedDeliveryAllowed,
     contextualInitiativeAllowed,
-    shouldDeliver: requestedDeliveryAllowed || contextualInitiativeAllowed,
+    shouldDeliver: requestedDeliveryAllowed || modelSelectedDeliveryAllowed || contextualInitiativeAllowed,
   };
 };
 

@@ -78,29 +78,29 @@ try {
   });
   assert.equal(fixedProductWithoutSku.catalogMismatch, true);
   const negotiatedMonthly = reconciliation.inspectCommercialPaymentIntegrity({
-    product: 'vip', sku: 'vip_monthly', value: 20, amount_cents: 2000,
-    line_items: [{ kind: 'vip', sku: 'vip_monthly', value: 20, amountCents: 2000 }],
+    product: 'vip', sku: 'vip_monthly', value: 18, amount_cents: 1800,
+    line_items: [{ kind: 'vip', sku: 'vip_monthly', value: 18, amountCents: 1800 }],
   });
   assert.equal(negotiatedMonthly.catalogMismatch, false);
-  assert.equal(negotiatedMonthly.commercialLineItems[0].amountCents, 2000);
+  assert.equal(negotiatedMonthly.commercialLineItems[0].amountCents, 1800);
   const monthlyWithAddon = reconciliation.inspectCommercialPaymentIntegrity({
-    product: 'vip', sku: 'vip_monthly', value: 39.9, amount_cents: 3990,
+    product: 'vip', sku: 'vip_monthly', value: 29.9, amount_cents: 2990,
     line_items: [
-      { kind: 'vip', sku: 'vip_monthly', value: 29.9, amountCents: 2990 },
+      { kind: 'vip', sku: 'vip_monthly', value: 19.9, amountCents: 1990 },
       { kind: 'order_bump', sku: 'vip_name_photo_addon', value: 10, amountCents: 1000 },
     ],
   });
   assert.equal(monthlyWithAddon.catalogMismatch, false);
   assert.equal(monthlyWithAddon.commercialLineItems.length, 2);
   assert.equal(reconciliation.inspectCommercialPaymentIntegrity({
-    product: 'vip', sku: 'vip_monthly', value: 39.9, amount_cents: 3990,
+    product: 'vip', sku: 'vip_monthly', value: 29.9, amount_cents: 2990,
     line_items: [
-      { kind: 'vip', sku: 'vip_monthly', value: 29.9, amountCents: 2990 },
+      { kind: 'vip', sku: 'vip_monthly', value: 19.9, amountCents: 1990 },
       { kind: 'order_bump', sku: 'vip_name_photo_addon', value: 11, amountCents: 1000 },
     ],
   }).catalogMismatch, true);
   assert.equal(reconciliation.inspectCommercialPaymentIntegrity({
-    product: 'vip', sku: 'vip_monthly', value: 39.9, amount_cents: 3890,
+    product: 'vip', sku: 'vip_monthly', value: 29.9, amount_cents: 2890,
     line_items: monthlyWithAddon.commercialLineItems,
   }).catalogMismatch, true);
 

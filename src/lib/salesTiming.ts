@@ -726,9 +726,13 @@ export const evaluateSalesTiming = ({
         || (!genericVipMenuRequest && rememberedProduct === activeProduct ? rememberedSku : null)
         || (proactiveVipOffer ? 'vip_monthly' : null);
     const initiallySelectedSku = selectedSku;
+    const selectedVipOffer = getCommercialOffer(selectedSku);
     const canNegotiateVipMonthly = activeProduct === 'vip'
         && explicitBudget !== null
-        && isVipMonthlyNegotiation(explicitBudget);
+        && explicitBudget >= MIN_VIP_MONTHLY_NEGOTIATION_PRICE
+        && (selectedSku === 'vip_monthly'
+            ? explicitBudget <= VIP_MONTHLY_PRICE
+            : explicitBudget < Number(selectedVipOffer?.value || Number.POSITIVE_INFINITY));
     const migratedToMonthlyForBudget = canNegotiateVipMonthly
         && selectedSku !== 'vip_monthly';
     if (migratedToMonthlyForBudget) selectedSku = 'vip_monthly';

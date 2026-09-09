@@ -29,8 +29,10 @@ const hotTurn = {
 };
 
 assert.equal(decideFreePreviewDelivery(hotTurn).contextualInitiativeAllowed, true);
-assert.equal(decideFreePreviewDelivery({ ...hotTurn, currentTextIsHot: false }).shouldDeliver, false);
-assert.equal(decideFreePreviewDelivery({ ...hotTurn, lastBotDeliveredMedia: true }).shouldDeliver, false);
+assert.equal(decideFreePreviewDelivery({ ...hotTurn, currentTextIsHot: false }).contextualInitiativeAllowed, false);
+assert.equal(decideFreePreviewDelivery({ ...hotTurn, currentTextIsHot: false }).modelSelectedDeliveryAllowed, true);
+assert.equal(decideFreePreviewDelivery({ ...hotTurn, lastBotDeliveredMedia: true }).contextualInitiativeAllowed, false);
+assert.equal(decideFreePreviewDelivery({ ...hotTurn, lastBotDeliveredMedia: true }).modelSelectedDeliveryAllowed, true);
 assert.equal(decideFreePreviewDelivery({ ...hotTurn, sentPreviewCount: 3 }).shouldDeliver, false);
 assert.equal(decideFreePreviewDelivery({
   ...hotTurn,
@@ -58,5 +60,26 @@ assert.equal(decideFreePreviewDelivery({
   sentPreviewCount: 4,
 }).requestedDeliveryAllowed, true, 'reentrega não consome uma nova prévia');
 assert.equal(decideFreePreviewDelivery({ ...hotTurn, adultVerified: false }).shouldDeliver, false);
+
+const modelChoseFirstBedPreview = decideFreePreviewDelivery({
+  ...hotTurn,
+  requestedByLead: false,
+  modelAttemptedMedia: true,
+  sentPreviewCount: 0,
+  userTurnsInWindow: 2,
+  userMessagesSinceLastMedia: Number.POSITIVE_INFINITY,
+  leadHeat: 20,
+  currentTextIsHot: false,
+  currentStage: 'TRIGGER_PHASE',
+});
+assert.equal(modelChoseFirstBedPreview.modelSelectedDeliveryAllowed, true);
+assert.equal(modelChoseFirstBedPreview.shouldDeliver, true);
+assert.equal(decideFreePreviewDelivery({
+  ...hotTurn,
+  requestedByLead: false,
+  modelAttemptedMedia: true,
+  sentPreviewCount: 0,
+  currentStage: 'WELCOME',
+}).modelSelectedDeliveryAllowed, false);
 
 console.log('FREE_PREVIEW_POLICY_OK normal=3 exceptional=4 reaction_guard=1 recovery=1');
