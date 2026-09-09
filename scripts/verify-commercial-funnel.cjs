@@ -109,6 +109,23 @@ assert.equal(discountedAccepted.offerPlan.value, 30);
 assert.equal(discountedAccepted.offerPlan.lineItems[0].value, 20);
 assert.equal(sales.evaluateSalesTiming({ userText: 'quero o vitalício por 20 reais, manda o pix', now }).canGeneratePayment, false);
 
+const photoRequestBeforePreview = sales.evaluateSalesTiming({
+  userText: 'sério mesmo deixa eu ver a sua foto',
+  now,
+  recentMessages: [
+    { sender: 'user', content: 'quero te ver', created_at: '2026-09-08T14:57:00.000Z' },
+    { sender: 'bot', content: 'vai ter que aguentar meu ritmo', created_at: '2026-09-08T14:58:00.000Z' },
+  ],
+  leadMemory: { metadata: { funnel_preview_count: 0 } },
+});
+assert.equal(photoRequestBeforePreview.proactiveVipOffer, false);
+assert.equal(photoRequestBeforePreview.canPitchPrice, false);
+assert.equal(photoRequestBeforePreview.offerPlan, null);
+
+const explicitVipRequestBeforePreview = sales.evaluateSalesTiming({ userText: 'quanto custa seu vip?', now });
+assert.equal(explicitVipRequestBeforePreview.activeProduct, 'vip');
+assert.equal(explicitVipRequestBeforePreview.canPitchPrice, true);
+
 const immediateCheckout = sales.evaluateSalesTiming({ userText: 'quero o mensal, manda o pix', now });
 assert.equal(immediateCheckout.funnel.orderBump.shouldOffer, false);
 assert.equal(immediateCheckout.canGeneratePayment, true);

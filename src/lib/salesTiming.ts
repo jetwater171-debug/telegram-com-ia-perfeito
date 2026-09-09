@@ -564,8 +564,11 @@ const isOrganicVipDesireSignal = (text: string) => {
 
 const isDirectVipAcquisitionSignal = (text: string) => {
     const value = normalize(text);
-    return /\b(?:quero|queria|manda|envia|mostra|me mostra|deixa eu ver|posso ver|te ver|ver voce|ver vc)\b.{0,45}\b(?:foto|fotinha|previa|conteudo|video|audio|voz|nude|pelada|sem roupa|voce|vc)\b/i.test(value)
-        || /\b(?:foto|fotinha|previa|conteudo|video|audio|voz|nude|pelada|sem roupa)\b.{0,45}\b(?:manda|envia|mostra|quero|queria|tem|ver)\b/i.test(value);
+    // Pedir uma foto ou prévia gratuita não significa pedir o VIP. Esta ponte
+    // direta existe apenas quando o lead fala de acesso pago/contínuo ou quer
+    // ver o conteúdo completo, sem censura ou em maior quantidade.
+    return /\b(?:vip|mensal|vitalicio|vitalício|assinatura|acesso exclusivo|conteudo completo|conteúdo completo|sem censura)\b/i.test(value)
+        || /\b(?:quero|queria|posso|como faço para|como faco para)\b.{0,45}\b(?:ver tudo|ver mais|ter acesso|assinar|entrar no vip)\b/i.test(value);
 };
 
 const isWarmBridgeContinuation = (text: string) => {
@@ -700,10 +703,13 @@ export const evaluateSalesTiming = ({
         || (leadDesireTurns >= 1 && botDesireTurns >= 1 && isWarmBridgeContinuation(userText))
     ));
     const recentVipOffer = hasRecentVipOffer(recentMessages, now);
+    const deliveredPreviewCount = Math.max(0, Math.min(4,
+        Math.trunc(Number(leadMemory?.metadata?.funnel_preview_count) || 0)));
     const proactiveVipOffer = totalPaid <= 0
         && !vipRejected
         && !detectedProduct
         && !storedActiveOrder
+        && deliveredPreviewCount >= 1
         && organicVipBridge
         && !recentVipOffer
         && !blocksProactiveVip(userText);
